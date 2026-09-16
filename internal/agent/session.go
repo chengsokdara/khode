@@ -27,11 +27,14 @@ var ErrSessionExists = errors.New("session already exists")
 // maxNameLen caps session-name slugs so they stay readable in the picker.
 const maxNameLen = 64
 
-// line is the on-disk JSONL schema for one message.
+// line is the on-disk JSONL schema for one message. Tool calls and results
+// are additive fields; older transcripts without them load unchanged.
 type line struct {
-	TS      string   `json:"ts"`
-	Role    llm.Role `json:"role"`
-	Content string   `json:"content"`
+	TS         string          `json:"ts"`
+	Role       llm.Role        `json:"role"`
+	Content    string          `json:"content"`
+	ToolCalls  []llm.ToolCall  `json:"tool_calls,omitempty"`
+	ToolResult *llm.ToolResult `json:"tool_result,omitempty"`
 }
 
 // Session is an append-only JSONL transcript of a conversation. It is the
@@ -226,7 +229,12 @@ func (s *Session) load() error {
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
 			return fmt.Errorf("corrupt session %s: %w", s.Path, err)
 		}
-		s.msgs = append(s.msgs, llm.Message{Role: l.Role, Content: l.Content})
+		s.msgs = append(s.msgs, llm.Message{
+			Role:       l.Role,
+			Content:    l.Content,
+			ToolCalls:  l.ToolCalls,
+			ToolResult: l.ToolResult,
+		})
 	}
 	return sc.Err()
 }
@@ -242,9 +250,11 @@ func (s *Session) Append(m llm.Message) error {
 	defer f.Close()
 
 	data, err := json.Marshal(line{
-		TS:      time.Now().UTC().Format(time.RFC3339),
-		Role:    m.Role,
-		Content: m.Content,
+		TS:         time.Now().UTC().Format(time.RFC3339),
+		Role:       m.Role,
+		Content:    m.Content,
+		ToolCalls:  m.ToolCalls,
+		ToolResult: m.ToolResult,
 	})
 	if err != nil {
 		return err

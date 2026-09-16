@@ -82,6 +82,14 @@ type ToolCallEvent struct {
 	ToolCall
 }
 
+// ToolResultEvent reports a finished tool execution.
+type ToolResultEvent struct {
+	CallID  string
+	Name    string
+	Output  string
+	IsError bool
+}
+
 // UsageEvent reports token consumption for the completed response.
 type UsageEvent struct {
 	InputTokens  int64
@@ -97,11 +105,12 @@ type ErrorEvent struct {
 // DoneEvent marks the successful end of a response.
 type DoneEvent struct{}
 
-func (TextDeltaEvent) isEvent() {}
-func (ToolCallEvent) isEvent()  {}
-func (UsageEvent) isEvent()     {}
-func (ErrorEvent) isEvent()     {}
-func (DoneEvent) isEvent()      {}
+func (TextDeltaEvent) isEvent()  {}
+func (ToolCallEvent) isEvent()   {}
+func (ToolResultEvent) isEvent() {}
+func (UsageEvent) isEvent()      {}
+func (ErrorEvent) isEvent()      {}
+func (DoneEvent) isEvent()       {}
 
 // Provider streams completions for a chat conversation.
 type Provider interface {
