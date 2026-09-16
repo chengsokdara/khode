@@ -9,3 +9,7 @@ logs/
 # other local tool state
 .crush/
 .aider*
+
+# macOS / tool-local junk
+.DS_Store
+.video_agent/
