@@ -25,10 +25,10 @@ One-glance project state. Update at the end of **every** task (see
   - [x] Session picker / named sessions
   - [x] Unit tests for session + config (+ more provider translation
         cases; `llm` has fake-SSE tests for OpenAI and Anthropic)
-- [ ] **Phase 3 — Read-only tools + agent loop**
-  - [ ] `internal/tools`: `Tool` interface + registry
-  - [ ] `read`, `glob`, `grep` tools
-  - [ ] Agent loop: LLM decides tool calls, results fed back until done
+- [x] **Phase 3 — Read-only tools + agent loop**
+  - [x] `internal/tools`: `Tool` interface + registry
+  - [x] `read`, `glob`, `grep` tools
+  - [x] Agent loop: LLM decides tool calls, results fed back until done
 - [ ] **Phase 4 — Full agent (write tools + permissions)** ⭐ milestone
   - [ ] `edit` (unique string-replacement), `write`, `bash` (timeout +
         output caps)
@@ -43,15 +43,18 @@ One-glance project state. Update at the end of **every** task (see
 
 ## Now
 
-Phase 2 complete: provider layer, config-driven provider/model selection,
-cost estimates, named sessions + picker, and test coverage. Next up is
-Phase 3 — read-only tools and the agent loop.
+Phase 3 complete: `internal/tools` (Tool interface, registry, read/glob/grep
+with output caps) and an agent loop (`agent.Runner`) that streams, executes
+the model's tool calls, feeds results back (25-round cap), and owns all
+session writes. The TUI renders tool activity and drives turns through the
+loop. Next up is Phase 4 — write tools + permissions.
 
 ## Next
 
-1. `internal/tools`: `Tool` interface + registry.
-2. `read`, `glob`, `grep` tools.
-3. Agent loop: LLM decides tool calls, results fed back until done.
+1. `edit` (unique string-replacement), `write`, `bash` (timeout + output
+   caps).
+2. Permission modes: plan / ask / accept-edits / auto.
+3. Diff preview + approval dialog in the TUI.
 
 ## Changelog
 
@@ -63,3 +66,7 @@ Phase 3 — read-only tools and the agent loop.
 | 2026-09-16 | Cost estimate from per-model price table (`llm.Price`, longest-prefix match, status-line `$`) | c9cc6ab |
 | 2026-09-16 | Named sessions + `/sessions` picker + `--continue` / `--resume[=name]`, mtime-ordered listings | 50bfda7 |
 | 2026-09-16 | Tests: config Load/Save (temp HOME) + Anthropic fake-SSE translation | af2faf7 |
+| 2026-09-16 | Phase 3: tools in the llm contract (tool defs/calls/results/events, provider translation + fake-SSE tests) | ecb9255 |
+| 2026-09-16 | Phase 3: `internal/tools` registry + read/glob/grep (stdlib `**` glob, output caps) | 57c6c43 |
+| 2026-09-16 | Phase 3: agent loop (`agent.Runner`), session v2 tool lines, malformed-input hardening | a997292 |
+| 2026-09-16 | Phase 3 finished: TUI tool activity + `/tools`, first ui tests, untrack junk files | c3eac1a |

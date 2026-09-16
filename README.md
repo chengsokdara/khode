@@ -5,7 +5,7 @@ with Bubble Tea.
 
 ## Status
 
-Phase 2 (provider layer + polish) complete — see [STATUS.md](STATUS.md)
+Phase 3 (read-only tools + agent loop) complete — see [STATUS.md](STATUS.md)
 for the phase checklist and [AGENTS.md](AGENTS.md) for architecture and
 conventions.
 
