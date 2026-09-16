@@ -25,10 +25,11 @@ If you are starting a session, or recovering after an interrupt:
 - **Working:** Phase 1 complete — TUI chat with Anthropic streaming,
   markdown rendering (glamour), JSONL session persistence, `--resume`,
   slash commands (`/help`, `/new`, `/model`, `/exit`), token counter,
-  esc-to-stop streaming. Phase 2 started: OpenAI provider works behind
-  the same `llm.Provider`, selected with `--provider openai`.
-- **Not yet started:** config-level provider selection, tools
-  (read/glob/grep/bash/edit), permission system, agent tool loop,
+  esc-to-stop streaming. Phase 2: OpenAI provider works behind the same
+  `llm.Provider`; provider + per-provider model now live in
+  `config.json` (`"provider"`, `"models"`), flags are overrides only.
+- **Not yet started:** cost estimate (price table), session picker,
+  tools (read/glob/grep/bash/edit), permission system, agent tool loop,
   context compaction.
 
 ## Decision log
@@ -42,6 +43,7 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | anthropic-sdk-go v1.73 API style | plain struct fields, no `anthropic.F()`; see Gotchas |
 | 2026-09-16 | openai-go v1.12 chat.completions streaming for OpenAI | mirrors `anthropic.go` shape; usage via `StreamOptions.IncludeUsage` |
 | 2026-09-16 | `--provider` flag instead of config key for now | AGENTS.md mandates wiring on provider add; `config.Provider` + per-provider defaults is the dedicated next task |
+| 2026-09-16 | Per-provider `models` map in config (last-used per provider) + built-in defaults (anthropic: claude-sonnet-4-5, openai: gpt-5-mini); legacy single `model` field migrates into it | switching providers must not clobber each provider's chosen model; flags stay session-scoped overrides (`--model` via unexported `override`, cleared by `/model`) |
 
 ## Gotchas & lessons learned
 
@@ -78,3 +80,4 @@ If you are starting a session, or recovering after an interrupt:
 |---|---|---|
 | 2026-09-16 | Scaffolded repo; Phase 1 done (TUI + Anthropic streaming + sessions + docs) | baa7520 |
 | 2026-09-16 | Phase 2 step 1: OpenAI provider via openai-go v1.12, `--provider` flag, fake-SSE provider test, docs | 7ae2922 |
+| 2026-09-16 | Phase 2 step 2: `config.Provider` + per-provider `models` map with legacy migration, flags → overrides, config unit tests, docs | 3de9993 |

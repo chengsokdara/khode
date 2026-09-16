@@ -19,7 +19,7 @@ One-glance project state. Update at the end of **every** task (see
 - [ ] **Phase 2 — Provider layer + polish**
   - [x] OpenAI provider behind the same `llm.Provider` interface
         (`openai/openai-go`); selection via a `--provider` flag for now
-  - [ ] Provider selection in config (`config.Provider` + per-provider
+  - [x] Provider selection in config (`config.Provider` + per-provider
         model defaults), superseding the `--provider` flag default
   - [ ] Cost estimate from a per-model price table
   - [ ] Session picker / named sessions
@@ -43,15 +43,14 @@ One-glance project state. Update at the end of **every** task (see
 
 ## Now
 
-Phase 2 in flight: OpenAI provider committed and tested; next is moving
-provider selection into config.
+Phase 2 in flight: provider selection lives in `config.json` (per-provider
+model defaults, flag = override); next is the cost estimate.
 
 ## Next
 
-1. Provider selection: `config.Provider` + per-provider model defaults;
-   `cmd/khode` flag becomes an override.
-2. Cost estimate from a per-model price table.
-3. Tests for `agent.Session` and `config.Load/Save`.
+1. Cost estimate from a per-model price table.
+2. Tests for `agent.Session` (config Load/Save already covered).
+3. Session picker / named sessions.
 
 ## Changelog
 
@@ -59,3 +58,4 @@ provider selection into config.
 |---|---|
 | 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs | baa7520 |
 | 2026-09-16 | OpenAI provider (`openai-go` v1.12) + `--provider` flag + fake-SSE provider test | 7ae2922 |
+| 2026-09-16 | Provider selection in config: `provider` + per-provider `models` map, legacy migration, flags → overrides | 3de9993 |
