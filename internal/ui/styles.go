@@ -12,6 +12,8 @@ var (
 	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
 	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	toolStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	resultStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	inputBorder   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
 	viewportStyle = lipgloss.NewStyle().Padding(0, 1)
 )

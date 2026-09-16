@@ -4,7 +4,9 @@
 package ui
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"khode/internal/agent"
 	"khode/internal/config"
 	"khode/internal/llm"
+	"khode/internal/tools"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -28,13 +31,25 @@ const (
 	maxInputHeight = 6
 )
 
+// uiMessageKind separates the block styles inside the chat pane.
+type uiMessageKind int
+
+const (
+	kindText uiMessageKind = iota
+	kindToolCall
+	kindToolResult
+)
+
 // uiMessage is a message shown in the chat pane. Only messages with
-// history=true are part of the LLM conversation (session transcript).
+// history=true mirror the session transcript; tool blocks display agent
+// activity and are display-only.
 type uiMessage struct {
 	role      llm.Role
+	kind      uiMessageKind
 	raw       string
 	rendered  string
 	streaming bool
+	isErr     bool
 	history   bool
 }
 
@@ -43,6 +58,8 @@ type Model struct {
 	cfg      *config.Config
 	provider llm.Provider
 	session  *agent.Session
+	tools    *tools.Registry
+	workdir  string
 
 	width    int
 	height   int
@@ -69,7 +86,7 @@ type Model struct {
 
 // New builds the root model, restoring prior conversation history from the
 // session transcript (used by --resume).
-func New(cfg *config.Config, p llm.Provider, sess *agent.Session) Model {
+func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Registry, workdir string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask khode to do something…"
 	ta.Prompt = " "
@@ -90,17 +107,35 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session) Model {
 		cfg:      cfg,
 		provider: p,
 		session:  sess,
+		tools:    reg,
+		workdir:  workdir,
 		textarea: ta,
 		spinner:  sp,
 		viewport: viewport.New(60, 10),
 	}
 
 	for _, msg := range sess.Messages() {
-		m.messages = append(m.messages, uiMessage{
-			role:    msg.Role,
-			raw:     msg.Content,
-			history: true,
-		})
+		switch {
+		case msg.Role == llm.RoleTool && msg.ToolResult != nil:
+			m.messages = append(m.messages, uiMessage{
+				role:    msg.Role,
+				kind:    kindToolResult,
+				raw:     msg.ToolResult.Content,
+				isErr:   msg.ToolResult.IsError,
+				history: true,
+			})
+		case msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0:
+			if msg.Content != "" {
+				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
+			}
+			for _, c := range msg.ToolCalls {
+				m.messages = append(m.messages, uiMessage{
+					role: msg.Role, kind: kindToolCall, raw: formatToolCall(c), history: true,
+				})
+			}
+		default:
+			m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
+		}
 	}
 	m.banner()
 	return m
@@ -230,10 +265,26 @@ func waitForEvents(ch <-chan llm.Event) tea.Cmd {
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	switch e := ev.(type) {
 	case llm.TextDeltaEvent:
+		m.ensureStreamingBlock()
 		m.partial.WriteString(e.Text)
 		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
 			m.messages[idx].raw = m.partial.String()
 		}
+		m.renderAll()
+		return waitForEvents(m.events)
+
+	case llm.ToolCallEvent:
+		m.sealStreamingText()
+		m.messages = append(m.messages, uiMessage{
+			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
+		})
+		m.renderAll()
+		return waitForEvents(m.events)
+
+	case llm.ToolResultEvent:
+		m.messages = append(m.messages, uiMessage{
+			role: llm.RoleTool, kind: kindToolResult, raw: e.Output, isErr: e.IsError,
+		})
 		m.renderAll()
 		return waitForEvents(m.events)
 
@@ -258,8 +309,32 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	return waitForEvents(m.events)
 }
 
-// finishStream closes out the in-flight assistant message: renders it,
-// stores it in the session, and returns the UI to ready state.
+// ensureStreamingBlock opens a fresh streaming text bubble when the last
+// block is not one (turn start, or a new round after tool calls).
+func (m *Model) ensureStreamingBlock() {
+	if len(m.messages) > 0 && m.messages[len(m.messages)-1].streaming {
+		return
+	}
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true, history: true})
+}
+
+// sealStreamingText finalizes the open streaming bubble for display: the
+// session write itself belongs to the agent loop, not the UI.
+func (m *Model) sealStreamingText() {
+	m.partial.Reset()
+	idx := len(m.messages) - 1
+	if idx < 0 || !m.messages[idx].streaming {
+		return
+	}
+	if m.messages[idx].raw == "" {
+		m.messages = m.messages[:idx] // drop the empty streaming block
+		return
+	}
+	m.messages[idx].streaming = false
+}
+
+// finishStream closes out the turn: finalize display and return the UI to
+// ready state. Session writes happened in the agent loop.
 func (m *Model) finishStream() tea.Cmd {
 	m.streaming = false
 	m.events = nil
@@ -268,21 +343,10 @@ func (m *Model) finishStream() tea.Cmd {
 		m.cancel = nil
 	}
 
-	text := m.partial.String()
-	m.partial.Reset()
-	idx := len(m.messages) - 1
-
-	if text == "" && idx >= 0 && m.messages[idx].streaming {
-		m.messages = m.messages[:idx] // drop the empty streaming block
-	} else if idx >= 0 && m.messages[idx].streaming {
-		m.messages[idx].raw = text
-		m.messages[idx].streaming = false
-		if err := m.session.Append(llm.Message{Role: llm.RoleAssistant, Content: text}); err != nil {
-			m.lastErr = err.Error()
-		}
-	}
+	m.sealStreamingText()
 	if m.lastErr != "" {
 		m.messages = append(m.messages, uiMessage{role: "system", raw: "error: " + m.lastErr})
+		m.lastErr = ""
 	}
 
 	m.renderAll()
@@ -308,38 +372,31 @@ func (m *Model) submit() tea.Cmd {
 		return m.command(input)
 	}
 
-	if err := m.session.Append(llm.Message{Role: llm.RoleUser, Content: input}); err != nil {
-		m.lastErr = err.Error()
-		return nil
-	}
 	m.messages = append(m.messages, uiMessage{role: llm.RoleUser, raw: input, history: true})
 	m.renderAll()
-	return m.startStream()
+	return m.startTurn(input)
 }
 
-func (m *Model) startStream() tea.Cmd {
+// startTurn hands the user input to the agent loop. The loop owns session
+// writes and streams events back through the same channel the provider
+// pump consumed in earlier phases.
+func (m *Model) startTurn(input string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
-	req := llm.Request{
-		System:    systemPrompt(),
+	runner := &agent.Runner{
+		Provider:  m.provider,
+		Session:   m.session,
+		Tools:     m.tools,
 		Model:     m.cfg.Model(),
 		MaxTokens: m.cfg.MaxTokens,
-		Messages:  m.session.Messages(),
+		System:    agent.DefaultSystemPrompt(m.workdir),
 	}
-	ch, err := m.provider.Stream(ctx, req)
-	if err != nil {
-		cancel()
-		m.lastErr = err.Error()
-		m.messages = append(m.messages, uiMessage{role: "system", raw: "error: " + err.Error()})
-		m.renderAll()
-		return nil
-	}
+	ch := runner.Run(ctx, input)
 
 	m.cancel = cancel
 	m.events = ch
 	m.streaming = true
 	m.lastErr = ""
-	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true, history: true})
-	m.renderAll()
+	m.partial.Reset()
 	return tea.Batch(waitForEvents(ch), m.spinner.Tick)
 }
 
@@ -351,9 +408,23 @@ func (m *Model) command(input string) tea.Cmd {
 			"/new [name]   fresh session, optionally named",
 			"/sessions     switch session (picker)",
 			"/model <name> switch model (persisted)",
+			"/tools        list tools the model can call",
 			"/exit, /quit  leave khode",
 			"/help         this list",
 		}, "\n")})
+
+	case "/tools":
+		names := m.tools.Names()
+		if len(names) == 0 {
+			m.messages = append(m.messages, uiMessage{role: "system", raw: "no tools registered"})
+			break
+		}
+		var lines []string
+		for _, n := range names {
+			t, _ := m.tools.Get(n)
+			lines = append(lines, fmt.Sprintf("%-6s %s", n, t.Description()))
+		}
+		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join(lines, "\n")})
 
 	case "/new":
 		var (
@@ -418,7 +489,7 @@ func (m *Model) statusLine() string {
 	var state string
 	switch {
 	case m.streaming:
-		state = m.spinner.View() + statusStyle.Render(" streaming… (esc to stop)")
+		state = m.spinner.View() + statusStyle.Render(" working… (esc to stop)")
 	case m.lastErr != "":
 		state = errorStyle.Render("✗ " + m.lastErr)
 	default:
@@ -442,10 +513,21 @@ func (m *Model) block(i int, width int) string {
 	}
 
 	var out string
-	switch msg.role {
-	case llm.RoleUser:
+	switch {
+	case msg.kind == kindToolCall:
+		out = toolStyle.Width(width).Render("⏺ " + msg.raw)
+	case msg.kind == kindToolResult:
+		body := summarizeToolResult(msg.raw)
+		style := resultStyle
+		prefix := "⎿  "
+		if msg.isErr {
+			style = errorStyle
+			prefix = "⎿  error: "
+		}
+		out = style.Width(width).Render(prefix + body)
+	case msg.role == llm.RoleUser:
 		out = userStyle.Width(width).Render("❯ " + msg.raw)
-	case llm.RoleAssistant:
+	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
 			out = dimStyle.Width(width).Render(msg.raw)
 		} else {
@@ -532,6 +614,56 @@ func humanTokens(n int64) string {
 	}
 }
 
+// toolResultPreview caps how many lines of a tool result the chat shows.
+const toolResultPreviewLines = 2
+
+// formatToolCall renders a tool call as one compact line: name plus
+// single-line arguments.
+func formatToolCall(c llm.ToolCall) string {
+	args := compactJSON(c.Input)
+	line := c.Name
+	if args != "" && args != "{}" {
+		line += " " + args
+	}
+	return truncate(line, 120)
+}
+
+// summarizeToolResult renders a tool result preview: the first lines with
+// a "+N more lines" note when truncated.
+func summarizeToolResult(raw string) string {
+	raw = strings.TrimRight(raw, "\n")
+	if raw == "" {
+		return "(no output)"
+	}
+	lines := strings.Split(raw, "\n")
+	shown := lines
+	switch {
+	case len(lines) > toolResultPreviewLines:
+		shown = lines[:toolResultPreviewLines]
+		return truncate(strings.Join(shown, " · "), 160) +
+			fmt.Sprintf("  (+%d more lines)", len(lines)-toolResultPreviewLines)
+	}
+	return truncate(strings.Join(shown, " · "), 200)
+}
+
+// compactJSON squeezes a tool call's input onto one line.
+func compactJSON(raw json.RawMessage) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return string(raw)
+	}
+	return buf.String()
+}
+
+// truncate cuts s to max runes, marking the cut with an ellipsis.
+func truncate(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
 // costLabel renders the running session cost; unknown models show a dash.
 func (m *Model) costLabel() string {
 	if !m.hasCost {
@@ -541,10 +673,4 @@ func (m *Model) costLabel() string {
 		return fmt.Sprintf("$%.2f", m.cost)
 	}
 	return fmt.Sprintf("$%.4f", m.cost)
-}
-
-func systemPrompt() string {
-	return `You are khode, a coding assistant running in the user's terminal.
-Be concise and practical. Prefer exact commands and code over prose.
-Format responses in markdown.`
 }

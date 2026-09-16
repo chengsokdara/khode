@@ -10,6 +10,7 @@ import (
 	"khode/internal/agent"
 	"khode/internal/config"
 	"khode/internal/llm"
+	"khode/internal/tools"
 	"khode/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -119,7 +120,15 @@ func main() {
 		}
 	}
 
-	m := ui.New(cfg, provider, sess)
+	// Tools resolve the model's relative paths against the working
+	// directory khode was launched from.
+	workdir, err := os.Getwd()
+	if err != nil {
+		fatal(err)
+	}
+	registry := tools.Default(workdir)
+
+	m := ui.New(cfg, provider, sess, registry, workdir)
 	if pickerEntries != nil {
 		m.OpenPicker(pickerEntries)
 	}
