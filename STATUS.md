@@ -52,4 +52,4 @@ Nothing in flight — Phase 1 committed and clean.
 
 | Date | Change |
 |---|---|
-| 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs |
+| 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs | baa7520 |
