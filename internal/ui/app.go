@@ -52,6 +52,8 @@ type Model struct {
 
 	messages []uiMessage
 
+	picker *picker // session chooser overlay; nil when closed
+
 	streaming bool
 	cancel    context.CancelFunc
 	events    <-chan llm.Event
@@ -108,8 +110,16 @@ func (m *Model) banner() {
 	m.messages = append(m.messages, uiMessage{
 		role: "system",
 		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · /help for commands",
-			Version, m.provider.Name(), m.cfg.Model(), m.session.Base()),
+			Version, m.provider.Name(), m.cfg.Model(), m.session.Name()),
 	})
+}
+
+// useSession makes sess the active conversation and resets the view.
+func (m *Model) useSession(sess *agent.Session) {
+	m.session = sess
+	m.messages = nil
+	m.banner()
+	m.renderAll()
 }
 
 // --- tea.Model -------------------------------------------------------------
@@ -152,6 +162,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishStream()
 
 	case tea.KeyMsg:
+		if m.picker != nil {
+			return m, m.pickerKey(msg)
+		}
 		switch {
 		case msg.Type == tea.KeyCtrlC:
 			m.stopStream()
@@ -178,10 +191,13 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "starting…"
 	}
+	if m.picker != nil {
+		return m.pickerView()
+	}
 
 	header := lipgloss.NewStyle().Width(m.width).Render(
 		titleStyle.Render("◆ khode") +
-			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s", Version, m.provider.Name(), m.cfg.Model(), m.session.Base())),
+			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s", Version, m.provider.Name(), m.cfg.Model(), m.session.Name())),
 	)
 
 	status := m.statusLine()
@@ -332,21 +348,45 @@ func (m *Model) command(input string) tea.Cmd {
 	switch parts[0] {
 	case "/help":
 		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join([]string{
-			"/new          start a fresh session",
+			"/new [name]   fresh session, optionally named",
+			"/sessions     switch session (picker)",
 			"/model <name> switch model (persisted)",
 			"/exit, /quit  leave khode",
 			"/help         this list",
 		}, "\n")})
 
 	case "/new":
-		sess, err := agent.NewSession(config.SessionsDir())
-		if err != nil {
-			m.lastErr = err.Error()
-			return nil
+		var (
+			sess *agent.Session
+			err  error
+		)
+		if len(parts) > 1 {
+			sess, err = agent.NewSessionNamed(config.SessionsDir(), strings.Join(parts[1:], "-"))
+		} else {
+			sess, err = agent.NewSession(config.SessionsDir())
 		}
-		m.session = sess
-		m.messages = nil
-		m.banner()
+		switch {
+		case errors.Is(err, agent.ErrSessionExists):
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: fmt.Sprintf("session %q already exists · open it with /sessions",
+					strings.Join(parts[1:], "-"))})
+		case err != nil:
+			m.lastErr = err.Error()
+		default:
+			m.useSession(sess)
+		}
+
+	case "/sessions":
+		entries, err := agent.LoadSessions(config.SessionsDir())
+		switch {
+		case errors.Is(err, agent.ErrNoSessions):
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: "no sessions yet"})
+		case err != nil:
+			m.lastErr = err.Error()
+		default:
+			m.OpenPicker(entries)
+		}
 
 	case "/model":
 		if len(parts) < 2 {
