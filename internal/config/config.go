@@ -5,20 +5,35 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Defaults used when no config file exists (or fields are missing).
 const (
+	DefaultProvider  = "anthropic"
 	DefaultModel     = "claude-sonnet-4-5"
 	DefaultMaxTokens = 8192
 )
 
-// Config is the persisted user configuration.
+// defaultModels holds each provider's built-in fallback model, used when
+// the user has not chosen a model for that provider (no entry in Models).
+var defaultModels = map[string]string{
+	"anthropic": DefaultModel,
+	"openai":    "gpt-5-mini",
+}
+
+// Config is the persisted user configuration. The active model is looked
+// up through Model; per-provider last-used models live in Models.
 type Config struct {
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens"`
+	Provider  string            `json:"provider"`
+	Models    map[string]string `json:"models,omitempty"`
+	MaxTokens int               `json:"max_tokens"`
+
+	// override is the session-scoped --model flag value; never persisted.
+	override string
 }
 
 // Dir returns khode's state directory (~/.khode).
@@ -36,28 +51,22 @@ func SessionsDir() string { return filepath.Join(Dir(), "sessions") }
 // Path returns the config file path.
 func Path() string { return filepath.Join(Dir(), "config.json") }
 
-// Load reads the config file, applying defaults for missing values.
-// A missing file is not an error; defaults are returned instead.
+// Load reads the config file, applying defaults for missing values and
+// migrating the legacy single-"model" schema. A missing file is not an
+// error; defaults are returned instead.
 func Load() (*Config, error) {
-	cfg := &Config{Model: DefaultModel, MaxTokens: DefaultMaxTokens}
-
 	data, err := os.ReadFile(Path())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return cfg, nil
+			return defaults(), nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("reading config: %w", err)
 	}
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, err
+	var raw rawConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
 	}
-	if cfg.Model == "" {
-		cfg.Model = DefaultModel
-	}
-	if cfg.MaxTokens <= 0 {
-		cfg.MaxTokens = DefaultMaxTokens
-	}
-	return cfg, nil
+	return raw.apply(), nil
 }
 
 // Save writes the config back to disk.
@@ -70,4 +79,69 @@ func (c *Config) Save() error {
 		return err
 	}
 	return os.WriteFile(Path(), append(data, '\n'), 0o644)
+}
+
+// Model returns the model for the active provider: the --model override if
+// set, else the provider's last-used model, else the provider's built-in
+// default.
+func (c *Config) Model() string {
+	if c.override != "" {
+		return c.override
+	}
+	if m := c.Models[c.Provider]; m != "" {
+		return m
+	}
+	if m := defaultModels[c.Provider]; m != "" {
+		return m
+	}
+	return DefaultModel
+}
+
+// SetModel records name as the active provider's model (persisted by the
+// next Save) and clears any session-scoped override.
+func (c *Config) SetModel(name string) {
+	if c.Models == nil {
+		c.Models = map[string]string{}
+	}
+	c.Models[c.Provider] = name
+	c.override = ""
+}
+
+// SetModelOverride applies a session-scoped model that wins over Models
+// until SetModel is called; it is never persisted.
+func (c *Config) SetModelOverride(name string) { c.override = name }
+
+func defaults() *Config {
+	return &Config{Provider: DefaultProvider, MaxTokens: DefaultMaxTokens}
+}
+
+// rawConfig mirrors the config file schema, including the pre-provider
+// single "model" field so old files migrate cleanly.
+type rawConfig struct {
+	Provider  string            `json:"provider"`
+	Models    map[string]string `json:"models"`
+	MaxTokens int               `json:"max_tokens"`
+	Model     string            `json:"model"` // legacy single-model schema
+}
+
+// apply converts a parsed config file into a validated Config, filling
+// defaults and seeding Models from the legacy field.
+func (r rawConfig) apply() *Config {
+	cfg := defaults()
+	if p := strings.ToLower(strings.TrimSpace(r.Provider)); p != "" {
+		cfg.Provider = p
+	}
+	if r.MaxTokens > 0 {
+		cfg.MaxTokens = r.MaxTokens
+	}
+	if len(r.Models) > 0 {
+		cfg.Models = r.Models
+	}
+	if cfg.Models == nil {
+		cfg.Models = map[string]string{}
+	}
+	if cfg.Models[cfg.Provider] == "" && r.Model != "" {
+		cfg.Models[cfg.Provider] = r.Model
+	}
+	return cfg
 }

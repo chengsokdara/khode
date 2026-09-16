@@ -17,7 +17,7 @@ import (
 
 func main() {
 	resume := flag.Bool("resume", false, "resume the most recent session")
-	providerName := flag.String("provider", "anthropic", "LLM provider: anthropic or openai")
+	providerName := flag.String("provider", "", "provider override: anthropic or openai (default from config)")
 	model := flag.String("model", "", "model override, e.g. claude-sonnet-4-5")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -27,8 +27,20 @@ func main() {
 		return
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		fatal(err)
+	}
+	if *model != "" {
+		cfg.SetModelOverride(*model)
+	}
+
+	name := *providerName
+	if name == "" {
+		name = cfg.Provider
+	}
 	var provider llm.Provider
-	switch *providerName {
+	switch name {
 	case "anthropic":
 		if os.Getenv("ANTHROPIC_API_KEY") == "" {
 			fmt.Fprintln(os.Stderr, "khode: ANTHROPIC_API_KEY is not set")
@@ -44,16 +56,8 @@ func main() {
 		}
 		provider = llm.NewOpenAI()
 	default:
-		fmt.Fprintf(os.Stderr, "khode: unknown provider %q (want anthropic or openai)\n", *providerName)
+		fmt.Fprintf(os.Stderr, "khode: unknown provider %q (want anthropic or openai)\n", name)
 		os.Exit(1)
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		fatal(err)
-	}
-	if *model != "" {
-		cfg.Model = *model
 	}
 
 	var sess *agent.Session

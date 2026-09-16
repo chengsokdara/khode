@@ -105,8 +105,8 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session) Model {
 func (m *Model) banner() {
 	m.messages = append(m.messages, uiMessage{
 		role: "system",
-		raw: fmt.Sprintf("khode v%s · model %s · session %s · /help for commands",
-			Version, m.cfg.Model, m.session.Base()),
+		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · /help for commands",
+			Version, m.provider.Name(), m.cfg.Model(), m.session.Base()),
 	})
 }
 
@@ -179,7 +179,7 @@ func (m Model) View() string {
 
 	header := lipgloss.NewStyle().Width(m.width).Render(
 		titleStyle.Render("◆ khode") +
-			dimStyle.Render(fmt.Sprintf(" v%s · %s · %s", Version, m.cfg.Model, m.session.Base())),
+			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s", Version, m.provider.Name(), m.cfg.Model(), m.session.Base())),
 	)
 
 	status := m.statusLine()
@@ -299,7 +299,7 @@ func (m *Model) startStream() tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := llm.Request{
 		System:    systemPrompt(),
-		Model:     m.cfg.Model,
+		Model:     m.cfg.Model(),
 		MaxTokens: m.cfg.MaxTokens,
 		Messages:  m.session.Messages(),
 	}
@@ -345,13 +345,14 @@ func (m *Model) command(input string) tea.Cmd {
 	case "/model":
 		if len(parts) < 2 {
 			m.messages = append(m.messages, uiMessage{role: "system",
-				raw: fmt.Sprintf("usage: /model <name> (current: %s)", m.cfg.Model)})
+				raw: fmt.Sprintf("usage: /model <name> (current: %s/%s)", m.provider.Name(), m.cfg.Model())})
 		} else {
-			m.cfg.Model = parts[1]
+			m.cfg.SetModel(parts[1])
 			if err := m.cfg.Save(); err != nil {
 				m.lastErr = err.Error()
 			}
-			m.messages = append(m.messages, uiMessage{role: "system", raw: "model → " + parts[1]})
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: fmt.Sprintf("model → %s/%s", m.provider.Name(), m.cfg.Model())})
 		}
 
 	case "/exit", "/quit":
