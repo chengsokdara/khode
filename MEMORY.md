@@ -22,15 +22,16 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
-- **Working:** Phase 1 complete — TUI chat with Anthropic streaming,
-  markdown rendering (glamour), JSONL session persistence, `--resume`,
-  slash commands (`/help`, `/new`, `/model`, `/exit`), token counter,
-  esc-to-stop streaming. Phase 2: OpenAI provider works behind the same
-  `llm.Provider`; provider + per-provider model now live in
-  `config.json` (`"provider"`, `"models"`), flags are overrides only.
-- **Not yet started:** cost estimate (price table), session picker,
-  tools (read/glob/grep/bash/edit), permission system, agent tool loop,
-  context compaction.
+- **Working:** Phase 2 complete — provider-agnostic `llm.Provider` with
+  Anthropic + OpenAI (both fake-SSE tested); provider + per-provider
+  models in `config.json` (flags are overrides); status-line cost
+  estimate from a built-in price table; named sessions (`/new [name]`,
+  slugified) with an in-TUI `/sessions` picker and
+  `--continue` / `--resume[=name]`; session listings are mtime-ordered
+  and skip empty transcripts. Phase 1 features (TUI chat, markdown,
+  JSONL persistence, token counter, esc-to-stop) all intact.
+- **Not yet started:** tools (read/glob/grep/bash/edit), permission
+  system, agent tool loop, context compaction.
 
 ## Decision log
 
@@ -44,6 +45,9 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | openai-go v1.12 chat.completions streaming for OpenAI | mirrors `anthropic.go` shape; usage via `StreamOptions.IncludeUsage` |
 | 2026-09-16 | `--provider` flag instead of config key for now | AGENTS.md mandates wiring on provider add; `config.Provider` + per-provider defaults is the dedicated next task |
 | 2026-09-16 | Per-provider `models` map in config (last-used per provider) + built-in defaults (anthropic: claude-sonnet-4-5, openai: gpt-5-mini); legacy single `model` field migrates into it | switching providers must not clobber each provider's chosen model; flags stay session-scoped overrides (`--model` via unexported `override`, cleared by `/model`) |
+| 2026-09-16 | Price table keyed by model-name prefixes with longest-prefix match, in `internal/llm/pricing.go` | dated snapshots (`gpt-5-mini-2025-08-07`) resolve to their family; unknown models show no estimate rather than a wrong one |
+| 2026-09-16 | Session listing sorts by mtime and skips 0-line transcripts | lexical order never lets a named session be "latest"; empty transcripts made `--continue` land on abandoned sessions |
+| 2026-09-16 | Picker is an overlay state on the root Model, not a separate bubbletea Program | keeps the Elm single-Model pattern; esc quits only when no chat is behind (startup picker) |
 
 ## Gotchas & lessons learned
 
@@ -73,6 +77,13 @@ If you are starting a session, or recovering after an interrupt:
 - Provider tests: the HTTP request is issued by `Stream`'s goroutine, so
   assert the captured request only AFTER draining the event channel;
   asserting earlier races with the handler.
+- `anthropic-sdk-go` honors `ANTHROPIC_BASE_URL` — the fake-SSE test
+  points it at an `httptest.Server`, same trick as `OPENAI_BASE_URL`.
+- **stdlib `flag` + optional flag values**: bare `--resume` calls
+  `Set("true")` on a custom `flag.Value`; `--resume=<name>` passes the
+  name. A session literally named "true" needs the `=` form.
+- `os.UserHomeDir()` respects `$HOME` on unix, so config tests do
+  `t.Setenv("HOME", t.TempDir())` — no path-injection plumbing needed.
 
 ## Session log (append one entry per session)
 
@@ -81,3 +92,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | Scaffolded repo; Phase 1 done (TUI + Anthropic streaming + sessions + docs) | baa7520 |
 | 2026-09-16 | Phase 2 step 1: OpenAI provider via openai-go v1.12, `--provider` flag, fake-SSE provider test, docs | 7ae2922 |
 | 2026-09-16 | Phase 2 step 2: `config.Provider` + per-provider `models` map with legacy migration, flags → overrides, config unit tests, docs | 3de9993 |
+| 2026-09-16 | Phase 2 finished: cost estimate (c9cc6ab), named sessions + picker (50bfda7), config/Anthropic tests (af2faf7), docs | af2faf7 |
