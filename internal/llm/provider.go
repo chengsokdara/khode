@@ -4,7 +4,10 @@
 // agent loop and UI never depend on a specific SDK.
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Role identifies who authored a message in the conversation.
 type Role string
@@ -12,12 +15,44 @@ type Role string
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	// RoleTool carries the result of one tool call; providers translate it
+	// into their own shape (Anthropic: user tool_result block, OpenAI:
+	// role-"tool" message).
+	RoleTool Role = "tool"
 )
 
-// Message is a single turn in the conversation, provider-agnostic.
+// ToolDef advertises a callable tool to the model.
+type ToolDef struct {
+	Name        string
+	Description string
+	// Parameters is the JSON-schema object describing the tool input.
+	Parameters json.RawMessage
+}
+
+// ToolCall is one tool invocation requested by the model.
+type ToolCall struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
+}
+
+// ToolResult answers the ToolCall whose ID is CallID.
+type ToolResult struct {
+	CallID  string
+	Content string
+	IsError bool
+}
+
+// Message is a single turn in the conversation, provider-agnostic. A user
+// or assistant turn fills Content; an assistant turn that calls tools also
+// fills ToolCalls; a tool turn fills ToolResult.
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
+	// ToolCalls lists the calls requested by an assistant turn.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolResult carries the outcome of one tool call (role tool).
+	ToolResult *ToolResult `json:"tool_result,omitempty"`
 }
 
 // Request is a provider-agnostic completion request.
@@ -26,11 +61,12 @@ type Request struct {
 	Model     string
 	MaxTokens int
 	Messages  []Message
+	Tools     []ToolDef
 }
 
 // Event is one item streamed back by a Provider. Implementations send zero
-// or more TextDeltaEvent / UsageEvent values, at most one ErrorEvent, exactly
-// one DoneEvent, then close the channel.
+// or more TextDeltaEvent / ToolCallEvent / UsageEvent values, at most one
+// ErrorEvent, exactly one DoneEvent, then close the channel.
 type Event interface {
 	isEvent()
 }
@@ -38,6 +74,12 @@ type Event interface {
 // TextDeltaEvent carries an incremental chunk of assistant text.
 type TextDeltaEvent struct {
 	Text string
+}
+
+// ToolCallEvent reports a tool call the model finished requesting. The
+// Input JSON is complete when the event is emitted.
+type ToolCallEvent struct {
+	ToolCall
 }
 
 // UsageEvent reports token consumption for the completed response.
@@ -56,6 +98,7 @@ type ErrorEvent struct {
 type DoneEvent struct{}
 
 func (TextDeltaEvent) isEvent() {}
+func (ToolCallEvent) isEvent()  {}
 func (UsageEvent) isEvent()     {}
 func (ErrorEvent) isEvent()     {}
 func (DoneEvent) isEvent()      {}

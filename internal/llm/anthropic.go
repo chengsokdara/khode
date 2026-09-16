@@ -2,6 +2,9 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -34,7 +37,25 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 		case RoleUser:
 			msgs = append(msgs, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
 		case RoleAssistant:
-			msgs = append(msgs, anthropic.NewAssistantMessage(anthropic.NewTextBlock(m.Content)))
+			blocks := make([]anthropic.ContentBlockParamUnion, 0, len(m.ToolCalls)+1)
+			if m.Content != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
+			}
+			for _, c := range m.ToolCalls {
+				input := c.Input
+				if len(input) == 0 {
+					input = json.RawMessage("{}")
+				}
+				blocks = append(blocks, anthropic.NewToolUseBlock(c.ID, input, c.Name))
+			}
+			msgs = append(msgs, anthropic.NewAssistantMessage(blocks...))
+		case RoleTool:
+			r := m.ToolResult
+			if r == nil {
+				continue
+			}
+			msgs = append(msgs, anthropic.NewUserMessage(
+				anthropic.NewToolResultBlock(r.CallID, r.Content, r.IsError)))
 		}
 	}
 
@@ -46,6 +67,18 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 		},
 		Messages: msgs,
 	}
+	for _, t := range req.Tools {
+		tool := anthropic.ToolParam{Name: t.Name}
+		if t.Description != "" {
+			tool.Description = anthropic.Opt(t.Description)
+		}
+		if len(t.Parameters) > 0 {
+			if err := json.Unmarshal(t.Parameters, &tool.InputSchema); err != nil {
+				return nil, fmt.Errorf("tool %q schema: %w", t.Name, err)
+			}
+		}
+		params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &tool})
+	}
 
 	ch := make(chan Event, 64)
 	go func() {
@@ -54,12 +87,40 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 		stream := a.client.Messages.NewStreaming(ctx, params)
 		defer stream.Close()
 
+		// Tool inputs arrive as partial JSON deltas keyed by block index;
+		// each completed block becomes one ToolCallEvent.
+		type toolBuild struct {
+			id, name string
+			input    strings.Builder
+		}
+		builds := map[int64]*toolBuild{}
+
 		usage := UsageEvent{}
 		for stream.Next() {
 			switch ev := stream.Current().AsAny().(type) {
+			case anthropic.ContentBlockStartEvent:
+				if tb, ok := ev.ContentBlock.AsAny().(anthropic.ToolUseBlock); ok {
+					builds[ev.Index] = &toolBuild{id: tb.ID, name: tb.Name}
+				}
 			case anthropic.ContentBlockDeltaEvent:
-				if td, ok := ev.Delta.AsAny().(anthropic.TextDelta); ok && td.Text != "" {
-					ch <- TextDeltaEvent{Text: td.Text}
+				switch d := ev.Delta.AsAny().(type) {
+				case anthropic.TextDelta:
+					if d.Text != "" {
+						ch <- TextDeltaEvent{Text: d.Text}
+					}
+				case anthropic.InputJSONDelta:
+					if b := builds[ev.Index]; b != nil {
+						b.input.WriteString(d.PartialJSON)
+					}
+				}
+			case anthropic.ContentBlockStopEvent:
+				if b := builds[ev.Index]; b != nil {
+					input := []byte(b.input.String())
+					if len(input) == 0 {
+						input = json.RawMessage("{}")
+					}
+					ch <- ToolCallEvent{ToolCall{ID: b.id, Name: b.name, Input: input}}
+					delete(builds, ev.Index)
 				}
 			case anthropic.MessageStartEvent:
 				usage.InputTokens = ev.Message.Usage.InputTokens
