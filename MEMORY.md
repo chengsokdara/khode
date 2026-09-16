@@ -25,9 +25,11 @@ If you are starting a session, or recovering after an interrupt:
 - **Working:** Phase 1 complete — TUI chat with Anthropic streaming,
   markdown rendering (glamour), JSONL session persistence, `--resume`,
   slash commands (`/help`, `/new`, `/model`, `/exit`), token counter,
-  esc-to-stop streaming.
-- **Not yet started:** OpenAI provider, tools (read/glob/grep/bash/edit),
-  permission system, agent tool loop, context compaction.
+  esc-to-stop streaming. Phase 2 started: OpenAI provider works behind
+  the same `llm.Provider`, selected with `--provider openai`.
+- **Not yet started:** config-level provider selection, tools
+  (read/glob/grep/bash/edit), permission system, agent tool loop,
+  context compaction.
 
 ## Decision log
 
@@ -38,6 +40,8 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | Channel-based streaming + `waitForEvents` cmd chain | idiomatic bubbletea; no `*tea.Program` coupling |
 | 2026-09-16 | JSONL session transcripts in `~/.khode/sessions/` | crash-safe append, trivially resumable; SQLite only if needed later |
 | 2026-09-16 | anthropic-sdk-go v1.73 API style | plain struct fields, no `anthropic.F()`; see Gotchas |
+| 2026-09-16 | openai-go v1.12 chat.completions streaming for OpenAI | mirrors `anthropic.go` shape; usage via `StreamOptions.IncludeUsage` |
+| 2026-09-16 | `--provider` flag instead of config key for now | AGENTS.md mandates wiring on provider add; `config.Provider` + per-provider defaults is the dedicated next task |
 
 ## Gotchas & lessons learned
 
@@ -56,9 +60,21 @@ If you are starting a session, or recovering after an interrupt:
   a `lipgloss` `Width()` style before it enters the viewport.
 - Rendered-block cache must be invalidated on `tea.WindowSizeMsg`
   (`invalidateRendered`) or resize shows stale widths.
+- **openai-go v1.12**: use `MaxCompletionTokens` (not the deprecated
+  `MaxTokens`); usage totals only arrive when
+  `StreamOptions.IncludeUsage: openai.Bool(true)` is set, on a final
+  chunk whose `Choices` is empty; message helpers are
+  `openai.SystemMessage/UserMessage/AssistantMessage`.
+- **openai-go `NewClient()`** reads both `OPENAI_API_KEY` and
+  `OPENAI_BASE_URL` from the env — OpenAI-compatible endpoints work with
+  zero extra code (verified against a local fake SSE server).
+- Provider tests: the HTTP request is issued by `Stream`'s goroutine, so
+  assert the captured request only AFTER draining the event channel;
+  asserting earlier races with the handler.
 
 ## Session log (append one entry per session)
 
 | Date | Session summary | Commits |
 |---|---|---|
 | 2026-09-16 | Scaffolded repo; Phase 1 done (TUI + Anthropic streaming + sessions + docs) | baa7520 |
+| 2026-09-16 | Phase 2 step 1: OpenAI provider via openai-go v1.12, `--provider` flag, fake-SSE provider test, docs | — |
