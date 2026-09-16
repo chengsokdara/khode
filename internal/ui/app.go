@@ -1,0 +1,491 @@
+// Package ui contains the Bubble Tea front-end. The agent/provider machinery
+// runs in a background goroutine and streams llm.Event values into the TUI
+// through the waitForEvents command chain.
+package ui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"khode/internal/agent"
+	"khode/internal/config"
+	"khode/internal/llm"
+
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
+)
+
+const (
+	Version        = "0.1.0"
+	minInputHeight = 1
+	maxInputHeight = 6
+)
+
+// uiMessage is a message shown in the chat pane. Only messages with
+// history=true are part of the LLM conversation (session transcript).
+type uiMessage struct {
+	role      llm.Role
+	raw       string
+	rendered  string
+	streaming bool
+	history   bool
+}
+
+// Model is the root Bubble Tea model.
+type Model struct {
+	cfg      *config.Config
+	provider llm.Provider
+	session  *agent.Session
+
+	width    int
+	height   int
+	viewport viewport.Model
+	textarea textarea.Model
+	spinner  spinner.Model
+
+	messages []uiMessage
+
+	streaming bool
+	cancel    context.CancelFunc
+	events    <-chan llm.Event
+	partial   strings.Builder // text accumulated for the in-flight reply
+
+	inTokens  int64
+	outTokens int64
+
+	lastErr string
+}
+
+// New builds the root model, restoring prior conversation history from the
+// session transcript (used by --resume).
+func New(cfg *config.Config, p llm.Provider, sess *agent.Session) Model {
+	ta := textarea.New()
+	ta.Placeholder = "Ask khode to do something…"
+	ta.Prompt = " "
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	ta.MaxHeight = maxInputHeight
+	ta.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("alt+enter"),
+		key.WithHelp("alt+enter", "newline"),
+	)
+	ta.Focus()
+	ta.SetWidth(60)
+	ta.SetHeight(minInputHeight)
+
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+
+	m := Model{
+		cfg:      cfg,
+		provider: p,
+		session:  sess,
+		textarea: ta,
+		spinner:  sp,
+		viewport: viewport.New(60, 10),
+	}
+
+	for _, msg := range sess.Messages() {
+		m.messages = append(m.messages, uiMessage{
+			role:    msg.Role,
+			raw:     msg.Content,
+			history: true,
+		})
+	}
+	m.banner()
+	return m
+}
+
+func (m *Model) banner() {
+	m.messages = append(m.messages, uiMessage{
+		role: "system",
+		raw: fmt.Sprintf("khode v%s · model %s · session %s · /help for commands",
+			Version, m.cfg.Model, m.session.Base()),
+	})
+}
+
+// --- tea.Model -------------------------------------------------------------
+
+type streamEventMsg struct{ ev llm.Event }
+
+// streamClosedMsg arrives when the provider closed the event channel without
+// a terminal event (e.g. ctx cancelled before we drained it).
+type streamClosedMsg struct{}
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(textarea.Blink, m.spinner.Tick)
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.textarea.SetWidth(max(10, m.width-6))
+		m.relayout()
+		m.invalidateRendered()
+		m.renderAll()
+		return m, nil
+
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case streamEventMsg:
+		return m, m.handleStreamEvent(msg.ev)
+
+	case streamClosedMsg:
+		return m, m.finishStream()
+
+	case tea.KeyMsg:
+		switch {
+		case msg.Type == tea.KeyCtrlC:
+			m.stopStream()
+			return m, tea.Quit
+		case msg.Type == tea.KeyEsc && m.streaming:
+			m.stopStream()
+			return m, nil
+		case msg.Type == tea.KeyEnter && !msg.Alt:
+			if m.streaming {
+				return m, nil
+			}
+			return m, m.submit()
+		}
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		m.maybeGrowInput()
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func (m Model) View() string {
+	if m.width == 0 {
+		return "starting…"
+	}
+
+	header := lipgloss.NewStyle().Width(m.width).Render(
+		titleStyle.Render("◆ khode") +
+			dimStyle.Render(fmt.Sprintf(" v%s · %s · %s", Version, m.cfg.Model, m.session.Base())),
+	)
+
+	status := m.statusLine()
+	inputBox := inputBorder.Render(m.textarea.View())
+	help := dimStyle.Width(m.width).Render(
+		"enter send · alt+enter newline · esc stop stream · ctrl+c quit",
+	)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		viewportStyle.Render(m.viewport.View()),
+		status,
+		inputBox,
+		help,
+	)
+}
+
+// --- streaming -------------------------------------------------------------
+
+func waitForEvents(ch <-chan llm.Event) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-ch
+		if !ok {
+			return streamClosedMsg{}
+		}
+		return streamEventMsg{ev: ev}
+	}
+}
+
+func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
+	switch e := ev.(type) {
+	case llm.TextDeltaEvent:
+		m.partial.WriteString(e.Text)
+		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
+			m.messages[idx].raw = m.partial.String()
+		}
+		m.renderAll()
+		return waitForEvents(m.events)
+
+	case llm.UsageEvent:
+		m.inTokens += e.InputTokens
+		m.outTokens += e.OutputTokens
+		return waitForEvents(m.events)
+
+	case llm.ErrorEvent:
+		if !errors.Is(e.Err, context.Canceled) {
+			m.lastErr = e.Err.Error()
+		}
+		return m.finishStream()
+
+	case llm.DoneEvent:
+		return m.finishStream()
+	}
+	return waitForEvents(m.events)
+}
+
+// finishStream closes out the in-flight assistant message: renders it,
+// stores it in the session, and returns the UI to ready state.
+func (m *Model) finishStream() tea.Cmd {
+	m.streaming = false
+	m.events = nil
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+
+	text := m.partial.String()
+	m.partial.Reset()
+	idx := len(m.messages) - 1
+
+	if text == "" && idx >= 0 && m.messages[idx].streaming {
+		m.messages = m.messages[:idx] // drop the empty streaming block
+	} else if idx >= 0 && m.messages[idx].streaming {
+		m.messages[idx].raw = text
+		m.messages[idx].streaming = false
+		if err := m.session.Append(llm.Message{Role: llm.RoleAssistant, Content: text}); err != nil {
+			m.lastErr = err.Error()
+		}
+	}
+	if m.lastErr != "" {
+		m.messages = append(m.messages, uiMessage{role: "system", raw: "error: " + m.lastErr})
+	}
+
+	m.renderAll()
+	return textarea.Blink
+}
+
+func (m *Model) stopStream() {
+	if m.cancel != nil {
+		m.cancel()
+	}
+}
+
+// --- input handling ----------------------------------------------------------
+
+func (m *Model) submit() tea.Cmd {
+	input := strings.TrimSpace(m.textarea.Value())
+	m.textarea.Reset()
+	m.maybeGrowInput()
+	if input == "" {
+		return nil
+	}
+	if strings.HasPrefix(input, "/") {
+		return m.command(input)
+	}
+
+	if err := m.session.Append(llm.Message{Role: llm.RoleUser, Content: input}); err != nil {
+		m.lastErr = err.Error()
+		return nil
+	}
+	m.messages = append(m.messages, uiMessage{role: llm.RoleUser, raw: input, history: true})
+	m.renderAll()
+	return m.startStream()
+}
+
+func (m *Model) startStream() tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	req := llm.Request{
+		System:    systemPrompt(),
+		Model:     m.cfg.Model,
+		MaxTokens: m.cfg.MaxTokens,
+		Messages:  m.session.Messages(),
+	}
+	ch, err := m.provider.Stream(ctx, req)
+	if err != nil {
+		cancel()
+		m.lastErr = err.Error()
+		m.messages = append(m.messages, uiMessage{role: "system", raw: "error: " + err.Error()})
+		m.renderAll()
+		return nil
+	}
+
+	m.cancel = cancel
+	m.events = ch
+	m.streaming = true
+	m.lastErr = ""
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true, history: true})
+	m.renderAll()
+	return tea.Batch(waitForEvents(ch), m.spinner.Tick)
+}
+
+func (m *Model) command(input string) tea.Cmd {
+	parts := strings.Fields(input)
+	switch parts[0] {
+	case "/help":
+		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join([]string{
+			"/new          start a fresh session",
+			"/model <name> switch model (persisted)",
+			"/exit, /quit  leave khode",
+			"/help         this list",
+		}, "\n")})
+
+	case "/new":
+		sess, err := agent.NewSession(config.SessionsDir())
+		if err != nil {
+			m.lastErr = err.Error()
+			return nil
+		}
+		m.session = sess
+		m.messages = nil
+		m.banner()
+
+	case "/model":
+		if len(parts) < 2 {
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: fmt.Sprintf("usage: /model <name> (current: %s)", m.cfg.Model)})
+		} else {
+			m.cfg.Model = parts[1]
+			if err := m.cfg.Save(); err != nil {
+				m.lastErr = err.Error()
+			}
+			m.messages = append(m.messages, uiMessage{role: "system", raw: "model → " + parts[1]})
+		}
+
+	case "/exit", "/quit":
+		return tea.Quit
+
+	default:
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("unknown command %s · try /help", parts[0])})
+	}
+	m.renderAll()
+	return nil
+}
+
+// --- rendering --------------------------------------------------------------
+
+func (m *Model) statusLine() string {
+	var state string
+	switch {
+	case m.streaming:
+		state = m.spinner.View() + statusStyle.Render(" streaming… (esc to stop)")
+	case m.lastErr != "":
+		state = errorStyle.Render("✗ " + m.lastErr)
+	default:
+		state = okStyle.Render("● ready")
+	}
+	tok := dimStyle.Render(fmt.Sprintf("in %s · out %s", humanTokens(m.inTokens), humanTokens(m.outTokens)))
+
+	gap := m.width - lipgloss.Width(state) - lipgloss.Width(tok)
+	if gap < 1 {
+		gap = 1
+	}
+	return state + strings.Repeat(" ", gap) + tok
+}
+
+// block renders one chat message, caching the result until invalidated.
+func (m *Model) block(i int, width int) string {
+	msg := m.messages[i]
+	if msg.rendered != "" && !msg.streaming {
+		return msg.rendered
+	}
+
+	var out string
+	switch msg.role {
+	case llm.RoleUser:
+		out = userStyle.Width(width).Render("❯ " + msg.raw)
+	case llm.RoleAssistant:
+		if msg.streaming {
+			out = dimStyle.Width(width).Render(msg.raw)
+		} else {
+			out = renderMarkdown(msg.raw, width)
+		}
+	default:
+		out = systemStyle.Width(width).Render("· " + msg.raw)
+	}
+
+	msg.rendered = out
+	m.messages[i] = msg
+	return out
+}
+
+// renderAll rebuilds the viewport content from all messages.
+func (m *Model) renderAll() {
+	if m.width == 0 {
+		return
+	}
+	blocks := make([]string, 0, len(m.messages))
+	for i := range m.messages {
+		blocks = append(blocks, strings.TrimSpace(m.block(i, m.viewport.Width-2)))
+	}
+	m.viewport.SetContent(strings.Join(blocks, "\n\n"))
+	m.viewport.GotoBottom()
+}
+
+func (m *Model) invalidateRendered() {
+	for i := range m.messages {
+		m.messages[i].rendered = ""
+	}
+}
+
+// relayout recomputes the viewport size from the current window and input.
+func (m *Model) relayout() {
+	inputH := m.textarea.Height() + 2 // rounded border
+	vh := m.height - inputH - 3       // header + status + help
+	if vh < 3 {
+		vh = 3
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = vh
+}
+
+func (m *Model) maybeGrowInput() {
+	lines := strings.Count(m.textarea.Value(), "\n") + 1
+	h := min(maxInputHeight, max(minInputHeight, lines))
+	if h != m.textarea.Height() {
+		m.textarea.SetHeight(h)
+		m.relayout()
+	}
+}
+
+// --- helpers -----------------------------------------------------------------
+
+// renderMarkdown renders complete assistant messages with glamour.
+func renderMarkdown(raw string, width int) string {
+	w := width
+	if w < 20 {
+		w = 20
+	}
+	if w > 160 {
+		w = 160
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithWordWrap(w), glamour.WithAutoStyle())
+	if err != nil {
+		return raw
+	}
+	out, err := r.Render(raw)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func humanTokens(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+func systemPrompt() string {
+	return `You are khode, a coding assistant running in the user's terminal.
+Be concise and practical. Prefer exact commands and code over prose.
+Format responses in markdown.`
+}

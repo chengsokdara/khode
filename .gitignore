@@ -1,0 +1,10 @@
+# binary
+/khode
+dist/
+
+# local logs
+*.log
+logs/
+
+# other local tool state
+.crush/
