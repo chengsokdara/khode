@@ -31,16 +31,16 @@ type ToolDef struct {
 
 // ToolCall is one tool invocation requested by the model.
 type ToolCall struct {
-	ID    string
-	Name  string
-	Input json.RawMessage
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 // ToolResult answers the ToolCall whose ID is CallID.
 type ToolResult struct {
-	CallID  string
-	Content string
-	IsError bool
+	CallID  string `json:"call_id"`
+	Content string `json:"content"`
+	IsError bool   `json:"is_error"`
 }
 
 // Message is a single turn in the conversation, provider-agnostic. A user
