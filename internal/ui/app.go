@@ -59,6 +59,8 @@ type Model struct {
 
 	inTokens  int64
 	outTokens int64
+	cost      float64
+	hasCost   bool // price known for the models used so far
 
 	lastErr string
 }
@@ -222,6 +224,10 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.UsageEvent:
 		m.inTokens += e.InputTokens
 		m.outTokens += e.OutputTokens
+		if c, ok := llm.CostEstimate(m.cfg.Model(), e.InputTokens, e.OutputTokens); ok {
+			m.cost += c
+			m.hasCost = true
+		}
 		return waitForEvents(m.events)
 
 	case llm.ErrorEvent:
@@ -378,7 +384,8 @@ func (m *Model) statusLine() string {
 	default:
 		state = okStyle.Render("● ready")
 	}
-	tok := dimStyle.Render(fmt.Sprintf("in %s · out %s", humanTokens(m.inTokens), humanTokens(m.outTokens)))
+	tok := dimStyle.Render(fmt.Sprintf("in %s · out %s · %s",
+		humanTokens(m.inTokens), humanTokens(m.outTokens), m.costLabel()))
 
 	gap := m.width - lipgloss.Width(state) - lipgloss.Width(tok)
 	if gap < 1 {
@@ -483,6 +490,17 @@ func humanTokens(n int64) string {
 	default:
 		return fmt.Sprintf("%d", n)
 	}
+}
+
+// costLabel renders the running session cost; unknown models show a dash.
+func (m *Model) costLabel() string {
+	if !m.hasCost {
+		return "$–"
+	}
+	if m.cost >= 1 {
+		return fmt.Sprintf("$%.2f", m.cost)
+	}
+	return fmt.Sprintf("$%.4f", m.cost)
 }
 
 func systemPrompt() string {
