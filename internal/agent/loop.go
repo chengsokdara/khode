@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"khode/internal/hooks"
 	"khode/internal/llm"
 	"khode/internal/perm"
 	"khode/internal/tools"
@@ -34,6 +35,9 @@ type Runner struct {
 	Mode perm.Mode
 	// Approver resolves perm.DecisionAsk outcomes; nil declines them.
 	Approver Approver
+	// Hooks runs the user's lifecycle hooks around tool calls; nil
+	// disables them.
+	Hooks *hooks.Runner
 
 	// lastInput is the most recent provider-reported input-token count,
 	// the exact signal behind the compaction trigger; 0 until the turn's
@@ -204,7 +208,19 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 			return "", errors.New("the user declined this tool call")
 		}
 	}
-	return tool.Exec(ctx, c.Input)
+
+	// Hooks run after permission decisions: only calls that are actually
+	// about to execute. A pre_tool veto (exit 2) becomes the error.
+	if r.Hooks != nil {
+		if err := r.Hooks.PreTool(ctx, c.Name, c.Input); err != nil {
+			return "", err
+		}
+	}
+	out, err := tool.Exec(ctx, c.Input)
+	if r.Hooks != nil {
+		r.Hooks.PostTool(ctx, c.Name, c.Input, out, err)
+	}
+	return out, err
 }
 
 // previewOf asks a tool what it would change, for the approval dialog;

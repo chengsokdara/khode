@@ -14,6 +14,7 @@ import (
 
 	"khode/internal/agent"
 	"khode/internal/config"
+	"khode/internal/hooks"
 	"khode/internal/llm"
 	"khode/internal/perm"
 	"khode/internal/tools"
@@ -490,6 +491,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 		System:    agent.SystemPrompt(m.workdir),
 		Mode:      m.mode(),
 		Approver:  m.approvals,
+		Hooks:     hooks.New(m.cfg.Hooks, m.workdir),
 	}
 	ch := runner.Run(ctx, input)
 
