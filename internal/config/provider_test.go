@@ -121,6 +121,37 @@ func TestModelChoicesAddRemove(t *testing.T) {
 	}
 }
 
+func TestKhatewayHasNoDefaultModel(t *testing.T) {
+	cfg := defaults()
+	cfg.Provider = "khateway"
+
+	// khateway only serves what its admin configured, so khode must
+	// never send a vendor default model at it — empty until the user
+	// picks one.
+	if got := cfg.Model(); got != "" {
+		t.Errorf("khateway model = %q, want empty", got)
+	}
+
+	// Built-in env names still resolve (KHATEWAY_*).
+	if got := cfg.APIKeyEnvName("khateway"); got != "KHATEWAY_API_KEY" {
+		t.Errorf("key env name = %q", got)
+	}
+	if got := cfg.BaseURLEnvName("khateway"); got != "KHATEWAY_BASE_URL" {
+		t.Errorf("url env name = %q", got)
+	}
+
+	// Casing-insensitive built-in recognition.
+	if !IsBuiltinProvider("Khateway") {
+		t.Error("IsBuiltinProvider(\"Khateway\") = false")
+	}
+
+	// A fetched model list becomes the fallback like any provider.
+	cfg.SetModelChoices("khateway", []string{"glm-5.3-flash"})
+	if got := cfg.Model(); got != "glm-5.3-flash" {
+		t.Errorf("model after choices = %q, want glm-5.3-flash", got)
+	}
+}
+
 func TestCustomProviderNameCasing(t *testing.T) {
 	// The settings UI saves the provider name as typed ("KiosAPI");
 	// khode once lowercased the active provider field on load, splitting

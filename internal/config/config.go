@@ -37,11 +37,12 @@ type CustomProvider struct {
 	BaseURL string `json:"base_url"`
 }
 
-// IsBuiltinProvider reports whether name is one of the two built-in
+// IsBuiltinProvider reports whether name is one of the built-in
 // providers rather than a user-defined one. Letter casing is ignored,
 // so "OpenAI" in a hand-edited config is still the built-in.
 func IsBuiltinProvider(name string) bool {
-	return strings.EqualFold(name, "anthropic") || strings.EqualFold(name, "openai")
+	return strings.EqualFold(name, "anthropic") || strings.EqualFold(name, "openai") ||
+		strings.EqualFold(name, "khateway")
 }
 
 // MCPServer is one configured Model Context Protocol server process.
@@ -148,9 +149,9 @@ func (c *Config) Save() error {
 
 // Model returns the model for the active provider: the --model override
 // if set, else the provider's last-used model, else the first cached
-// choice, else the provider's default. Custom providers have no
-// built-in default — an unset model comes back empty so the UI can ask
-// for one instead of calling the endpoint with a made-up name.
+// choice, else the provider's default. Custom providers and khateway
+// have no built-in default — an unset model comes back empty so the UI
+// can ask for one instead of calling the endpoint with a made-up name.
 func (c *Config) Model() string {
 	if c.override != "" {
 		return c.override
@@ -164,6 +165,12 @@ func (c *Config) Model() string {
 		}
 	}
 	if _, ok := providerKey(c.CustomProviders, c.Provider); ok {
+		return ""
+	}
+	// khateway only serves models its admin configured, so a vendor
+	// default would be a made-up request; the picker fetches the real
+	// list instead.
+	if strings.EqualFold(c.Provider, "khateway") {
 		return ""
 	}
 	if m := defaultModels[c.Provider]; m != "" {

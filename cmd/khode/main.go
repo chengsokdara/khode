@@ -42,7 +42,7 @@ func main() {
 	resume := resumeFlag("")
 	cont := flag.Bool("continue", false, "continue the most recent session")
 	flag.Var(&resume, "resume", "open the session picker, or resume one: --resume=<name>")
-	providerName := flag.String("provider", "", "provider override: anthropic or openai (default from config)")
+	providerName := flag.String("provider", "", "provider override: anthropic, openai, khateway (default from config)")
 	model := flag.String("model", "", "model override, e.g. claude-sonnet-4-5")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -174,7 +174,10 @@ func main() {
 		m.OpenWelcome()
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Mouse capture starts off: while the app reports mouse events the
+	// terminal cannot select text natively, which kills drag-copy. alt+m
+	// turns capture on for wheel scrolling; pgup/pgdn always scroll.
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fatal(err)
 	}

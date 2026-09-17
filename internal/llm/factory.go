@@ -2,17 +2,19 @@ package llm
 
 import (
 	"fmt"
+	"os"
 )
 
 // Provider names understood by New.
 const (
 	ProviderAnthropic = "anthropic"
 	ProviderOpenAI    = "openai"
+	ProviderKhateway  = "khateway"
 )
 
 // Names lists the built-in providers in a stable order. Custom
 // providers are config-level names that reuse these protocols.
-func Names() []string { return []string{ProviderAnthropic, ProviderOpenAI} }
+func Names() []string { return []string{ProviderAnthropic, ProviderOpenAI, ProviderKhateway} }
 
 // New builds one of the built-in providers, authenticated with key and
 // pointed at baseURL. Either may be empty: the SDK then falls back to
@@ -30,13 +32,31 @@ func New(name, key, baseURL string) (Provider, error) {
 // fall back to the SDK's environment lookup; empty name reports the
 // protocol's canonical name.
 func NewProtocol(protocol, name, key, baseURL string) (Provider, error) {
+	// khateway runs both wire protocols on one origin: the endpoint's
+	// shape picks the face (…/v1/messages → anthropic, else openai),
+	// and the SDK env fallbacks are disabled so a stray ANTHROPIC_API_KEY
+	// can never authenticate a khateway request — the router key is the
+	// client key resolved by config.Credentials.
+	if protocol == ProviderKhateway {
+		protocol, baseURL = KhatewayProtocol(baseURL)
+		key = orEnv(key, "KHATEWAY_API_KEY")
+	}
 	switch protocol {
 	case ProviderAnthropic:
 		return newAnthropicClient(key, baseURL, name), nil
 	case ProviderOpenAI:
 		return newOpenAIClient(key, baseURL, name), nil
 	default:
-		return nil, fmt.Errorf("unknown provider protocol %q (want %s or %s)",
-			protocol, ProviderAnthropic, ProviderOpenAI)
+		return nil, fmt.Errorf("unknown provider protocol %q (want %s, %s or %s)",
+			protocol, ProviderAnthropic, ProviderOpenAI, ProviderKhateway)
 	}
+}
+
+// orEnv returns env's value when key is empty, so KHATEWAY_API_KEY
+// works like the built-ins' SDK env lookup without a config change.
+func orEnv(key, env string) string {
+	if key != "" {
+		return key
+	}
+	return os.Getenv(env)
 }

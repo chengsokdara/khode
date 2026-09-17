@@ -24,10 +24,12 @@ const maxModels = 500
 const modelsTimeout = 15 * time.Second
 
 // DefaultEndpoints are the API roots used when no base URL override is
-// configured. They mirror what the SDKs use internally.
+// configured. They mirror what the SDKs use internally. Khateway rides
+// the openai shape (khateway serves /v1/models on its origin too).
 var DefaultEndpoints = map[string]string{
 	ProviderAnthropic: "https://api.anthropic.com",
 	ProviderOpenAI:    "https://api.openai.com/v1",
+	ProviderKhateway:  DefaultKhatewayEndpoint,
 }
 
 // modelList is the response shape both protocols share: a data array of
@@ -50,6 +52,13 @@ func FetchModels(ctx context.Context, protocol, key, baseURL string) ([]string, 
 	}
 	if baseURL != "" {
 		base = baseURL
+	}
+	// khateway lists models over the openai face no matter which face
+	// the chat calls use — /v1/models is the shared listing on the
+	// gateway origin.
+	if protocol == ProviderKhateway {
+		_, base = KhatewayProtocol(base)
+		protocol = ProviderOpenAI
 	}
 
 	var url string

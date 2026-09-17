@@ -1175,9 +1175,13 @@ func (m *Model) providerListView() []string {
 	out := make([]string, 0, len(names))
 	for i, n := range names {
 		line := n
-		if config.IsBuiltinProvider(n) {
+		switch {
+		case config.IsBuiltinProvider(n):
 			line += dimStyle.Render("  built-in")
-		} else {
+			if u := m.cfg.BaseURL(n); u != "" {
+				line += dimStyle.Render("  " + clip(u, 30))
+			}
+		default:
 			line += dimStyle.Render("  " + clip(m.cfg.CustomProviders[n].BaseURL, 36))
 		}
 		if n == m.cfg.Provider {
@@ -1230,14 +1234,16 @@ type modelPicker struct {
 }
 
 // openModelRow starts model selection for the active provider: a picker
-// for custom providers (which auto-fetch, since their model list is
-// unknowable otherwise) or any provider with cached choices, and the
-// plain editor otherwise — typing a model name stays the zero-setup
-// path for built-ins.
+// for custom providers and khateway (whose model lists are unknowable
+// without asking the endpoint, so they auto-fetch) or any provider with
+// cached choices, and the plain editor otherwise — typing a model name
+// stays the zero-setup path for built-ins.
 func (m *Model) openModelRow() tea.Cmd {
 	choices := m.cfg.ModelChoices[m.cfg.Provider]
 	_, custom := m.cfg.CustomProviders[m.cfg.Provider]
-	if !custom && len(choices) == 0 {
+	khateway := strings.EqualFold(m.cfg.Provider, "khateway")
+	dynamic := custom || khateway
+	if !dynamic && len(choices) == 0 {
 		m.openEditor(rowModel)
 		return nil
 	}
@@ -1246,7 +1252,7 @@ func (m *Model) openModelRow() tea.Cmd {
 	p.input.Width = 40
 	p.input.Placeholder = "model name"
 	p.cursor = p.index(activeModel(m.cfg))
-	p.fetching = custom && len(p.list) == 0
+	p.fetching = dynamic && len(p.list) == 0
 	m.settings.view = viewModels
 	m.settings.models = p
 	if p.fetching {
