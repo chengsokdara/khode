@@ -150,3 +150,43 @@ func TestModeCommand(t *testing.T) {
 		t.Errorf("invalid mode changed the mode to %q", m.mode())
 	}
 }
+
+func TestPlanApprovalSwitchesMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.streaming = true
+	m.events = make(chan llm.Event)
+
+	// The agent side presents a plan through the bridge, like the plan
+	// tool does; the answer comes back through the keypress flow below.
+	approved := make(chan bool, 1)
+	go func() {
+		approved <- m.approvals.ApprovePlan(context.Background(), "# the plan\ndo things")
+	}()
+
+	m = pumpUntilDialog(t, m)
+	if m.perm == nil || m.perm.Kind != agent.KindPlan {
+		t.Fatalf("dialog kind = %v, want KindPlan", m.perm)
+	}
+	if v := m.View(); !strings.Contains(v, "plan") || !strings.Contains(v, "do things") {
+		t.Errorf("plan dialog view = %q", v)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = next.(Model)
+	if m.perm != nil {
+		t.Error("plan dialog still open after approval")
+	}
+	if m.mode() != perm.ModeAcceptEdits {
+		t.Errorf("mode after plan approval = %q, want accept-edits", m.mode())
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg.PermissionMode != string(perm.ModeAcceptEdits) {
+		t.Errorf("persisted mode = %q (err %v), want accept-edits", cfg.PermissionMode, err)
+	}
+	if !<-approved {
+		t.Error("approval did not reach the waiting plan tool")
+	}
+}

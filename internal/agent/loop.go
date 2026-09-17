@@ -197,7 +197,7 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 	risk := r.Tools.RiskOf(c.Name)
 	switch perm.Decide(mode, risk) {
 	case perm.DecisionDeny:
-		return "", fmt.Errorf("%s tools are blocked in %s mode — present your findings instead; the user can switch modes with /mode",
+		return "", fmt.Errorf("%s tools are blocked in %s mode — present a plan with the plan tool instead; the user can switch modes with /mode",
 			risk, mode)
 	case perm.DecisionAsk:
 		if r.Approver == nil || !r.Approver.Approve(ctx, c, risk, previewOf(tool, c.Input)) {
@@ -230,6 +230,8 @@ make several independent calls in one turn when you can. Use edit for
 surgical string replacements; use write only for new files or full
 rewrites. Tool calls may need the user's approval — if one is declined,
 adapt instead of retrying it unchanged. In plan mode nothing can be
-modified: investigate, then present a plan. Be concise and practical.
-Prefer exact commands and code over prose. Format responses in markdown.`, workdir)
+modified: investigate, then present your complete plan with the plan
+tool; implementation starts once the user approves it. Be concise and
+practical. Prefer exact commands and code over prose. Format responses
+in markdown.`, workdir)
 }

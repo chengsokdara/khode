@@ -124,14 +124,18 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 	// Subagents share the provider and the approval bridge; model, token
 	// budget, and permission mode are read live so /model and /mode
 	// apply to tasks spawned later.
+	modeFn := func() perm.Mode { return perm.Parse(cfg.PermissionMode) }
 	reg.Register(agent.NewTaskTool(agent.SubagentConfig{
 		Provider:  p,
 		Workdir:   workdir,
 		Model:     cfg.Model,
 		MaxTokens: func() int { return cfg.MaxTokens },
-		Mode:      func() perm.Mode { return perm.Parse(cfg.PermissionMode) },
+		Mode:      modeFn,
 		Approver:  m.approvals,
 	}))
+	// The plan tool rides the same bridge: approval switches the app to
+	// accept-edits mode (answerPerm does the switching).
+	reg.Register(agent.NewPlanTool(m.approvals, modeFn))
 
 	for _, msg := range sess.Messages() {
 		switch {
@@ -501,6 +505,17 @@ func (m *Model) startTurn(input string) tea.Cmd {
 // values to the safe default.
 func (m *Model) mode() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
 
+// setMode switches the permission mode, persists the choice, and tells
+// the user. /mode and plan approval both go through here.
+func (m *Model) setMode(want perm.Mode) {
+	m.cfg.PermissionMode = string(want)
+	if err := m.cfg.Save(); err != nil {
+		m.lastErr = err.Error()
+	}
+	m.messages = append(m.messages, uiMessage{role: "system",
+		raw: fmt.Sprintf("mode → %s · %s", want, modeDescription(want))})
+}
+
 // mcpStatus reports every configured MCP server and how many of its
 // tools made it into the registry; a configured server with zero tools
 // failed to start or to answer tools/list at launch.
@@ -594,12 +609,7 @@ func (m *Model) command(input string) tea.Cmd {
 				raw: fmt.Sprintf("unknown mode %q · try /mode for the list", parts[1])})
 			break
 		}
-		m.cfg.PermissionMode = string(want)
-		if err := m.cfg.Save(); err != nil {
-			m.lastErr = err.Error()
-		}
-		m.messages = append(m.messages, uiMessage{role: "system",
-			raw: fmt.Sprintf("mode → %s · %s", want, modeDescription(want))})
+		m.setMode(want)
 
 	case "/tools":
 		names := m.tools.Names()

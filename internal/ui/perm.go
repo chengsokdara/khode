@@ -37,18 +37,27 @@ func (m *Model) permKey(msg tea.KeyMsg) tea.Cmd {
 }
 
 // answerPerm resolves the open dialog and resumes the event pump.
+// Approving a plan also switches khode to accept-edits mode: that is
+// the contract the plan tool's result reports back to the model.
 func (m *Model) answerPerm(allow bool) tea.Cmd {
 	if m.perm != nil {
+		if m.perm.Kind == agent.KindPlan && allow {
+			m.setMode(perm.ModeAcceptEdits)
+		}
 		m.perm.Answer(allow)
 		m.perm = nil
 	}
 	return m.pump()
 }
 
-// permView renders the approval dialog: the tool, its target, and a
-// preview of what it would change.
+// permView renders the open dialog: a tool's permission question with
+// its change preview, or a whole plan awaiting approval.
 func (m *Model) permView() string {
 	req := *m.perm
+	if req.Kind == agent.KindPlan {
+		return m.planView(req)
+	}
+
 	title := titleStyle.Render("◆ permission") +
 		dimStyle.Render(fmt.Sprintf("  %s · %s", req.Call.Name, req.Risk))
 	if target := requestTarget(req.Call.Input); target != "" {
@@ -69,6 +78,32 @@ func (m *Model) permView() string {
 	help := dimStyle.Render("y allow · n/esc deny")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// planView renders the plan-approval dialog: the plan text plus the
+// consequence of approving.
+func (m *Model) planView(req agent.Request) string {
+	title := titleStyle.Render("◆ plan") +
+		dimStyle.Render("  approve to switch to accept-edits")
+	body := clipPlain(req.Preview, permPreviewMax(m.height))
+	help := dimStyle.Render("y approve — implement · n/esc keep planning")
+	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// clipPlain wraps a plain-text dialog body: lines clipped, the whole
+// capped with a "(+N more lines)" note.
+func clipPlain(s string, maxLines int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	out := make([]string, 0, min(len(lines), maxLines+1))
+	for _, l := range lines {
+		if len(out) == maxLines {
+			out = append(out, dimStyle.Render(fmt.Sprintf("(+%d more lines)", len(lines)-maxLines)))
+			break
+		}
+		out = append(out, clip(l, 160))
+	}
+	return strings.Join(out, "\n")
 }
 
 // requestTarget extracts a path argument for the dialog title.
