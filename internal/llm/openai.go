@@ -18,6 +18,9 @@ import (
 // It reads OPENAI_API_KEY from the environment.
 type OpenAI struct {
 	client *openai.Client
+	// name overrides Name() for custom providers that speak this
+	// protocol under their own name; empty reports "openai".
+	name string
 	// retries is the number of repeats after a failed attempt (transient
 	// failures, no content emitted yet); retryBase seeds its backoff.
 	// Defaults come from DefaultMaxRetries / baseRetryDelay; tests shrink
@@ -33,6 +36,12 @@ func NewOpenAI() *OpenAI { return NewOpenAIWithKey("", "") }
 // explicit key and endpoint; empty values fall back to the SDK's
 // environment lookup (OPENAI_API_KEY / OPENAI_BASE_URL).
 func NewOpenAIWithKey(key, baseURL string) *OpenAI {
+	return newOpenAIClient(key, baseURL, "")
+}
+
+// newOpenAIClient is the constructor behind both built-in and custom
+// providers that speak the OpenAI protocol.
+func newOpenAIClient(key, baseURL, name string) *OpenAI {
 	var opts []option.RequestOption
 	if key != "" {
 		opts = append(opts, option.WithAPIKey(key))
@@ -41,10 +50,15 @@ func NewOpenAIWithKey(key, baseURL string) *OpenAI {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	client := openai.NewClient(opts...)
-	return &OpenAI{client: &client, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
+	return &OpenAI{client: &client, name: name, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
 }
 
-func (o *OpenAI) Name() string { return "openai" }
+func (o *OpenAI) Name() string {
+	if o.name != "" {
+		return o.name
+	}
+	return "openai"
+}
 
 // Stream translates the generic Request into a chat-completions stream
 // and forwards deltas over a channel of generic Events.

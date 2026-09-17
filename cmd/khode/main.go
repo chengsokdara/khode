@@ -62,16 +62,17 @@ func main() {
 
 	// No key is required to launch: credentials come from the
 	// environment when set, otherwise from ~/.khode/auth.json (saved by
-	// the settings UI). With neither, khode still starts — the settings
-	// overlay opens so the key can be pasted in, and a turn without one
-	// fails with a pointer there instead of a raw 401.
+	// the settings UI). With neither, khode still starts — the welcome
+	// walkthrough opens so the key can be pasted in, and a turn without
+	// one fails with a pointer there instead of a raw 401. Custom
+	// providers ride the built-in protocols under their own name.
 	name := *providerName
 	if name == "" {
 		name = cfg.Provider
 	}
 	auth := config.LoadAuth()
-	key, baseURL := llm.Resolve(name, auth.Key(name), cfg.BaseURL(name))
-	provider, err := llm.New(name, key, baseURL)
+	key, baseURL := cfg.Credentials(auth, name)
+	provider, err := llm.NewProtocol(cfg.ProviderProtocol(name), name, key, baseURL)
 	if err != nil {
 		fatal(err)
 	}

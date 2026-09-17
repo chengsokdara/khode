@@ -27,6 +27,22 @@ var defaultModels = map[string]string{
 	"openai":    "gpt-5-mini",
 }
 
+// CustomProvider is a user-defined provider that speaks one of the
+// built-in wire protocols against a different endpoint — Ollama, LM
+// Studio, OpenRouter, a proxy. Kind selects the protocol ("openai" or
+// "anthropic"); BaseURL is the endpoint root, shaped the way that
+// protocol's SDK expects (OpenAI-style URLs include /v1).
+type CustomProvider struct {
+	Kind    string `json:"kind"`
+	BaseURL string `json:"base_url"`
+}
+
+// IsBuiltinProvider reports whether name is one of the two built-in
+// providers rather than a user-defined one.
+func IsBuiltinProvider(name string) bool {
+	return name == "anthropic" || name == "openai"
+}
+
 // MCPServer is one configured Model Context Protocol server process.
 type MCPServer struct {
 	Command string   `json:"command"`
@@ -67,6 +83,14 @@ type Config struct {
 	// OpenAI-compatible local gateways). Empty means the SDK default, or
 	// its *_BASE_URL environment variable when that is set.
 	BaseURLs map[string]string `json:"base_urls,omitempty"`
+	// CustomProviders defines extra providers on top of the built-ins,
+	// keyed by name. Each speaks a built-in protocol against its own
+	// endpoint; keys live in auth.json under the same name.
+	CustomProviders map[string]CustomProvider `json:"custom_providers,omitempty"`
+	// ModelChoices caches each provider's known models — fetched from
+	// its endpoint or added manually — so the settings UI can offer a
+	// picker. The first entry is a fallback when Models has no choice.
+	ModelChoices map[string][]string `json:"model_choices,omitempty"`
 	// MCPServers names the MCP server processes to start with the app.
 	MCPServers map[string]MCPServer `json:"mcp_servers,omitempty"`
 	// Hooks run shell commands on agent lifecycle events.
@@ -121,15 +145,23 @@ func (c *Config) Save() error {
 	return os.WriteFile(Path(), append(data, '\n'), 0o644)
 }
 
-// Model returns the model for the active provider: the --model override if
-// set, else the provider's last-used model, else the provider's built-in
-// default.
+// Model returns the model for the active provider: the --model override
+// if set, else the provider's last-used model, else the first cached
+// choice, else the provider's default. Custom providers have no
+// built-in default — an unset model comes back empty so the UI can ask
+// for one instead of calling the endpoint with a made-up name.
 func (c *Config) Model() string {
 	if c.override != "" {
 		return c.override
 	}
 	if m := c.Models[c.Provider]; m != "" {
 		return m
+	}
+	if choices := c.ModelChoices[c.Provider]; len(choices) > 0 && choices[0] != "" {
+		return choices[0]
+	}
+	if _, ok := c.CustomProviders[c.Provider]; ok {
+		return ""
 	}
 	if m := defaultModels[c.Provider]; m != "" {
 		return m
@@ -138,12 +170,14 @@ func (c *Config) Model() string {
 }
 
 // SetModel records name as the active provider's model (persisted by the
-// next Save) and clears any session-scoped override.
+// next Save) and clears any session-scoped override. The model joins the
+// provider's cached choices, so manual entries show up in the picker.
 func (c *Config) SetModel(name string) {
 	if c.Models == nil {
 		c.Models = map[string]string{}
 	}
 	c.Models[c.Provider] = name
+	c.AddModelChoice(c.Provider, name)
 	c.override = ""
 }
 
@@ -166,14 +200,16 @@ func defaults() *Config {
 // rawConfig mirrors the config file schema, including the pre-provider
 // single "model" field so old files migrate cleanly.
 type rawConfig struct {
-	Provider       string               `json:"provider"`
-	Models         map[string]string    `json:"models"`
-	MaxTokens      int                  `json:"max_tokens"`
-	PermissionMode string               `json:"permission_mode"`
-	BaseURLs       map[string]string    `json:"base_urls"`
-	MCPServers     map[string]MCPServer `json:"mcp_servers"`
-	Hooks          Hooks                `json:"hooks"`
-	Model          string               `json:"model"` // legacy single-model schema
+	Provider        string                    `json:"provider"`
+	Models          map[string]string         `json:"models"`
+	MaxTokens       int                       `json:"max_tokens"`
+	PermissionMode  string                    `json:"permission_mode"`
+	BaseURLs        map[string]string         `json:"base_urls"`
+	CustomProviders map[string]CustomProvider `json:"custom_providers"`
+	ModelChoices    map[string][]string       `json:"model_choices"`
+	MCPServers      map[string]MCPServer      `json:"mcp_servers"`
+	Hooks           Hooks                     `json:"hooks"`
+	Model           string                    `json:"model"` // legacy single-model schema
 }
 
 // apply converts a parsed config file into a validated Config, filling
@@ -202,6 +238,12 @@ func (r rawConfig) apply() *Config {
 	}
 	if len(r.BaseURLs) > 0 {
 		cfg.BaseURLs = r.BaseURLs
+	}
+	if len(r.CustomProviders) > 0 {
+		cfg.CustomProviders = r.CustomProviders
+	}
+	if len(r.ModelChoices) > 0 {
+		cfg.ModelChoices = r.ModelChoices
 	}
 	cfg.Hooks = r.Hooks
 	return cfg

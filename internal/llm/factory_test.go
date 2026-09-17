@@ -17,35 +17,34 @@ func TestNewFactory(t *testing.T) {
 	}
 }
 
-func TestResolveEnvWins(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "env-key")
-	t.Setenv("ANTHROPIC_BASE_URL", "http://env-url")
-	key, url := Resolve("anthropic", "stored-key", "http://stored-url")
-	if key != "env-key" || url != "http://env-url" {
-		t.Errorf("env did not win: key=%q url=%q", key, url)
+func TestNewProtocol(t *testing.T) {
+	// A custom provider speaks a built-in protocol under its own name.
+	p, err := NewProtocol(ProviderOpenAI, "groq", "test-key", "http://proxy.local/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Name(); got != "groq" {
+		t.Errorf("custom provider name = %q, want groq", got)
 	}
 
-	// Empty (or unset) env vars leave the stored values in charge —
-	// that is how the settings UI's key gets used.
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("OPENAI_BASE_URL", "")
-	key, url = Resolve("openai", "stored-key", "http://stored-url")
-	if key != "stored-key" || url != "http://stored-url" {
-		t.Errorf("stored values ignored: key=%q url=%q", key, url)
+	p, err = NewProtocol(ProviderAnthropic, "anthropic-proxy", "", "")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	if got := p.Name(); got != "anthropic-proxy" {
+		t.Errorf("anthropic-protocol custom name = %q", got)
+	}
 
-func TestEnvNameHelpers(t *testing.T) {
-	if got := APIKeyEnv("anthropic"); got != "ANTHROPIC_API_KEY" {
-		t.Errorf("APIKeyEnv(anthropic) = %q", got)
+	// An empty display name falls back to the canonical protocol name.
+	p, err = NewProtocol(ProviderOpenAI, "", "", "")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := APIKeyEnv("openai"); got != "OPENAI_API_KEY" {
-		t.Errorf("APIKeyEnv(openai) = %q", got)
+	if got := p.Name(); got != "openai" {
+		t.Errorf("anonymous provider name = %q, want openai", got)
 	}
-	if got := BaseURLEnv("openai"); got != "OPENAI_BASE_URL" {
-		t.Errorf("BaseURLEnv(openai) = %q", got)
-	}
-	if got := APIKeyEnv("nope"); got != "" {
-		t.Errorf("APIKeyEnv(unknown) = %q, want empty", got)
+
+	if _, err := NewProtocol("grpc", "x", "", ""); err == nil {
+		t.Error("unknown protocol accepted")
 	}
 }

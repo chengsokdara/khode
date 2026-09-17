@@ -181,7 +181,7 @@ func (m *Model) banner() {
 	m.messages = append(m.messages, uiMessage{
 		role: "system",
 		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · %s mode · /help commands · /settings config",
-			Version, m.provider.Name(), m.cfg.Model(), m.session.Name(), m.mode()),
+			Version, m.provider.Name(), m.modelLabel(), m.session.Name(), m.mode()),
 	})
 }
 
@@ -205,8 +205,17 @@ func (m *Model) registerTaskTool() {
 // hasCredentials reports whether the active provider has a usable API
 // key from either source, so a turn isn't started just to fail with 401.
 func (m *Model) hasCredentials() bool {
-	key, _ := llm.Resolve(m.cfg.Provider, m.auth.Key(m.cfg.Provider), m.cfg.BaseURL(m.cfg.Provider))
+	key, _ := m.cfg.Credentials(m.auth, m.cfg.Provider)
 	return key != ""
+}
+
+// modelLabel renders the active model, flagging a provider whose model
+// is not set yet instead of showing an empty string.
+func (m *Model) modelLabel() string {
+	if s := m.cfg.Model(); s != "" {
+		return s
+	}
+	return "(no model — /settings)"
 }
 
 // useSession makes sess the active conversation and resets the view.
@@ -293,6 +302,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyMCPResult(msg)
 		return m, nil
 
+	case modelsFetchedMsg:
+		m.applyFetchedModels(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.perm != nil {
 			return m, m.permKey(msg)
@@ -348,7 +361,7 @@ func (m Model) View() string {
 	header := lipgloss.NewStyle().Width(m.width).Render(
 		titleStyle.Render("◆ khode") +
 			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s · %s mode",
-				Version, m.provider.Name(), m.cfg.Model(), m.session.Name(), m.mode())),
+				Version, m.provider.Name(), m.modelLabel(), m.session.Name(), m.mode())),
 	)
 
 	status := m.statusLine()
@@ -518,7 +531,14 @@ func (m *Model) submit() tea.Cmd {
 	if !m.hasCredentials() {
 		m.messages = append(m.messages, uiMessage{role: "system",
 			raw: fmt.Sprintf("no API key for %s · open /settings → api key and paste one (or set %s)",
-				m.cfg.Provider, llm.APIKeyEnv(m.cfg.Provider))})
+				m.cfg.Provider, m.cfg.APIKeyEnvName(m.cfg.Provider))})
+		m.renderAll()
+		return nil
+	}
+	if m.cfg.Model() == "" {
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("no model set for %s · open /settings → model (f fetches the list, n adds one)",
+				m.cfg.Provider)})
 		m.renderAll()
 		return nil
 	}

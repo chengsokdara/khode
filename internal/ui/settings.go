@@ -44,17 +44,20 @@ const (
 type settingsView int
 
 const (
-	viewRows     settingsView = iota // top-level rows
-	viewMCPList                      // configured MCP servers
-	viewHookList                     // configured hooks
+	viewRows         settingsView = iota // top-level rows
+	viewProviderList                     // providers: built-ins + custom
+	viewModels                           // model picker for the active provider
+	viewMCPList                          // configured MCP servers
+	viewHookList                         // configured hooks
 )
 
-// formKind distinguishes the two forms that manage lists of things.
+// formKind distinguishes the forms that manage lists of things.
 type formKind int
 
 const (
 	formMCPServer formKind = iota
 	formHook
+	formProvider
 )
 
 // riskChoices are the per-server MCP tool risk overrides in cycle order;
@@ -68,9 +71,10 @@ type settings struct {
 	view    settingsView
 	listCur int // cursor within the open sub-list
 
-	editor   *textEditor // open single-line editor, nil when closed
-	form     *serverForm // open mcp/hook form, nil when closed
-	savedMsg string      // last "✓ saved …" flash, shown in the footer
+	editor   *textEditor  // open single-line editor, nil when closed
+	form     *serverForm  // open mcp/hook/provider form, nil when closed
+	models   *modelPicker // model picker for the active provider
+	savedMsg string       // last "✓ saved …" flash, shown in the footer
 }
 
 // textEditor is one open single-line value editor (key, url, model,
@@ -128,6 +132,10 @@ func (m *Model) settingsKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	switch s.view {
+	case viewProviderList:
+		return m.providerListKey(msg)
+	case viewModels:
+		return m.modelPickerKey(msg)
 	case viewMCPList:
 		return m.mcpListKey(msg)
 	case viewHookList:
@@ -148,7 +156,7 @@ func (m *Model) settingsKey(msg tea.KeyMsg) tea.Cmd {
 	case "right", "l":
 		m.cycleSetting(1)
 	case "enter":
-		m.activateRow()
+		return m.activateRow()
 	case "esc":
 		m.settings = nil
 	}
@@ -157,17 +165,20 @@ func (m *Model) settingsKey(msg tea.KeyMsg) tea.Cmd {
 
 // activateRow opens whatever the enter key promises for the cursor row:
 // an editor, a sub-list, or the next enum value.
-func (m *Model) activateRow() {
+func (m *Model) activateRow() tea.Cmd {
 	s := m.settings
 	switch settingsRow(s.cursor) {
-	case rowProvider, rowMode:
+	case rowProvider:
+		s.view = viewProviderList
+		s.listCur = 0
+	case rowMode:
 		m.cycleSetting(1)
 	case rowAPIKey:
 		m.openEditor(rowAPIKey)
 	case rowBaseURL:
 		m.openEditor(rowBaseURL)
 	case rowModel:
-		m.openEditor(rowModel)
+		return m.openModelRow()
 	case rowMaxTokens:
 		m.openEditor(rowMaxTokens)
 	case rowMCP:
@@ -177,6 +188,7 @@ func (m *Model) activateRow() {
 		s.view = viewHookList
 		s.listCur = 0
 	}
+	return nil
 }
 
 // cycleSetting applies ←/→ on the enum rows: provider and mode.
@@ -184,7 +196,7 @@ func (m *Model) cycleSetting(dir int) {
 	s := m.settings
 	switch settingsRow(s.cursor) {
 	case rowProvider:
-		names := llm.Names()
+		names := m.providerNames()
 		idx := 0
 		for i, n := range names {
 			if n == m.cfg.Provider {
@@ -243,11 +255,12 @@ func (m *Model) applyMode(want perm.Mode) {
 }
 
 // rebuildProvider re-creates the active provider client from the current
-// config and auth state. The task tool is re-registered because its
-// config captured the provider by value.
+// config and auth state: built-ins speak their own protocol, custom
+// providers the protocol they declare. The task tool is re-registered
+// because its config captured the provider by value.
 func (m *Model) rebuildProvider() {
-	key, baseURL := llm.Resolve(m.cfg.Provider, m.auth.Key(m.cfg.Provider), m.cfg.BaseURL(m.cfg.Provider))
-	p, err := llm.New(m.cfg.Provider, key, baseURL)
+	key, baseURL := m.cfg.Credentials(m.auth, m.cfg.Provider)
+	p, err := llm.NewProtocol(m.cfg.ProviderProtocol(m.cfg.Provider), m.cfg.Provider, key, baseURL)
 	if err != nil {
 		m.lastErr = err.Error() // unreachable: row values are validated names
 		return
@@ -638,6 +651,53 @@ func (m *Model) commitForm() tea.Cmd {
 		// A fresh hooks.Runner is built per turn from cfg.Hooks, so the
 		// change is live without further plumbing.
 		m.saveSettings("hook saved · applies next turn")
+
+	case formProvider:
+		name := strings.TrimSpace(f.inputs[0].Value())
+		baseURL := strings.TrimSpace(f.inputs[1].Value())
+		kind := "openai"
+		if f.enum == 1 {
+			kind = "anthropic"
+		}
+		if name == "" || baseURL == "" {
+			s.savedMsg = "✗ name and base url are required"
+			return nil
+		}
+		if name != f.origName {
+			_, exists := m.cfg.CustomProviders[name]
+			if exists || config.IsBuiltinProvider(name) {
+				s.savedMsg = "✗ a provider named " + name + " already exists"
+				return nil
+			}
+		}
+		if m.cfg.CustomProviders == nil {
+			m.cfg.CustomProviders = map[string]config.CustomProvider{}
+		}
+		delete(m.cfg.CustomProviders, f.origName)
+		m.cfg.CustomProviders[name] = config.CustomProvider{Kind: kind, BaseURL: baseURL}
+		// Renaming drags the cached model list and the active pointer
+		// along, so the provider stays exactly as configured.
+		if name != f.origName {
+			if choices := m.cfg.ModelChoices[f.origName]; len(choices) > 0 {
+				m.cfg.SetModelChoices(name, choices)
+				m.cfg.SetModelChoices(f.origName, nil)
+			}
+			if m.cfg.Provider == f.origName {
+				m.cfg.Provider = name
+			}
+		}
+		fresh := f.origName == ""
+		// A new provider becomes active immediately so its api key and
+		// model can be set without hunting for it; an edit to the
+		// active provider re-authenticates with the new endpoint.
+		if fresh || m.cfg.Provider == name {
+			m.switchProvider(name)
+		} else {
+			m.saveSettings("provider " + name + " (" + kind + ")")
+		}
+		if fresh {
+			s.savedMsg = "✓ provider " + name + " activated · set its api key and model"
+		}
 	}
 	return nil
 }
@@ -763,6 +823,14 @@ func (m *Model) settingsView() string {
 	switch {
 	case s.form != nil:
 		body = s.formView()
+	case s.view == viewProviderList:
+		title = titleStyle.Render("◆ settings · providers") +
+			dimStyle.Render("  n new custom · enter switch/edit · d remove")
+		body = m.providerListView()
+	case s.view == viewModels:
+		title = titleStyle.Render("◆ settings · models") +
+			dimStyle.Render("  for "+m.cfg.Provider)
+		body = m.modelPickerView()
 	case s.view == viewMCPList:
 		title = titleStyle.Render("◆ settings · mcp servers") +
 			dimStyle.Render("  n new · enter edit · d remove")
@@ -845,7 +913,7 @@ func rowLabel(row settingsRow) string {
 func (s *settings) value(m *Model, row settingsRow) string {
 	switch row {
 	case rowProvider:
-		return m.cfg.Provider + dimStyle.Render("  ←/→ switch")
+		return m.cfg.Provider + dimStyle.Render("  ←/→ switch · enter manage")
 	case rowAPIKey:
 		return m.apiKeyValue()
 	case rowBaseURL:
@@ -854,7 +922,10 @@ func (s *settings) value(m *Model, row settingsRow) string {
 		}
 		return dimStyle.Render("(default endpoint)")
 	case rowModel:
-		return m.cfg.Model()
+		if mo := m.cfg.Model(); mo != "" {
+			return mo
+		}
+		return dimStyle.Render("not set · enter to pick")
 	case rowMaxTokens:
 		return strconv.Itoa(m.cfg.MaxTokens)
 	case rowMode:
@@ -878,8 +949,8 @@ func (s *settings) value(m *Model, row settingsRow) string {
 // secret is never displayed.
 func (m *Model) apiKeyValue() string {
 	stored := m.auth.Key(m.cfg.Provider)
-	if env := os.Getenv(llm.APIKeyEnv(m.cfg.Provider)); env != "" {
-		return maskKey(env) + dimStyle.Render("  from env")
+	if env := os.Getenv(m.cfg.APIKeyEnvName(m.cfg.Provider)); env != "" {
+		return maskKey(env) + dimStyle.Render("  from "+m.cfg.APIKeyEnvName(m.cfg.Provider))
 	}
 	if stored != "" {
 		return maskKey(stored) + dimStyle.Render("  saved")
@@ -959,7 +1030,7 @@ func (s *settings) formView() []string {
 	if f.field == len(f.inputs) {
 		marker = "❯ "
 	}
-	rows = append(rows, marker+fmt.Sprintf("%-10s", "risk")+f.enumValue())
+	rows = append(rows, marker+fmt.Sprintf("%-10s", f.enumLabel())+f.enumValue())
 	if f.field == len(f.inputs)+1 {
 		rows = append(rows, pickSel.Render("❯ save · enter to commit"))
 	} else {
@@ -970,19 +1041,39 @@ func (s *settings) formView() []string {
 
 // labels names the form's text rows in field order.
 func (f *serverForm) labels() []string {
-	if f.kind == formMCPServer {
+	switch f.kind {
+	case formMCPServer:
 		return []string{"name", "command", "args", "env"}
+	case formProvider:
+		return []string{"name", "base url"}
 	}
 	return []string{"command", "tools"}
 }
 
+// enumLabel names the form's enum row.
+func (f *serverForm) enumLabel() string {
+	switch f.kind {
+	case formMCPServer:
+		return "risk"
+	case formProvider:
+		return "protocol"
+	}
+	return "type"
+}
+
 // enumValue renders the enum row for the current selection.
 func (f *serverForm) enumValue() string {
-	if f.kind == formMCPServer {
+	switch f.kind {
+	case formMCPServer:
 		if riskChoices[f.enum] == "" {
 			return "exec (default)" + dimStyle.Render("  ←/→ cycle")
 		}
 		return riskChoices[f.enum] + dimStyle.Render("  ←/→ cycle")
+	case formProvider:
+		if f.enum == 0 {
+			return "openai" + dimStyle.Render("  · <base>/models  ←/→ cycle")
+		}
+		return "anthropic" + dimStyle.Render("  · <base>/v1/models  ←/→ cycle")
 	}
 	if f.enum == 0 {
 		return "pre_tool" + dimStyle.Render("  · exit 2 blocks the call  ←/→ cycle")
@@ -1001,4 +1092,337 @@ func sortedServerNames(servers map[string]config.MCPServer) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// --- providers -----------------------------------------------------------------
+
+// providerNames lists every provider khode can speak: the built-ins
+// first, then custom providers alphabetically.
+func (m *Model) providerNames() []string {
+	customs := make([]string, 0, len(m.cfg.CustomProviders))
+	for n := range m.cfg.CustomProviders {
+		customs = append(customs, n)
+	}
+	sort.Strings(customs)
+	return append(llm.Names(), customs...)
+}
+
+func (m *Model) providerListKey(msg tea.KeyMsg) tea.Cmd {
+	s := m.settings
+	names := m.providerNames()
+	switch msg.String() {
+	case "up", "k", "ctrl+p":
+		if s.listCur > 0 {
+			s.listCur--
+		}
+	case "down", "j", "ctrl+n":
+		if s.listCur < len(names)-1 {
+			s.listCur++
+		}
+	case "n":
+		m.openProviderForm("")
+	case "enter":
+		if len(names) == 0 {
+			break
+		}
+		name := names[min(s.listCur, len(names)-1)]
+		if config.IsBuiltinProvider(name) {
+			m.switchProvider(name)
+			s.view = viewRows
+			break
+		}
+		m.openProviderForm(name)
+	case "d":
+		if len(names) == 0 {
+			break
+		}
+		name := names[min(s.listCur, len(names)-1)]
+		switch {
+		case config.IsBuiltinProvider(name):
+			s.savedMsg = "✗ built-in providers can't be removed"
+		case name == m.cfg.Provider:
+			s.savedMsg = "✗ " + name + " is active — switch first"
+		default:
+			delete(m.cfg.CustomProviders, name)
+			m.cfg.SetModelChoices(name, nil)
+			s.listCur = max(0, min(s.listCur, len(names)-2)-0)
+			m.saveSettings("provider " + name + " removed")
+		}
+	case "esc":
+		s.view = viewRows
+	}
+	return nil
+}
+
+func (m *Model) providerListView() []string {
+	names := m.providerNames()
+	s := m.settings
+	cur := min(s.listCur, len(names)-1)
+	out := make([]string, 0, len(names))
+	for i, n := range names {
+		line := n
+		if config.IsBuiltinProvider(n) {
+			line += dimStyle.Render("  built-in")
+		} else {
+			line += dimStyle.Render("  " + clip(m.cfg.CustomProviders[n].BaseURL, 36))
+		}
+		if n == m.cfg.Provider {
+			line += "  " + okStyle.Render("●")
+		}
+		if i == cur {
+			out = append(out, pickSel.Render("❯ "+line))
+		} else {
+			out = append(out, "  "+line)
+		}
+	}
+	return out
+}
+
+// openProviderForm edits the named custom provider, or a new one when
+// name is "".
+func (m *Model) openProviderForm(name string) {
+	cp := m.cfg.CustomProviders[name] // zero value when new
+	inputs := make([]textinput.Model, 2)
+	for i := range inputs {
+		inputs[i] = textinput.New()
+		inputs[i].Prompt = ""
+		inputs[i].Width = 52
+	}
+	inputs[0].SetValue(name)
+	inputs[0].Placeholder = "unique name (e.g. groq, ollama)"
+	inputs[1].SetValue(cp.BaseURL)
+	inputs[1].Placeholder = "http://localhost:11434/v1"
+	enum := 0
+	if cp.Kind == "anthropic" {
+		enum = 1
+	}
+	m.settings.form = &serverForm{kind: formProvider, origName: name, inputs: inputs, enum: enum}
+	m.settings.form.focus()
+}
+
+// --- model picker ----------------------------------------------------------------
+
+// modelPicker is the model-selection sub-view for one provider: the
+// cached choices (fetched or added manually), a fetch trigger, and a
+// manual-add input.
+type modelPicker struct {
+	provider string
+	list     []string
+	cursor   int
+	fetching bool
+	adding   bool
+	input    textinput.Model
+	status   string // fetch outcome, shown under the list
+}
+
+// openModelRow starts model selection for the active provider: a picker
+// for custom providers (which auto-fetch, since their model list is
+// unknowable otherwise) or any provider with cached choices, and the
+// plain editor otherwise — typing a model name stays the zero-setup
+// path for built-ins.
+func (m *Model) openModelRow() tea.Cmd {
+	choices := m.cfg.ModelChoices[m.cfg.Provider]
+	_, custom := m.cfg.CustomProviders[m.cfg.Provider]
+	if !custom && len(choices) == 0 {
+		m.openEditor(rowModel)
+		return nil
+	}
+	p := &modelPicker{provider: m.cfg.Provider, list: choices, input: textinput.New()}
+	p.input.Prompt = ""
+	p.input.Width = 40
+	p.input.Placeholder = "model name"
+	p.cursor = p.index(activeModel(m.cfg))
+	p.fetching = custom && len(p.list) == 0
+	m.settings.view = viewModels
+	m.settings.models = p
+	if p.fetching {
+		return m.fetchModelsCmd()
+	}
+	return nil
+}
+
+// activeModel returns the provider's active model ("" when unset).
+func activeModel(cfg *config.Config) string { return cfg.Model() }
+
+// index returns the position of model in the list, 0 when absent.
+func (p *modelPicker) index(model string) int {
+	for i, m := range p.list {
+		if m == model {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *Model) modelPickerKey(msg tea.KeyMsg) tea.Cmd {
+	s := m.settings
+	p := s.models
+	if p.adding {
+		switch msg.String() {
+		case "enter":
+			name := strings.TrimSpace(p.input.Value())
+			p.adding = false
+			p.input.SetValue("")
+			if name != "" {
+				m.cfg.AddModelChoice(p.provider, name)
+				m.cfg.SetModel(name)
+				m.saveSettings("model → " + name)
+				m.refreshModelPicker()
+			}
+		case "esc":
+			p.adding = false
+			p.input.SetValue("")
+		default:
+			var cmd tea.Cmd
+			p.input, cmd = p.input.Update(msg)
+			return cmd
+		}
+		return nil
+	}
+
+	switch msg.String() {
+	case "up", "k", "ctrl+p":
+		if p.cursor > 0 {
+			p.cursor--
+		}
+	case "down", "j", "ctrl+n":
+		if p.cursor < len(p.list)-1 {
+			p.cursor++
+		}
+	case "f":
+		if p.fetching {
+			break
+		}
+		p.fetching = true
+		p.status = ""
+		return m.fetchModelsCmd()
+	case "n":
+		p.adding = true
+		p.input.Focus()
+	case "d":
+		if len(p.list) == 0 {
+			break
+		}
+		name := p.list[min(p.cursor, len(p.list)-1)]
+		if name == m.cfg.Models[m.cfg.Provider] {
+			delete(m.cfg.Models, m.cfg.Provider)
+		}
+		m.cfg.RemoveModelChoice(p.provider, name)
+		m.saveSettings("model " + name + " removed")
+		m.refreshModelPicker()
+	case "enter":
+		if len(p.list) == 0 {
+			break
+		}
+		name := p.list[min(p.cursor, len(p.list)-1)]
+		m.cfg.SetModel(name)
+		m.saveSettings("model → " + name)
+		s.view = viewRows
+		s.models = nil
+	case "esc":
+		s.view = viewRows
+		s.models = nil
+	}
+	return nil
+}
+
+// refreshModelPicker reloads the list from config after an add or
+// remove, keeping the cursor on the active model.
+func (m *Model) refreshModelPicker() {
+	p := m.settings.models
+	p.list = append([]string(nil), m.cfg.ModelChoices[p.provider]...)
+	p.cursor = min(p.cursor, max(0, len(p.list)-1))
+	p.cursor = p.index(activeModel(m.cfg))
+}
+
+// modelsFetchedMsg carries one model-list fetch result.
+type modelsFetchedMsg struct {
+	provider string
+	models   []string
+	err      error
+}
+
+// fetchModelsCmd queries the active provider's endpoint for its model
+// list, off the UI goroutine (the request can take seconds).
+func (m *Model) fetchModelsCmd() tea.Cmd {
+	provider := m.cfg.Provider
+	proto := m.cfg.ProviderProtocol(provider)
+	key, baseURL := m.cfg.Credentials(m.auth, provider)
+	return func() tea.Msg {
+		models, err := llm.FetchModels(context.Background(), proto, key, baseURL)
+		return modelsFetchedMsg{provider: provider, models: models, err: err}
+	}
+}
+
+// applyFetchedModels stores a finished fetch into the open picker.
+// Stale results — overlay closed or provider switched meanwhile — are
+// dropped on the floor.
+func (m *Model) applyFetchedModels(msg modelsFetchedMsg) {
+	s := m.settings
+	if s == nil || s.models == nil || s.view != viewModels || s.models.provider != msg.provider {
+		return
+	}
+	p := s.models
+	p.fetching = false
+	if msg.err != nil {
+		p.status = clip("fetch failed: "+msg.err.Error(), 56) +
+			dimStyle.Render("  · n add manually · f retry")
+		return
+	}
+	m.cfg.SetModelChoices(msg.provider, msg.models)
+	if err := m.cfg.Save(); err != nil {
+		m.lastErr = err.Error()
+	}
+	p.list = msg.models
+	p.cursor = p.index(activeModel(m.cfg))
+	if len(p.list) == 0 {
+		p.status = "endpoint listed no models · n add manually"
+	} else {
+		p.status = fmt.Sprintf("fetched %d models · enter to use one", len(p.list))
+	}
+}
+
+// modelPickerView renders the list (sliding window when long) with the
+// active model marked, the manual-add input, and the fetch status.
+func (m *Model) modelPickerView() []string {
+	p := m.settings.models
+	var out []string
+	if p.adding {
+		out = append(out, pickSel.Render("❯ ")+fmt.Sprintf("%-6s", "new")+p.input.View())
+	}
+	if len(p.list) == 0 && !p.adding && !p.fetching {
+		out = append(out, dimStyle.Render("no models yet · f fetch · n add manually"))
+	}
+
+	const windowH = 12
+	active := activeModel(m.cfg)
+	start := 0
+	if len(p.list) > windowH {
+		start = min(max(0, p.cursor-windowH/2), len(p.list)-windowH)
+	}
+	for i := start; i < min(len(p.list), start+windowH); i++ {
+		cur := "  "
+		if i == p.cursor && !p.adding {
+			cur = "❯ "
+		}
+		dot := "  "
+		if p.list[i] == active {
+			dot = okStyle.Render("● ")
+		}
+		name := p.list[i]
+		if i == p.cursor && !p.adding {
+			name = pickSel.Render(name)
+		}
+		out = append(out, cur+dot+name)
+	}
+	if len(p.list) > windowH {
+		out = append(out, dimStyle.Render(fmt.Sprintf("  %d/%d · ↑/↓ more", p.cursor+1, len(p.list))))
+	}
+	if p.fetching {
+		out = append(out, statusStyle.Render("fetching models…"))
+	}
+	if p.status != "" {
+		out = append(out, dimStyle.Render(p.status))
+	}
+	return out
 }

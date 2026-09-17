@@ -16,6 +16,9 @@ import (
 // It reads ANTHROPIC_API_KEY from the environment.
 type Anthropic struct {
 	client *anthropic.Client
+	// name overrides Name() for custom providers that speak this
+	// protocol under their own name; empty reports "anthropic".
+	name string
 	// retries is the number of repeats after a failed attempt (transient
 	// failures, no content emitted yet); retryBase seeds its backoff.
 	// Defaults come from DefaultMaxRetries / baseRetryDelay; tests shrink
@@ -31,6 +34,12 @@ func NewAnthropic() *Anthropic { return NewAnthropicWithKey("", "") }
 // explicit key and endpoint; empty values fall back to the SDK's
 // environment lookup (ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL).
 func NewAnthropicWithKey(key, baseURL string) *Anthropic {
+	return newAnthropicClient(key, baseURL, "")
+}
+
+// newAnthropicClient is the constructor behind both built-in and custom
+// providers that speak the Anthropic protocol.
+func newAnthropicClient(key, baseURL, name string) *Anthropic {
 	var opts []option.RequestOption
 	if key != "" {
 		opts = append(opts, option.WithAPIKey(key))
@@ -39,10 +48,15 @@ func NewAnthropicWithKey(key, baseURL string) *Anthropic {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	client := anthropic.NewClient(opts...)
-	return &Anthropic{client: &client, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
+	return &Anthropic{client: &client, name: name, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
 }
 
-func (a *Anthropic) Name() string { return "anthropic" }
+func (a *Anthropic) Name() string {
+	if a.name != "" {
+		return a.name
+	}
+	return "anthropic"
+}
 
 // Stream translates the generic Request into an Anthropic messages stream
 // and forwards deltas over a channel of generic Events.
