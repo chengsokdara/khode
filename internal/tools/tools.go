@@ -24,6 +24,14 @@ type Tool interface {
 	Exec(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// Previewer is implemented by tools that can describe what they would
+// change without changing it, for approval dialogs.
+type Previewer interface {
+	// Preview renders a human-readable summary of the change the given
+	// arguments would make, without applying it.
+	Preview(args json.RawMessage) (string, error)
+}
+
 // Registry holds the tools available to the agent, keyed by name.
 type Registry struct {
 	byName map[string]Tool
