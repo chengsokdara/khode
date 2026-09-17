@@ -137,6 +137,8 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Customs never inherit a built-in default model; `Model()` returns "" and the pre-flight blocks | requesting claude-sonnet from an Ollama box is worse than a clear "set a model" message |
 | 2026-09-17 | Model picker auto-fetches only for custom providers; built-ins with no cached choices keep the free-text editor | typing a model name must stay the zero-setup path; auto-fetching api.anthropic.com on every settings visit is surprise network I/O |
 | 2026-09-17 | Fetched model lists cache in `config.model_choices` (capped 500) and persist | the list survives restarts, doubles as the manual-entry store, and its first entry is the fallback model |
+| 2026-09-17 | The walkthrough's provider step includes configured customs plus a 'custom…' inline add form | key-less Ollama users were walled out of onboarding by a two-provider cycle; the form activates the provider and the key step becomes skippable |
+| 2026-09-17 | Walkthrough trigger = no key AND no custom providers AND no model choices | any setup evidence means "not first run", or a keyless Ollama user would see the walkthrough every launch |
 
 ## Gotchas & lessons learned
 
