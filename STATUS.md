@@ -34,36 +34,40 @@ One-glance project state. Update at the end of **every** task (see
         output caps)
   - [x] Permission modes: plan / ask / accept-edits / auto
   - [x] Diff preview + approval dialog in the TUI
-- [ ] **Phase 5 — Agent quality**
-  - [ ] AGENTS.md-style project context in system prompt
-  - [ ] Context compaction when nearing the token window
-  - [ ] Todo tracking tool, API retry/backoff
+- [x] **Phase 5 — Agent quality**
+  - [x] AGENTS.md-style project context in system prompt
+  - [x] Context compaction when nearing the token window
+  - [x] Todo tracking tool, API retry/backoff
 - [ ] **Phase 6 — Advanced**
   - [ ] MCP client, subagents, plan mode, hooks
 
 ## Now
 
-Phase 4 complete: khode is a full agent. `internal/tools` gained `edit`
-(unique string replacement), `write` (create/overwrite + parent dirs), and
-`bash` (default 30s / max 10m timeout, 1000-line / 32 KiB output caps,
-process-group kill on unix), plus an LCS-based `UnifiedDiff`/`DiffStat`
-helper. The new `internal/perm` package maps four permission modes (plan /
-ask / accept-edits / auto, default ask, persisted in config) × three risk
-classes (read / write / exec) to allow/ask/deny; the agent loop applies the
-decision before every tool call and feeds denials back as error results so
-the model adapts. Ask-decisions flow through `agent.Bridge` into the TUI's
-event pump: the same `waitForEvents` select watches the stream and the
-bridge, opening an approval dialog that shows a colorized diff preview
-(edit/write) or the command (bash) — `y` allows, `n`/esc declines.
-`/mode` switches modes at runtime.
+Phase 5 complete: khode is a quality agent. `agent.SystemPrompt` composes
+the base prompt with project guidance read from AGENTS.md (CLAUDE.md as
+fallback) at every directory level from root to the working directory
+(ancestors first, 16 KiB cap, re-read every turn). Both providers retry
+transient failures — 408/409/429/5xx/529 and transport errors — with
+exponential backoff (500 ms→8 s) honoring Retry-After, but only while zero
+content events have been forwarded, so output can never duplicate. The new
+`todo` tool keeps a full-replacement task list (in-memory, read-risk, so
+usable in every mode) that the TUI renders in full instead of the 2-line
+preview. The loop now tracks exact input usage from UsageEvents (char/4
+estimates until the first one) and compacts when the conversation reaches
+80% of the model's context window (`llm.ContextWindow` prefix table):
+turns before a clean user boundary are summarized by a tool-less LLM call,
+the summary is merged into the first kept user turn, and `Session.Replace`
+atomically rewrites the transcript (temp file + rename). Compaction
+failures never kill a turn. `/compact` forces it manually.
 
 ## Next
 
-Phase 5 — agent quality:
+Phase 6 — advanced:
 
-1. AGENTS.md-style project context in the system prompt.
-2. Context compaction when nearing the token window.
-3. Todo tracking tool, API retry/backoff.
+1. MCP client.
+2. Subagents.
+3. Plan mode.
+4. Hooks.
 
 ## Changelog
 
@@ -82,3 +86,7 @@ Phase 5 — agent quality:
 | 2026-09-17 | Phase 4: edit/write/bash tools + LCS diff helper (`UnifiedDiff`, `DiffStat`) | 2c277fa |
 | 2026-09-17 | Phase 4: `internal/perm` modes × risk decisions, config field, agent-loop gate + `Approver`/`Bridge` | 557bafe |
 | 2026-09-17 | Phase 4 finished: TUI approval dialog with diff/command preview, `/mode`, docs | f1483c7 |
+| 2026-09-17 | Phase 5: AGENTS.md/CLAUDE.md project context in the system prompt (`agent.SystemPrompt`) | f1c8f78 |
+| 2026-09-17 | Phase 5: transient-failure retry with backoff in both providers (no retry after content) | 5d441f3 |
+| 2026-09-17 | Phase 5: `todo` task-list tool, rendered whole in the TUI | bc422f2 |
+| 2026-09-17 | Phase 5: context compaction (80% trigger, clean-boundary cut, atomic rewrite) + `llm.ContextWindow` + `/compact` | 98eccb1 |

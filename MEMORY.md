@@ -22,23 +22,30 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
-- **Working:** Phase 4 complete — khode is a full agent. On top of the
-  Phase 3 loop, `internal/tools` now has `edit` (unique byte-exact string
-  replacement, `replace_all` opt-in, errors when 0 or >1 matches),
-  `write` (create/overwrite, makes parent dirs, preserves file mode), and
-  `bash` (`bash -c` in the project root, timeout arg default 30s max 10m,
-  combined output capped at 1000 lines / 32 KiB, non-zero exits become
-  error results that still carry the output). `internal/perm` maps mode ×
-  risk → allow/ask/deny; the runner gates every call and turns denials
-  into error tool-results so the model adapts. Ask decisions go through
-  `agent.Bridge` (an `Approver` the UI owns): the TUI's `waitForEvents`
-  select watches both the stream and the bridge, and an approval dialog
-  shows a colorized unified diff (edit/write via the `tools.Previewer`
-  interface) or the command (bash). `y` allows, `n`/esc declines; `/mode`
-  switches modes (persisted to config, default ask). Mode/risk also shown
-  in the header and banner.
-- **Not yet started:** Phase 5 — AGENTS.md context in the system prompt,
-  context compaction, todo tool, retry/backoff.
+- **Working:** Phase 5 complete — agent quality. `agent.SystemPrompt`
+  composes the base prompt with project guidance: at every directory level
+  from root to workdir, AGENTS.md is read (CLAUDE.md as fallback for that
+  level), ancestors first, capped at 16 KiB, re-read every turn. Both
+  providers retry transient stream failures (408/409/429/5xx/529, net
+  timeouts, resets, truncated bodies) with exponential backoff honoring
+  Retry-After — but only while zero content events were forwarded, so a
+  retry can never duplicate visible output; after the first delta, errors
+  surface unchanged. The `todo` tool (full-list replacement per call,
+  in-memory, read-risk → usable in plan mode) keeps the model's task list;
+  the TUI renders `todo` tool results in full (matched by event name)
+  instead of the 2-line preview. The runner tracks exact input tokens from
+  UsageEvents (char/4 estimates until the first arrives) and compacts when
+  the conversation reaches 80% of `llm.ContextWindow(model)` (prefix
+  table, conservative 128k default): `cutIndex` keeps the newest tail that
+  fits 30% of the window and always lands on a user boundary (tool
+  results never start a tail), an LLM call with the summarizer prompt in
+  the system role (no tools advertised) condenses everything before the
+  cut, the summary merges into the first kept user turn (no consecutive
+  user messages), and `Session.Replace` rewrites the JSONL atomically
+  (temp + rename). Compaction failures are swallowed — the turn continues
+  uncompressed. `/compact` forces it; a `llm.CompactEvent` surfaces a
+  notice in the TUI.
+- **Not yet started:** Phase 6 — MCP client, subagents, plan mode, hooks.
 
 ## Decision log
 
@@ -69,6 +76,14 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | bash kills the whole process group on timeout (unix: `Setpgid` + `cmd.Cancel` kill(-pid)) | `cmd.Wait` blocks until every pipe writer closes, so an orphaned child would hang the tool |
 | 2026-09-17 | Diff is an in-house LCS (common prefix/suffix trim, cell-count cap with coarse fallback) in `internal/tools/diff.go`, no dependency | RULES discourage casual deps; ~150 lines, fully tested, hunk headers match git's zero-count convention |
 | 2026-09-17 | `edit` computes (validate + read) separately from writing, and `Previewer.Preview` reuses the compute path | the dialog must never mutate; Exec stays the only writer |
+| 2026-09-17 | Project context: AGENTS.md preferred over CLAUDE.md per directory level, ancestors first, 16 KiB cap, re-read every turn | matches how the user's own agents treat these files; the cap keeps a runaway AGENTS.md from eating the window; per-turn re-read means edits apply immediately |
+| 2026-09-17 | Retries only before the first forwarded content event, max 4, exponential 500 ms→8 s cap, Retry-After honored (same cap) | a retry after visible output would duplicate it; long fixed waits would freeze the TUI; server hints beat guesses |
+| 2026-09-17 | Retry classification lives per provider (`anthropicRetryable`/`openaiRetryable`), shared policy in SDK-free `llm/retry.go` | SDK error types must not leak out of provider files (architecture invariant); both alias `apierror.Error` with `StatusCode` + `Response` |
+| 2026-09-17 | `todo` replaces the whole list every call, keeps state in memory only, risk read | full replacement is idempotent and drift-proof (Claude Code style); a UI-only scratchpad doesn't warrant persistence yet; it touches no files so plan mode stays honest |
+| 2026-09-17 | Compaction trigger 80% of `llm.ContextWindow`, kept tail ≤ 30%, cut only at user boundaries, summary merged into the first kept user turn | 20% headroom absorbs the next rounds; user-boundary cuts never orphan a tool call; merging preserves role alternation (Anthropic rejects consecutive same-role messages) |
+| 2026-09-17 | Summarizer gets the summarizer prompt in the system role and no tools | no extra user turn to break alternation; tool-less requests cannot derail into tool calls |
+| 2026-09-17 | `Session.Replace` writes a temp file, syncs, renames | compaction is the first operation that rewrites history; a crash must leave a loadable transcript |
+| 2026-09-17 | Compaction failures are non-fatal (turn continues uncompressed) | summarizing is best-effort; the next provider call reports a real error if the history truly cannot fit |
 
 ## Gotchas & lessons learned
 
@@ -138,6 +153,26 @@ If you are starting a session, or recovering after an interrupt:
   `context.DeadlineExceeded` (tool timeout). Check Canceled first;
   `errors.Is(DeadlineExceeded, Canceled)` is false, which is what keeps
   the loop's "interrupted by user" wording from swallowing timeouts.
+- **Both SDKs alias their own `apierror.Error`** (`anthropic.Error`,
+  `openai.Error`) with `StatusCode int` and `Response *http.Response` —
+  the Retry-After source. They are distinct types, so classification
+  helpers are duplicated per provider file, sharing only the SDK-free
+  policy in `llm/retry.go`.
+- The SDKs retry the initial HTTP request themselves (default 2), so a
+  fake-server retry test cannot assert exact request counts — assert
+  "at least the retry" and eventual success instead.
+- `NewStreaming` on BOTH SDKs returns a single value (the stream), no
+  error — failures surface via `stream.Err()` after iterating. Retry
+  loops therefore wrap the whole attempt, not the call.
+- To simulate a mid-stream failure in tests: write real SSE deltas, then
+  `http.Hijacker.Hijack()` and close the connection — the client gets a
+  truncated body (`stream.Err() != nil`) after content was forwarded.
+- **`gofmt -l .` exits 0 even when it lists files** — `gofmt -l . && git
+  commit` happily commits unformatted code. Use `gofmt -l .` output
+  (empty = clean) or `test -z "$(gofmt -l .)"`.
+- Cutting injected text to a byte cap must reserve room for the
+  "(…truncated)" marker inside the cut, or the output exceeds the cap
+  you just asserted.
 
 ## Session log (append one entry per session)
 
@@ -149,3 +184,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | Phase 2 finished: cost estimate (c9cc6ab), named sessions + picker (50bfda7), config/Anthropic tests (af2faf7), docs | af2faf7 |
 | 2026-09-16 | Phase 3: llm tool contract + provider translation (ecb9255), tools pkg (57c6c43), agent loop (a997292), UI wiring + tests (c3eac1a), docs | c3eac1a |
 | 2026-09-17 | Phase 4: write tools + diff (2c277fa), perm package + loop gate + bridge (557bafe), TUI approval dialog + /mode (f1483c7), docs | f1483c7 |
+| 2026-09-17 | Phase 5: project context (f1c8f78), retry/backoff (5d441f3), todo tool (bc422f2), compaction + /compact (98eccb1), docs | 1a50dd3 |

@@ -30,15 +30,22 @@ internal/config/     ~/.khode/config.json load/save
 internal/llm/        provider-agnostic contract
   provider.go          Message, Request, Event, Provider interface
   anthropic.go         Anthropic SDK → Event channel translation
+  openai.go            OpenAI SDK → Event channel translation
+  retry.go             shared retry policy (transient failures, backoff)
+  context.go           per-model context-window table
+  pricing.go           per-model price table
 internal/perm/       permission policy: modes × risk classes → allow/ask/deny
-internal/tools/      tools (read, glob, grep, edit, write, bash) + Registry
+internal/tools/      tools (read, glob, grep, edit, write, bash, todo) + Registry
 internal/agent/      conversation machinery
   session.go           JSONL transcript (source of truth for LLM history)
   loop.go              agent loop: stream → gated tool calls → results → stream
+  compact.go           context compaction: summarize near the token window
+  context.go           AGENTS.md/CLAUDE.md project context for the system prompt
   approve.go           Approver interface + Bridge carrying permission questions
 internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands
   perm.go              approval dialog (diff preview) + /mode
+  picker.go            session picker overlay
   styles.go            lipgloss palette
 ```
 
