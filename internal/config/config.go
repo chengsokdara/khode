@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"khode/internal/perm"
 )
 
 // Defaults used when no config file exists (or fields are missing).
@@ -31,6 +33,9 @@ type Config struct {
 	Provider  string            `json:"provider"`
 	Models    map[string]string `json:"models,omitempty"`
 	MaxTokens int               `json:"max_tokens"`
+	// PermissionMode is one of the perm.Mode values; how much the agent
+	// may do without asking.
+	PermissionMode string `json:"permission_mode,omitempty"`
 
 	// override is the session-scoped --model flag value; never persisted.
 	override string
@@ -112,16 +117,21 @@ func (c *Config) SetModel(name string) {
 func (c *Config) SetModelOverride(name string) { c.override = name }
 
 func defaults() *Config {
-	return &Config{Provider: DefaultProvider, MaxTokens: DefaultMaxTokens}
+	return &Config{
+		Provider:       DefaultProvider,
+		MaxTokens:      DefaultMaxTokens,
+		PermissionMode: string(perm.DefaultMode),
+	}
 }
 
 // rawConfig mirrors the config file schema, including the pre-provider
 // single "model" field so old files migrate cleanly.
 type rawConfig struct {
-	Provider  string            `json:"provider"`
-	Models    map[string]string `json:"models"`
-	MaxTokens int               `json:"max_tokens"`
-	Model     string            `json:"model"` // legacy single-model schema
+	Provider       string            `json:"provider"`
+	Models         map[string]string `json:"models"`
+	MaxTokens      int               `json:"max_tokens"`
+	PermissionMode string            `json:"permission_mode"`
+	Model          string            `json:"model"` // legacy single-model schema
 }
 
 // apply converts a parsed config file into a validated Config, filling
@@ -134,6 +144,8 @@ func (r rawConfig) apply() *Config {
 	if r.MaxTokens > 0 {
 		cfg.MaxTokens = r.MaxTokens
 	}
+	// Unknown modes degrade to the safe default instead of erroring.
+	cfg.PermissionMode = string(perm.Parse(r.PermissionMode))
 	if len(r.Models) > 0 {
 		cfg.Models = r.Models
 	}

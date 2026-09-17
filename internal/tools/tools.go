@@ -1,6 +1,6 @@
-// Package tools implements khode's project-inspection tools and the
-// registry the agent loop consults. Tools are read-only in this phase;
-// write tools arrive with the permission system.
+// Package tools implements khode's project tools and the registry the
+// agent loop consults. Read-only tools run freely; mutating ones are
+// gated by the permission system in the agent loop.
 package tools
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"khode/internal/llm"
+	"khode/internal/perm"
 )
 
 // Tool is one capability the model can invoke. Exec returns the output
@@ -30,6 +31,12 @@ type Previewer interface {
 	// Preview renders a human-readable summary of the change the given
 	// arguments would make, without applying it.
 	Preview(args json.RawMessage) (string, error)
+}
+
+// RiskClassifier is implemented by tools that need more than read
+// permission; tools without it are treated as read-only.
+type RiskClassifier interface {
+	Risk() perm.Risk
 }
 
 // Registry holds the tools available to the agent, keyed by name.
@@ -54,6 +61,19 @@ func (r *Registry) Register(t Tool) {
 func (r *Registry) Get(name string) (Tool, bool) {
 	t, ok := r.byName[name]
 	return t, ok
+}
+
+// RiskOf reports a tool's risk class; unregistered or unclassified
+// tools are read-only.
+func (r *Registry) RiskOf(name string) perm.Risk {
+	t, ok := r.byName[name]
+	if !ok {
+		return perm.RiskRead
+	}
+	if rc, ok := t.(RiskClassifier); ok {
+		return rc.Risk()
+	}
+	return perm.RiskRead
 }
 
 // Definitions returns every registered tool as a provider-agnostic
@@ -82,13 +102,16 @@ func (r *Registry) Names() []string {
 	return names
 }
 
-// Default builds the read-only phase-3 toolset, rooted at dir: relative
-// paths given by the model resolve against it.
+// Default builds the phase-4 toolset, rooted at dir: relative paths
+// given by the model resolve against it.
 func Default(dir string) *Registry {
 	r := NewRegistry()
 	r.Register(&Read{Root: dir})
 	r.Register(&Glob{Root: dir})
 	r.Register(&Grep{Root: dir})
+	r.Register(&Edit{Root: dir})
+	r.Register(&Write{Root: dir})
+	r.Register(&Bash{Root: dir})
 	return r
 }
 

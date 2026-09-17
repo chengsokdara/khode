@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"khode/internal/perm"
 )
 
 // isolateHOME points config paths at a temp dir for the test's duration.
@@ -80,6 +82,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	cfg.Provider = "openai"
 	cfg.SetModel("gpt-5-mini")
+	cfg.PermissionMode = string(perm.ModeAcceptEdits)
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -90,6 +93,26 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if back.Provider != "openai" || back.Model() != "gpt-5-mini" {
 		t.Errorf("round trip = %s/%s, want openai/gpt-5-mini", back.Provider, back.Model())
+	}
+	if back.PermissionMode != string(perm.ModeAcceptEdits) {
+		t.Errorf("permission mode round trip = %q, want %q", back.PermissionMode, perm.ModeAcceptEdits)
+	}
+}
+
+// An unknown stored mode degrades to the safe default instead of
+// erroring the whole load.
+func TestLoadUnknownPermissionMode(t *testing.T) {
+	isolateHOME(t)
+
+	if err := os.WriteFile(Path(), []byte(`{"permission_mode":"yolo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PermissionMode != string(perm.DefaultMode) {
+		t.Errorf("unknown mode = %q, want default %q", cfg.PermissionMode, perm.DefaultMode)
 	}
 }
 

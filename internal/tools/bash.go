@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"khode/internal/perm"
 )
 
 // Bash caps for one call: a runaway command must neither hang the turn
@@ -23,6 +25,8 @@ const (
 
 // Bash runs a shell command in the project root.
 type Bash struct{ Root string }
+
+func (b *Bash) Risk() perm.Risk { return perm.RiskExec }
 
 type bashArgs struct {
 	Command string `json:"command"`
@@ -136,6 +140,7 @@ func capBashOutput(s string) string {
 
 // interface guard: registry entries must satisfy the tool contract.
 var (
-	_ Tool      = (*Bash)(nil)
-	_ Previewer = (*Bash)(nil)
+	_ Tool           = (*Bash)(nil)
+	_ Previewer      = (*Bash)(nil)
+	_ RiskClassifier = (*Bash)(nil)
 )

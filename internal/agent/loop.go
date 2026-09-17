@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"khode/internal/llm"
+	"khode/internal/perm"
 	"khode/internal/tools"
 )
 
@@ -29,6 +30,10 @@ type Runner struct {
 	System    string
 	// MaxRounds bounds the tool loop; 0 means DefaultMaxRounds.
 	MaxRounds int
+	// Mode selects the permission policy; empty means perm.DefaultMode.
+	Mode perm.Mode
+	// Approver resolves perm.DecisionAsk outcomes; nil declines them.
+	Approver Approver
 }
 
 // Run appends the user turn and drives the loop, forwarding stream events
@@ -177,15 +182,47 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown tool %q", c.Name)
 	}
+
+	mode := r.Mode
+	if mode == "" {
+		mode = perm.DefaultMode
+	}
+	risk := r.Tools.RiskOf(c.Name)
+	switch perm.Decide(mode, risk) {
+	case perm.DecisionDeny:
+		return "", fmt.Errorf("%s tools are blocked in %s mode — present your findings instead; the user can switch modes with /mode",
+			risk, mode)
+	case perm.DecisionAsk:
+		if r.Approver == nil || !r.Approver.Approve(ctx, c, risk, previewOf(tool, c.Input)) {
+			return "", errors.New("the user declined this tool call")
+		}
+	}
 	return tool.Exec(ctx, c.Input)
+}
+
+// previewOf asks a tool what it would change, for the approval dialog;
+// tools without a preview render nothing extra.
+func previewOf(tool tools.Tool, args json.RawMessage) string {
+	p, ok := tool.(tools.Previewer)
+	if !ok {
+		return ""
+	}
+	s, err := p.Preview(args)
+	if err != nil {
+		return fmt.Sprintf("(preview unavailable: %v)", err)
+	}
+	return s
 }
 
 // DefaultSystemPrompt describes khode and anchors tool use in workdir.
 func DefaultSystemPrompt(workdir string) string {
 	return fmt.Sprintf(`You are khode, a coding assistant working in %s.
-You have read-only tools for inspecting the project: read (file contents),
-glob (find files by pattern), grep (search contents). Prefer them over
-guessing about file contents, and make several independent calls in one
-turn when you can. Be concise and practical. Prefer exact commands and
-code over prose. Format responses in markdown.`, workdir)
+You can inspect the project (read, glob, grep) and change it (edit, write,
+bash). Prefer the inspection tools over guessing about file contents, and
+make several independent calls in one turn when you can. Use edit for
+surgical string replacements; use write only for new files or full
+rewrites. Tool calls may need the user's approval — if one is declined,
+adapt instead of retrying it unchanged. In plan mode nothing can be
+modified: investigate, then present a plan. Be concise and practical.
+Prefer exact commands and code over prose. Format responses in markdown.`, workdir)
 }

@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"khode/internal/perm"
 )
 
 // Write creates or completely overwrites one file, making parent
 // directories as needed.
 type Write struct{ Root string }
+
+func (w *Write) Risk() perm.Risk { return perm.RiskWrite }
 
 type writeArgs struct {
 	Path    string `json:"path"`
@@ -109,6 +113,7 @@ func pluralLines(n int) string {
 
 // interface guards: registry entries must satisfy the tool contract.
 var (
-	_ Tool      = (*Write)(nil)
-	_ Previewer = (*Write)(nil)
+	_ Tool           = (*Write)(nil)
+	_ Previewer      = (*Write)(nil)
+	_ RiskClassifier = (*Write)(nil)
 )

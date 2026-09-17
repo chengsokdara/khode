@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"khode/internal/perm"
 )
 
 // writeTree materializes a small project for the tool tests.
@@ -43,23 +45,38 @@ func mustExec(t *testing.T, tool Tool, args string) string {
 
 func TestRegistry(t *testing.T) {
 	reg := Default(writeTree(t))
-	if got := reg.Names(); len(got) != 3 {
-		t.Fatalf("Names() = %v, want 3 tools", got)
+	if got := reg.Names(); len(got) != 6 {
+		t.Fatalf("Names() = %v, want 6 tools", got)
 	}
 	defs := reg.Definitions()
-	if len(defs) != 3 || defs[0].Name != "glob" || defs[1].Name != "grep" || defs[2].Name != "read" {
-		t.Fatalf("Definitions() order wrong: glob,grep,read expected, got %s/%s/%s",
-			defs[0].Name, defs[1].Name, defs[2].Name)
+	if len(defs) != 6 || defs[0].Name != "bash" || defs[1].Name != "edit" ||
+		defs[2].Name != "glob" || defs[3].Name != "grep" || defs[4].Name != "read" || defs[5].Name != "write" {
+		t.Fatalf("Definitions() order wrong: %s/%s/%s/%s/%s/%s",
+			defs[0].Name, defs[1].Name, defs[2].Name, defs[3].Name, defs[4].Name, defs[5].Name)
 	}
 	var schema map[string]any
-	if err := json.Unmarshal(defs[2].Parameters, &schema); err != nil {
+	if err := json.Unmarshal(defs[4].Parameters, &schema); err != nil {
 		t.Fatalf("read schema not valid JSON: %v", err)
 	}
 	if _, ok := schema["properties"]; !ok {
-		t.Errorf("read schema has no properties: %s", defs[2].Parameters)
+		t.Errorf("read schema has no properties: %s", defs[4].Parameters)
 	}
 	if _, ok := reg.Get("nope"); ok {
 		t.Error("Get(nope) returned a tool")
+	}
+}
+
+func TestRegistryRisk(t *testing.T) {
+	reg := Default(t.TempDir())
+	cases := map[string]perm.Risk{
+		"bash": perm.RiskExec, "edit": perm.RiskWrite, "write": perm.RiskWrite,
+		"read": perm.RiskRead, "glob": perm.RiskRead, "grep": perm.RiskRead,
+		"nope": perm.RiskRead,
+	}
+	for name, want := range cases {
+		if got := reg.RiskOf(name); got != want {
+			t.Errorf("RiskOf(%q) = %q, want %q", name, got, want)
+		}
 	}
 }
 

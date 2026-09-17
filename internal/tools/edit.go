@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"khode/internal/perm"
 )
 
 // Edit replaces an exact string in a file; the match must be unique
 // unless replace_all is set.
 type Edit struct{ Root string }
+
+func (e *Edit) Risk() perm.Risk { return perm.RiskWrite }
 
 type editArgs struct {
 	Path       string `json:"path"`
@@ -118,6 +122,7 @@ func occurrences(n int) string {
 
 // interface guards: registry entries must satisfy the tool contract.
 var (
-	_ Tool      = (*Edit)(nil)
-	_ Previewer = (*Edit)(nil)
+	_ Tool           = (*Edit)(nil)
+	_ Previewer      = (*Edit)(nil)
+	_ RiskClassifier = (*Edit)(nil)
 )
