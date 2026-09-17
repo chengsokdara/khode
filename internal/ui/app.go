@@ -442,7 +442,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 		Tools:     m.tools,
 		Model:     m.cfg.Model(),
 		MaxTokens: m.cfg.MaxTokens,
-		System:    agent.DefaultSystemPrompt(m.workdir),
+		System:    agent.SystemPrompt(m.workdir),
 		Mode:      m.mode(),
 		Approver:  m.approvals,
 	}
