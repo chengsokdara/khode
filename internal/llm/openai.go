@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
 )
 
@@ -26,8 +27,20 @@ type OpenAI struct {
 }
 
 // NewOpenAI builds an OpenAI provider with default environment auth.
-func NewOpenAI() *OpenAI {
-	client := openai.NewClient()
+func NewOpenAI() *OpenAI { return NewOpenAIWithKey("", "") }
+
+// NewOpenAIWithKey builds an OpenAI provider authenticated with an
+// explicit key and endpoint; empty values fall back to the SDK's
+// environment lookup (OPENAI_API_KEY / OPENAI_BASE_URL).
+func NewOpenAIWithKey(key, baseURL string) *OpenAI {
+	var opts []option.RequestOption
+	if key != "" {
+		opts = append(opts, option.WithAPIKey(key))
+	}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	client := openai.NewClient(opts...)
 	return &OpenAI{client: &client, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
 }
 

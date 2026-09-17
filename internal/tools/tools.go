@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"khode/internal/llm"
 	"khode/internal/perm"
@@ -39,8 +40,11 @@ type RiskClassifier interface {
 	Risk() perm.Risk
 }
 
-// Registry holds the tools available to the agent, keyed by name.
+// Registry holds the tools available to the agent, keyed by name. It is
+// safe for concurrent use: the agent loop reads it from its goroutine
+// while the settings overlay adds and removes MCP servers at runtime.
 type Registry struct {
+	mu     sync.RWMutex
 	byName map[string]Tool
 }
 
@@ -51,6 +55,8 @@ func NewRegistry() *Registry {
 
 // Register adds a tool, replacing any previous tool of the same name.
 func (r *Registry) Register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.byName == nil {
 		r.byName = map[string]Tool{}
 	}
@@ -59,6 +65,8 @@ func (r *Registry) Register(t Tool) {
 
 // Get looks a tool up by name.
 func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.byName[name]
 	return t, ok
 }
@@ -66,6 +74,8 @@ func (r *Registry) Get(name string) (Tool, bool) {
 // RiskOf reports a tool's risk class; unregistered or unclassified
 // tools are read-only.
 func (r *Registry) RiskOf(name string) perm.Risk {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.byName[name]
 	if !ok {
 		return perm.RiskRead
@@ -79,7 +89,9 @@ func (r *Registry) RiskOf(name string) perm.Risk {
 // Definitions returns every registered tool as a provider-agnostic
 // ToolDef, in name order so prompts and caches stay stable.
 func (r *Registry) Definitions() []llm.ToolDef {
-	names := r.Names()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := r.namesLocked()
 	defs := make([]llm.ToolDef, 0, len(names))
 	for _, n := range names {
 		t := r.byName[n]
@@ -94,6 +106,14 @@ func (r *Registry) Definitions() []llm.ToolDef {
 
 // Names lists registered tool names in order.
 func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.namesLocked()
+}
+
+// namesLocked lists tool names; callers must hold at least a read lock
+// (Definitions must not call Names to avoid re-locking).
+func (r *Registry) namesLocked() []string {
 	names := make([]string, 0, len(r.byName))
 	for n := range r.byName {
 		names = append(names, n)

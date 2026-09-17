@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // Anthropic implements Provider against the official Anthropic SDK.
@@ -24,8 +25,20 @@ type Anthropic struct {
 }
 
 // NewAnthropic builds an Anthropic provider with default environment auth.
-func NewAnthropic() *Anthropic {
-	client := anthropic.NewClient()
+func NewAnthropic() *Anthropic { return NewAnthropicWithKey("", "") }
+
+// NewAnthropicWithKey builds an Anthropic provider authenticated with an
+// explicit key and endpoint; empty values fall back to the SDK's
+// environment lookup (ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL).
+func NewAnthropicWithKey(key, baseURL string) *Anthropic {
+	var opts []option.RequestOption
+	if key != "" {
+		opts = append(opts, option.WithAPIKey(key))
+	}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	client := anthropic.NewClient(opts...)
 	return &Anthropic{client: &client, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
 }
 

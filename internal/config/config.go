@@ -63,6 +63,10 @@ type Config struct {
 	// PermissionMode is one of the perm.Mode values; how much the agent
 	// may do without asking.
 	PermissionMode string `json:"permission_mode,omitempty"`
+	// BaseURLs overrides each provider's API endpoint (proxies,
+	// OpenAI-compatible local gateways). Empty means the SDK default, or
+	// its *_BASE_URL environment variable when that is set.
+	BaseURLs map[string]string `json:"base_urls,omitempty"`
 	// MCPServers names the MCP server processes to start with the app.
 	MCPServers map[string]MCPServer `json:"mcp_servers,omitempty"`
 	// Hooks run shell commands on agent lifecycle events.
@@ -147,6 +151,10 @@ func (c *Config) SetModel(name string) {
 // until SetModel is called; it is never persisted.
 func (c *Config) SetModelOverride(name string) { c.override = name }
 
+// BaseURL returns the stored endpoint override for provider ("" when
+// none). The llm package layers the *_BASE_URL env vars on top of this.
+func (c *Config) BaseURL(provider string) string { return c.BaseURLs[provider] }
+
 func defaults() *Config {
 	return &Config{
 		Provider:       DefaultProvider,
@@ -162,6 +170,7 @@ type rawConfig struct {
 	Models         map[string]string    `json:"models"`
 	MaxTokens      int                  `json:"max_tokens"`
 	PermissionMode string               `json:"permission_mode"`
+	BaseURLs       map[string]string    `json:"base_urls"`
 	MCPServers     map[string]MCPServer `json:"mcp_servers"`
 	Hooks          Hooks                `json:"hooks"`
 	Model          string               `json:"model"` // legacy single-model schema
@@ -190,6 +199,9 @@ func (r rawConfig) apply() *Config {
 	}
 	if len(r.MCPServers) > 0 {
 		cfg.MCPServers = r.MCPServers
+	}
+	if len(r.BaseURLs) > 0 {
+		cfg.BaseURLs = r.BaseURLs
 	}
 	cfg.Hooks = r.Hooks
 	return cfg

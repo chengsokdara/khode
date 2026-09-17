@@ -77,6 +77,20 @@ func AddMCP(r *Registry, server string, src ToolSource, riskOverride string) err
 	return nil
 }
 
+// RemoveMCP drops every tool of one MCP server (mcp__<server>__*),
+// undoing AddMCP when a server is deleted from the settings UI. A server
+// with no registered tools is not an error.
+func RemoveMCP(r *Registry, server string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prefix := "mcp__" + server + "__"
+	for name := range r.byName {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.byName, name)
+		}
+	}
+}
+
 // parseRisk maps a config risk string to perm.Risk; MCP defaults to exec.
 func parseRisk(s string) perm.Risk {
 	switch perm.Risk(strings.ToLower(strings.TrimSpace(s))) {
