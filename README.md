@@ -20,11 +20,13 @@ go build -o khode ./cmd/khode   # or: go run ./cmd/khode
 ./khode --resume=fix-login-bug  # resume by name (unique prefix works)
 ```
 
-No API key is required to launch. The first start opens `/settings` on
-the api-key row: pick a provider with ←/→, paste your key, press enter —
-it is stored in `~/.khode/auth.json` (owner-only) and you're done.
-Setting `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment also
-works and wins over the stored key.
+No API key is required to launch. The first start walks you through it —
+what khode is, pick a provider, paste a key — and ends with suggestions
+for what to try first (`enter` to start chatting, `esc` skips). Keys are
+stored in `~/.khode/auth.json` (owner-only); setting `ANTHROPIC_API_KEY`
+or `OPENAI_API_KEY` in the environment also works and wins over the
+stored key. The status line tracks how full the model's context window
+is (`ctx NN%`, warning-colored near the auto-compact point).
 
 ## Configuration
 

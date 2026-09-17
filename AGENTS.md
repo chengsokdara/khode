@@ -54,6 +54,7 @@ internal/ui/         Bubble Tea app
   perm.go              approval dialog (diff preview) + plan dialog + /mode
   picker.go            session picker overlay
   settings.go          /settings overlay: keys, provider, model, mode, MCP, hooks
+  welcome.go           first-run walkthrough: intro → provider → key → ready
   styles.go            lipgloss palette
 ```
 

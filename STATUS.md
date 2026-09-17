@@ -62,21 +62,25 @@ One-glance project state. Update at the end of **every** task (see
 ## Now
 
 Phase 7 complete — nothing in khode needs hand-editing config.json.
-`/settings` (alias `/config`) opens an overlay where provider and mode
-cycle with ←/→ and api key / base url / model / max tokens open masked
-single-line editors; every row persists the moment it commits. Keys live
-in `~/.khode/auth.json` (0600, atomic rename) with env vars keeping
-precedence via `llm.Resolve`; switching provider rebuilds the client
-(`llm.New`) and re-registers the task tool so subagents follow, while
-in-flight turns keep the old client. The MCP sub-list starts, stops, and
-restarts servers live: `applyMCPCmd` runs off the UI goroutine from
-`maps.Clone` snapshots, closes removed servers (`tools.RemoveMCP`),
-starts new ones (`mcp.Start` + `tools.AddMCP`), and force-restarts
-edited ones; results arrive as `mcpApplyMsg` and are reported in chat.
-Hook edits apply next turn (a fresh `hooks.Runner` is built per turn).
-The registry gained an RWMutex because the agent loop reads it from its
-goroutine while the overlay mutates it. `Model.partial` became a
-pointer `strings.Builder` (see Gotchas).
+First run (no credentials anywhere) opens a walkthrough overlay, not
+settings: intro card → pick provider (←/→, saved live) → paste the API
+key (masked, into auth.json) → a ready card ending in an explicit
+"enter to start chatting"; esc skips any step. `/settings` (alias
+`/config`) remains the full editor — provider and mode cycle with ←/→,
+api key / base url / model / max tokens open masked single-line
+editors, MCP servers and hooks get sub-lists with add/edit/remove
+forms, and every row persists the moment it commits; its footer keys
+render highlighted so the esc exit is findable. The status line shows a
+context-window meter: "ctx NN%" from the most recent request's input
+plus its reply over `llm.ContextWindow`, warning-colored at the 80%
+auto-compact trigger. Keys live in `~/.khode/auth.json` (0600, atomic
+rename) with env vars keeping precedence via `llm.Resolve`; switching
+provider rebuilds the client (`llm.New`) and re-registers the task tool
+while in-flight turns keep the old client. MCP changes apply live via
+`applyMCPCmd` (snapshots + `tools.RemoveMCP`, results through
+`mcpApplyMsg`); hook edits apply next turn. The registry has an RWMutex
+(agent loop reads it while the overlay mutates it); `Model.partial` is
+a pointer `strings.Builder` (see Gotchas).
 
 ## Next
 
@@ -114,3 +118,4 @@ Backlog (no committed order):
 | 2026-09-17 | Phase 6: pre/post tool-use hooks with pre_tool veto | 698ffba |
 | 2026-09-17 | Phase 7: auth.json key store (0600, atomic) + `base_urls`; llm keyed constructors + factory; registry RWMutex + RemoveMCP | b46b15f |
 | 2026-09-17 | Phase 7: `/settings` overlay, keyless startup + first-run setup, live MCP apply | 2351355 |
+| 2026-09-17 | Phase 7: first-run walkthrough, highlighted overlay exits, status-line context meter | 3265b34 |

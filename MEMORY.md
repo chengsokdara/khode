@@ -29,27 +29,32 @@ If you are starting a session, or recovering after an interrupt:
   storedURL)`, and `llm.New(name, key, baseURL)` builds either provider
   from explicit credentials (empty values fall back to the SDK env
   lookup). `main.go` has no key gates anymore: with no resolvable key it
-  calls `m.OpenSettings(ui.RowAPIKey)` for first-run setup (skipped when
-  the `--resume` picker is showing), and `Model.hasCredentials` blocks
-  submit and /compact with a "/settings" pointer instead of starting a
-  turn that would 401. The `/settings` overlay (`internal/ui/
-  settings.go`) edits provider, api key, base url, model, max tokens,
-  mode, MCP servers, and hooks; provider and mode cycle with ←/→, text
-  rows open masked `textinput` editors, and every commit saves
-  immediately (config via `cfg.Save`, keys via `auth.Save`). A provider
-  switch rebuilds `m.provider` and re-registers the task tool
-  (`registerTaskTool`) because `SubagentConfig` captured the provider by
-  value; in-flight turns keep the old client. MCP changes apply live:
-  `applyMCPCmd` runs off the UI goroutine from `maps.Clone` snapshots,
-  closes removed servers (`tools.RemoveMCP`), starts new ones
-  (`mcp.Start` + `tools.AddMCP`), and force-restarts edited ones
-  (command/env/risk are fixed at `mcp.Start`); results ride
-  `mcpApplyMsg` into `applyMCPResult`, which moves clients into
-  `Model.mcpClients` and reports in chat. Hook edits apply next turn (a
-  fresh `hooks.Runner` is built per turn). `tools.Registry` gained an
-  RWMutex — the agent loop reads it from its goroutine while the overlay
-  mutates it. `Model.partial` is now a `*strings.Builder`; see Gotchas
-  for why.
+  calls `m.OpenWelcome()` — a 4-step walkthrough (intro → provider →
+  masked api key → ready card with "enter to start chatting"; esc skips
+  any step, shift+tab steps back) — skipped when the `--resume` picker
+  is showing. `Model.hasCredentials` blocks submit and /compact with a
+  "/settings" pointer instead of starting a turn that would 401.
+  `/settings` (`internal/ui/settings.go`) edits provider, api key, base
+  url, model, max tokens, mode, MCP servers, and hooks; provider and
+  mode cycle with ←/→, text rows open masked `textinput` editors, and
+  every commit saves immediately (config via `cfg.Save`, keys via
+  `auth.Save`); footer keys render highlighted via `keyHint`. Provider
+  switching goes through `switchProvider`, which rebuilds `m.provider`
+  and re-registers the task tool (`registerTaskTool`) because
+  `SubagentConfig` captured the provider by value; in-flight turns keep
+  the old client. MCP changes apply live: `applyMCPCmd` runs off the UI
+  goroutine from `maps.Clone` snapshots, closes removed servers
+  (`tools.RemoveMCP`), starts new ones (`mcp.Start` + `tools.AddMCP`),
+  and force-restarts edited ones (command/env/risk are fixed at
+  `mcp.Start`); results ride `mcpApplyMsg` into `applyMCPResult`, which
+  moves clients into `Model.mcpClients` and reports in chat. Hook edits
+  apply next turn (a fresh `hooks.Runner` is built per turn). The
+  status line shows a context meter (`ctxUsage`/`ctxLabel`): last
+  request's input + reply over `llm.ContextWindow`, warning at
+  `ctxWarnFrac` (0.8, mirrors compact.go), reset in `useSession`.
+  `tools.Registry` has an RWMutex — the agent loop reads it from its
+  goroutine while the overlay mutates it. `Model.partial` is a
+  `*strings.Builder`; see Gotchas for why.
 - **Not yet started:** backlog only — see STATUS.md "Next".
 
 ## Decision log
@@ -112,6 +117,11 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Editing a running MCP server force-restarts it | a client's command/env/risk are frozen at `mcp.Start`; diff-based start/stop alone would leave the old process serving |
 | 2026-09-17 | Registry uses an RWMutex; `Definitions` uses a `namesLocked` helper instead of calling `Names` | settings mutates the map while the agent loop reads; nested RLocks can deadlock when a writer is queued |
 | 2026-09-17 | MCP form args/env are space-separated (`strings.Fields`), no quoting | v1 simplicity; documented in the field placeholder |
+| 2026-09-17 | First run opens a 4-step walkthrough (intro → provider → key → ready), not settings | dropping a new user into a config form answered "what is this?" with nothing; the walkthrough ends in an explicit "enter to start chatting" so the way out is never in question |
+| 2026-09-17 | Esc always skips the walkthrough; empty key still advances | setup must never be a wall — the pre-flight check catches keyless turns later |
+| 2026-09-17 | `switchProvider` is shared by /settings and the walkthrough; `saveSettings` flashes whichever overlay is open | both flows must behave identically and neither should nil-deref the other's overlay |
+| 2026-09-17 | Context meter = last request's input + its reply, over `llm.ContextWindow`; warning at `ctxWarnFrac = 0.8` (mirrors compact.go) | input tokens of the last call ARE the transcript size the provider saw; the exact next-turn count is unknowable client-side, this is the honest approximation |
+| 2026-09-17 | `ctxUsage` returns (pct, warn, ok) separately from `ctxLabel`'s styling | lipgloss renders plain text without a TTY, so tests must assert the decision, not the ANSI |
 
 ## Gotchas & lessons learned
 
@@ -239,3 +249,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Phase 5: project context (f1c8f78), retry/backoff (5d441f3), todo tool (bc422f2), compaction + /compact (98eccb1), docs | 1a50dd3 |
 | 2026-09-17 | Phase 6: MCP client (1af8588), subagents (0d21ba2), plan workflow (94d1049), hooks (698ffba), docs | 698ffba |
 | 2026-09-17 | Phase 7: auth.json + llm factory + registry mutex (b46b15f), /settings overlay + keyless startup (2351355), docs | b46b15f 2351355 |
+| 2026-09-17 | Phase 7 follow-up: first-run walkthrough, highlighted overlay exits, status-line context meter | 3265b34 |
