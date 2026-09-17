@@ -14,6 +14,7 @@ import (
 	"khode/internal/agent"
 	"khode/internal/config"
 	"khode/internal/llm"
+	"khode/internal/perm"
 	"khode/internal/tools"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -76,6 +77,9 @@ type Model struct {
 	events    <-chan llm.Event
 	partial   strings.Builder // text accumulated for the in-flight reply
 
+	approvals *agent.Bridge  // permission questions to/from the agent loop
+	perm      *agent.Request // open approval dialog; nil when closed
+
 	inTokens  int64
 	outTokens int64
 	cost      float64
@@ -104,14 +108,15 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	m := Model{
-		cfg:      cfg,
-		provider: p,
-		session:  sess,
-		tools:    reg,
-		workdir:  workdir,
-		textarea: ta,
-		spinner:  sp,
-		viewport: viewport.New(60, 10),
+		cfg:       cfg,
+		provider:  p,
+		session:   sess,
+		tools:     reg,
+		workdir:   workdir,
+		textarea:  ta,
+		spinner:   sp,
+		viewport:  viewport.New(60, 10),
+		approvals: agent.NewBridge(),
 	}
 
 	for _, msg := range sess.Messages() {
@@ -144,8 +149,8 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 func (m *Model) banner() {
 	m.messages = append(m.messages, uiMessage{
 		role: "system",
-		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · /help for commands",
-			Version, m.provider.Name(), m.cfg.Model(), m.session.Name()),
+		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · %s mode · /help for commands",
+			Version, m.provider.Name(), m.cfg.Model(), m.session.Name(), m.mode()),
 	})
 }
 
@@ -196,7 +201,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamClosedMsg:
 		return m, m.finishStream()
 
+	case permRequestMsg:
+		if !m.streaming || m.events == nil {
+			// Stale question from a turn that already ended: decline on
+			// the user's behalf so nothing blocks.
+			msg.req.Answer(false)
+			return m, nil
+		}
+		m.perm = &msg.req
+		return m, nil // dialog open; the pump resumes when it is answered
+
 	case tea.KeyMsg:
+		if m.perm != nil {
+			return m, m.permKey(msg)
+		}
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
@@ -226,13 +244,17 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "starting…"
 	}
+	if m.perm != nil {
+		return m.permView()
+	}
 	if m.picker != nil {
 		return m.pickerView()
 	}
 
 	header := lipgloss.NewStyle().Width(m.width).Render(
 		titleStyle.Render("◆ khode") +
-			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s", Version, m.provider.Name(), m.cfg.Model(), m.session.Name())),
+			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s · %s mode",
+				Version, m.provider.Name(), m.cfg.Model(), m.session.Name(), m.mode())),
 	)
 
 	status := m.statusLine()
@@ -252,14 +274,28 @@ func (m Model) View() string {
 
 // --- streaming -------------------------------------------------------------
 
-func waitForEvents(ch <-chan llm.Event) tea.Cmd {
+// waitForEvents blocks until either the stream produces an event or the
+// approval bridge has a question; whichever the agent loop offers first.
+func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request) tea.Cmd {
 	return func() tea.Msg {
-		ev, ok := <-ch
-		if !ok {
-			return streamClosedMsg{}
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return streamClosedMsg{}
+			}
+			return streamEventMsg{ev: ev}
+		case req, ok := <-reqs:
+			if !ok {
+				return nil
+			}
+			return permRequestMsg{req: req}
 		}
-		return streamEventMsg{ev: ev}
 	}
+}
+
+// pump schedules the next poll of the stream and the approval bridge.
+func (m *Model) pump() tea.Cmd {
+	return waitForEvents(m.events, m.approvals.Requests())
 }
 
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
@@ -271,7 +307,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 			m.messages[idx].raw = m.partial.String()
 		}
 		m.renderAll()
-		return waitForEvents(m.events)
+		return m.pump()
 
 	case llm.ToolCallEvent:
 		m.sealStreamingText()
@@ -279,14 +315,14 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
 		})
 		m.renderAll()
-		return waitForEvents(m.events)
+		return m.pump()
 
 	case llm.ToolResultEvent:
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleTool, kind: kindToolResult, raw: e.Output, isErr: e.IsError,
 		})
 		m.renderAll()
-		return waitForEvents(m.events)
+		return m.pump()
 
 	case llm.UsageEvent:
 		m.inTokens += e.InputTokens
@@ -295,7 +331,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 			m.cost += c
 			m.hasCost = true
 		}
-		return waitForEvents(m.events)
+		return m.pump()
 
 	case llm.ErrorEvent:
 		if !errors.Is(e.Err, context.Canceled) {
@@ -306,7 +342,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.DoneEvent:
 		return m.finishStream()
 	}
-	return waitForEvents(m.events)
+	return m.pump()
 }
 
 // ensureStreamingBlock opens a fresh streaming text bubble when the last
@@ -341,6 +377,12 @@ func (m *Model) finishStream() tea.Cmd {
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
+	}
+	if m.perm != nil {
+		// Defensive: a dialog outliving its turn is declined, never
+		// left dangling.
+		m.perm.Answer(false)
+		m.perm = nil
 	}
 
 	m.sealStreamingText()
@@ -379,8 +421,20 @@ func (m *Model) submit() tea.Cmd {
 
 // startTurn hands the user input to the agent loop. The loop owns session
 // writes and streams events back through the same channel the provider
-// pump consumed in earlier phases.
+// pump consumed in earlier phases; permission questions ride the bridge.
 func (m *Model) startTurn(input string) tea.Cmd {
+	// Drop questions left over from an earlier turn so a stale dialog
+	// can never open for the wrong call.
+	for {
+		select {
+		case req := <-m.approvals.Requests():
+			req.Answer(false)
+			continue
+		default:
+		}
+		break
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	runner := &agent.Runner{
 		Provider:  m.provider,
@@ -389,6 +443,8 @@ func (m *Model) startTurn(input string) tea.Cmd {
 		Model:     m.cfg.Model(),
 		MaxTokens: m.cfg.MaxTokens,
 		System:    agent.DefaultSystemPrompt(m.workdir),
+		Mode:      m.mode(),
+		Approver:  m.approvals,
 	}
 	ch := runner.Run(ctx, input)
 
@@ -397,8 +453,12 @@ func (m *Model) startTurn(input string) tea.Cmd {
 	m.streaming = true
 	m.lastErr = ""
 	m.partial.Reset()
-	return tea.Batch(waitForEvents(ch), m.spinner.Tick)
+	return tea.Batch(m.pump(), m.spinner.Tick)
 }
+
+// mode returns the active permission mode, normalizing unknown config
+// values to the safe default.
+func (m *Model) mode() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
 
 func (m *Model) command(input string) tea.Cmd {
 	parts := strings.Fields(input)
@@ -408,10 +468,38 @@ func (m *Model) command(input string) tea.Cmd {
 			"/new [name]   fresh session, optionally named",
 			"/sessions     switch session (picker)",
 			"/model <name> switch model (persisted)",
+			"/mode [name]  permission mode: plan · ask · accept-edits · auto",
 			"/tools        list tools the model can call",
 			"/exit, /quit  leave khode",
 			"/help         this list",
 		}, "\n")})
+
+	case "/mode":
+		if len(parts) < 2 {
+			var lines []string
+			lines = append(lines, fmt.Sprintf("usage: /mode <name> (current: %s)", m.mode()))
+			for _, mo := range perm.Modes() {
+				marker := "  "
+				if m.mode() == mo {
+					marker = "❯ "
+				}
+				lines = append(lines, marker+string(mo)+" — "+modeDescription(mo))
+			}
+			m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join(lines, "\n")})
+			break
+		}
+		want := perm.Parse(parts[1])
+		if string(want) != strings.ToLower(parts[1]) {
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: fmt.Sprintf("unknown mode %q · try /mode for the list", parts[1])})
+			break
+		}
+		m.cfg.PermissionMode = string(want)
+		if err := m.cfg.Save(); err != nil {
+			m.lastErr = err.Error()
+		}
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("mode → %s · %s", want, modeDescription(want))})
 
 	case "/tools":
 		names := m.tools.Names()

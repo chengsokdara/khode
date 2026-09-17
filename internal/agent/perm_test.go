@@ -163,6 +163,43 @@ func TestRunnerReadToolsNeverAsk(t *testing.T) {
 	}
 }
 
+// TestRunnerBridgeApproval exercises the full seam: the loop's gate, the
+// bridge, and a real answering goroutine standing in for the UI.
+func TestRunnerBridgeApproval(t *testing.T) {
+	p := &fakeProvider{responses: [][]llm.Event{callOnce("echo"), {llm.TextDeltaEvent{Text: "ok"}}}}
+	tool := &gatedTool{risk: perm.RiskWrite}
+	r, sess := newTestRunner(t, p, tool)
+	r.Mode = perm.ModeAsk
+	bridge := NewBridge()
+	r.Approver = bridge
+
+	// The "UI": answer the question with a rejection first; the tool
+	// result must reflect that, not a panic or a hang.
+	go func() {
+		req := <-bridge.Requests()
+		req.Answer(false)
+	}()
+	drain(t, r.Run(t.Context(), "go"))
+	if res := sess.Messages()[2].ToolResult; res == nil || !strings.Contains(res.Content, "declined") {
+		t.Fatalf("bridge-rejected result = %+v", res)
+	}
+
+	// Now approve: the call runs for real.
+	p2 := &fakeProvider{responses: [][]llm.Event{callOnce("echo"), {llm.TextDeltaEvent{Text: "ok"}}}}
+	r2, sess2 := newTestRunner(t, p2, tool)
+	r2.Mode = perm.ModeAsk
+	bridge2 := NewBridge()
+	r2.Approver = bridge2
+	go func() {
+		req := <-bridge2.Requests()
+		req.Answer(true)
+	}()
+	drain(t, r2.Run(t.Context(), "go"))
+	if res := sess2.Messages()[2].ToolResult; res == nil || res.IsError {
+		t.Errorf("bridge-approved result = %+v, want success", res)
+	}
+}
+
 func TestBridgeRoundTrip(t *testing.T) {
 	b := NewBridge()
 	ctx := t.Context()
