@@ -22,21 +22,23 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
-- **Working:** Phase 3 complete — on top of the Phase 1/2 TUI and provider
-  layer, khode now runs an agent loop: `agent.Runner` streams a response,
-  executes the model's tool calls (read/glob/grep via `internal/tools`),
-  appends each result to the session, and re-streams until the model
-  answers without tools (25-round cap, cancel-safe with paired
-  tool_result lines). The `llm` contract carries `ToolDef` on requests,
-  `ToolCalls`/`ToolResult` on messages, and `ToolCallEvent`/
-  `ToolResultEvent` through the same event channel; both providers
-  translate them (fake-SSE tested). The TUI shows `⏺ call` / `⎿ result`
-  blocks, has `/tools`, and no longer writes the session — the loop owns
-  all session writes. Sessions store tool lines (additive JSONL v2);
-  resuming a tool-bearing transcript re-serializes to native wire blocks
-  (verified E2E against a fake Anthropic SSE server, including resume).
-- **Not yet started:** write tools (edit/write/bash), permission system,
-  diff preview/approval, context compaction.
+- **Working:** Phase 4 complete — khode is a full agent. On top of the
+  Phase 3 loop, `internal/tools` now has `edit` (unique byte-exact string
+  replacement, `replace_all` opt-in, errors when 0 or >1 matches),
+  `write` (create/overwrite, makes parent dirs, preserves file mode), and
+  `bash` (`bash -c` in the project root, timeout arg default 30s max 10m,
+  combined output capped at 1000 lines / 32 KiB, non-zero exits become
+  error results that still carry the output). `internal/perm` maps mode ×
+  risk → allow/ask/deny; the runner gates every call and turns denials
+  into error tool-results so the model adapts. Ask decisions go through
+  `agent.Bridge` (an `Approver` the UI owns): the TUI's `waitForEvents`
+  select watches both the stream and the bridge, and an approval dialog
+  shows a colorized unified diff (edit/write via the `tools.Previewer`
+  interface) or the command (bash). `y` allows, `n`/esc declines; `/mode`
+  switches modes (persisted to config, default ask). Mode/risk also shown
+  in the header and banner.
+- **Not yet started:** Phase 5 — AGENTS.md context in the system prompt,
+  context compaction, todo tool, retry/backoff.
 
 ## Decision log
 
@@ -60,6 +62,13 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | Glob implemented on stdlib (`**` via recursive segment matching), no doublestar dependency | RULES discourage casual new deps; ~30 lines, fully tested |
 | 2026-09-16 | read/glob/grep cap output (2000 lines/2000 chars, 1000 files, 200 matches/20 KiB); grep skips hidden dirs and NUL-byte binaries | a runaway tool call must not flood the model's context window |
 | 2026-09-16 | Tools resolve relative paths against the launch working directory; absolute paths pass through | Claude-Code-style ergonomics; real sandboxing arrives with Phase 4 permissions |
+| 2026-09-17 | Permission model = 4 modes (plan/ask/accept-edits/auto, default ask) × 3 risk classes (read/write/exec) declared by an optional `RiskClassifier` interface on tools | roadmap-mandated modes; unclassified tools stay read-only, so old/custom tools are safe by default |
+| 2026-09-17 | Permission denials are error tool-results fed back to the model, not turn errors | the model can adapt or explain; killing the turn would strand the transcript |
+| 2026-09-17 | Approval questions ride a dedicated `agent.Bridge` channel consumed in the same `waitForEvents` select as stream events; replies are buffered `chan bool` | no new pump machinery; a late answer to an abandoned question can never block or leak |
+| 2026-09-17 | `startTurn` drains stale bridge requests before each turn | a cancel landing between publish and pump must not open a dialog for a dead turn |
+| 2026-09-17 | bash kills the whole process group on timeout (unix: `Setpgid` + `cmd.Cancel` kill(-pid)) | `cmd.Wait` blocks until every pipe writer closes, so an orphaned child would hang the tool |
+| 2026-09-17 | Diff is an in-house LCS (common prefix/suffix trim, cell-count cap with coarse fallback) in `internal/tools/diff.go`, no dependency | RULES discourage casual deps; ~150 lines, fully tested, hunk headers match git's zero-count convention |
+| 2026-09-17 | `edit` computes (validate + read) separately from writing, and `Previewer.Preview` reuses the compute path | the dialog must never mutate; Exec stays the only writer |
 
 ## Gotchas & lessons learned
 
@@ -116,6 +125,19 @@ If you are starting a session, or recovering after an interrupt:
 - Verifying a bubbletea alt-screen TUI through `script(1)` is unreliable
   (typescript captures little); the reliable E2E evidence is wire-level
   (fake SSE server logs the request bodies) plus the session JSONL file.
+- **`exec.Cmd.Wait` waits for the output-copy goroutines**, which only
+  finish when every writer of the pipe closes — kill the direct child and
+  a backgrounded grandchild (`sleep 30 &`) still hangs the tool. Own
+  process group + `kill(-pid, SIGKILL)` is the fix; `cmd.Cancel` (Go
+  ≥ 1.20) is where to put it, returning nil so `Wait` proceeds normally.
+- **bubbletea `Update` has a value receiver**: calling `m.Update(msg)`
+  without capturing the returned `tea.Model` silently discards all state
+  changes — always `m = next.(Model)`.
+- `context.WithTimeout` distinguishes the two kill paths: parent cancel →
+  `ctx.Err() == context.Canceled` (user interrupt), deadline →
+  `context.DeadlineExceeded` (tool timeout). Check Canceled first;
+  `errors.Is(DeadlineExceeded, Canceled)` is false, which is what keeps
+  the loop's "interrupted by user" wording from swallowing timeouts.
 
 ## Session log (append one entry per session)
 
@@ -126,3 +148,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | Phase 2 step 2: `config.Provider` + per-provider `models` map with legacy migration, flags → overrides, config unit tests, docs | 3de9993 |
 | 2026-09-16 | Phase 2 finished: cost estimate (c9cc6ab), named sessions + picker (50bfda7), config/Anthropic tests (af2faf7), docs | af2faf7 |
 | 2026-09-16 | Phase 3: llm tool contract + provider translation (ecb9255), tools pkg (57c6c43), agent loop (a997292), UI wiring + tests (c3eac1a), docs | c3eac1a |
+| 2026-09-17 | Phase 4: write tools + diff (2c277fa), perm package + loop gate + bridge (557bafe), TUI approval dialog + /mode (f1483c7), docs | f1483c7 |

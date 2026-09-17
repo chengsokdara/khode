@@ -29,11 +29,11 @@ One-glance project state. Update at the end of **every** task (see
   - [x] `internal/tools`: `Tool` interface + registry
   - [x] `read`, `glob`, `grep` tools
   - [x] Agent loop: LLM decides tool calls, results fed back until done
-- [ ] **Phase 4 — Full agent (write tools + permissions)** ⭐ milestone
-  - [ ] `edit` (unique string-replacement), `write`, `bash` (timeout +
+- [x] **Phase 4 — Full agent (write tools + permissions)** ⭐ milestone
+  - [x] `edit` (unique string-replacement), `write`, `bash` (timeout +
         output caps)
-  - [ ] Permission modes: plan / ask / accept-edits / auto
-  - [ ] Diff preview + approval dialog in the TUI
+  - [x] Permission modes: plan / ask / accept-edits / auto
+  - [x] Diff preview + approval dialog in the TUI
 - [ ] **Phase 5 — Agent quality**
   - [ ] AGENTS.md-style project context in system prompt
   - [ ] Context compaction when nearing the token window
@@ -43,18 +43,27 @@ One-glance project state. Update at the end of **every** task (see
 
 ## Now
 
-Phase 3 complete: `internal/tools` (Tool interface, registry, read/glob/grep
-with output caps) and an agent loop (`agent.Runner`) that streams, executes
-the model's tool calls, feeds results back (25-round cap), and owns all
-session writes. The TUI renders tool activity and drives turns through the
-loop. Next up is Phase 4 — write tools + permissions.
+Phase 4 complete: khode is a full agent. `internal/tools` gained `edit`
+(unique string replacement), `write` (create/overwrite + parent dirs), and
+`bash` (default 30s / max 10m timeout, 1000-line / 32 KiB output caps,
+process-group kill on unix), plus an LCS-based `UnifiedDiff`/`DiffStat`
+helper. The new `internal/perm` package maps four permission modes (plan /
+ask / accept-edits / auto, default ask, persisted in config) × three risk
+classes (read / write / exec) to allow/ask/deny; the agent loop applies the
+decision before every tool call and feeds denials back as error results so
+the model adapts. Ask-decisions flow through `agent.Bridge` into the TUI's
+event pump: the same `waitForEvents` select watches the stream and the
+bridge, opening an approval dialog that shows a colorized diff preview
+(edit/write) or the command (bash) — `y` allows, `n`/esc declines.
+`/mode` switches modes at runtime.
 
 ## Next
 
-1. `edit` (unique string-replacement), `write`, `bash` (timeout + output
-   caps).
-2. Permission modes: plan / ask / accept-edits / auto.
-3. Diff preview + approval dialog in the TUI.
+Phase 5 — agent quality:
+
+1. AGENTS.md-style project context in the system prompt.
+2. Context compaction when nearing the token window.
+3. Todo tracking tool, API retry/backoff.
 
 ## Changelog
 
@@ -70,3 +79,6 @@ loop. Next up is Phase 4 — write tools + permissions.
 | 2026-09-16 | Phase 3: `internal/tools` registry + read/glob/grep (stdlib `**` glob, output caps) | 57c6c43 |
 | 2026-09-16 | Phase 3: agent loop (`agent.Runner`), session v2 tool lines, malformed-input hardening | a997292 |
 | 2026-09-16 | Phase 3 finished: TUI tool activity + `/tools`, first ui tests, untrack junk files | c3eac1a |
+| 2026-09-17 | Phase 4: edit/write/bash tools + LCS diff helper (`UnifiedDiff`, `DiffStat`) | 2c277fa |
+| 2026-09-17 | Phase 4: `internal/perm` modes × risk decisions, config field, agent-loop gate + `Approver`/`Bridge` | 557bafe |
+| 2026-09-17 | Phase 4 finished: TUI approval dialog with diff/command preview, `/mode`, docs | f1483c7 |

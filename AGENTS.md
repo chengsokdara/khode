@@ -30,12 +30,15 @@ internal/config/     ~/.khode/config.json load/save
 internal/llm/        provider-agnostic contract
   provider.go          Message, Request, Event, Provider interface
   anthropic.go         Anthropic SDK → Event channel translation
-internal/tools/      read-only tools (read, glob, grep) + Registry
+internal/perm/       permission policy: modes × risk classes → allow/ask/deny
+internal/tools/      tools (read, glob, grep, edit, write, bash) + Registry
 internal/agent/      conversation machinery
   session.go           JSONL transcript (source of truth for LLM history)
-  loop.go              agent loop: stream → tool calls → results → stream
+  loop.go              agent loop: stream → gated tool calls → results → stream
+  approve.go           Approver interface + Bridge carrying permission questions
 internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands
+  perm.go              approval dialog (diff preview) + /mode
   styles.go            lipgloss palette
 ```
 
@@ -50,7 +53,10 @@ internal/ui/         Bubble Tea app
    channel ends with exactly one turn-level DoneEvent/ErrorEvent.
 3. **TUI ↔ goroutine bridge.** Streaming runs in a goroutine; the UI
    consumes it via the `waitForEvents` command chain (one blocking
-   `<-ch` read per message), never by holding a `*tea.Program`.
+   `<-ch` read per message), never by holding a `*tea.Program`. The
+   permission bridge rides the same select: the loop blocks in
+   `Bridge.Approve`, the UI answers via `Request.Answer` (buffered, so a
+   late answer can never block).
 4. **Session is truth.** `agent.Session` (JSONL, append-only, synced per
    turn) is what gets sent back to the LLM. Only the agent loop writes
    the session; the UI message list is for display only; UI-only notices
