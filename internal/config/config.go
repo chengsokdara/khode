@@ -27,6 +27,33 @@ var defaultModels = map[string]string{
 	"openai":    "gpt-5-mini",
 }
 
+// MCPServer is one configured Model Context Protocol server process.
+type MCPServer struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+	// Env entries (KEY=VALUE) are added over the inherited environment.
+	Env []string `json:"env,omitempty"`
+	// Risk overrides the permission class of this server's tools (read,
+	// write, exec). Empty means exec: an MCP tool can do anything, so it
+	// must be approved like a shell command by default.
+	Risk string `json:"risk,omitempty"`
+}
+
+// Hook is one user command run on an agent lifecycle event. Tools limits
+// it to those tool names; empty means every tool call.
+type Hook struct {
+	Command string   `json:"command"`
+	Tools   []string `json:"tools,omitempty"`
+}
+
+// Hooks are the user's agent lifecycle hooks. PreTool runs before each
+// tool call and can block it (exit code 2); PostTool runs after and is
+// informational only.
+type Hooks struct {
+	PreTool  []Hook `json:"pre_tool,omitempty"`
+	PostTool []Hook `json:"post_tool,omitempty"`
+}
+
 // Config is the persisted user configuration. The active model is looked
 // up through Model; per-provider last-used models live in Models.
 type Config struct {
@@ -36,6 +63,10 @@ type Config struct {
 	// PermissionMode is one of the perm.Mode values; how much the agent
 	// may do without asking.
 	PermissionMode string `json:"permission_mode,omitempty"`
+	// MCPServers names the MCP server processes to start with the app.
+	MCPServers map[string]MCPServer `json:"mcp_servers,omitempty"`
+	// Hooks run shell commands on agent lifecycle events.
+	Hooks Hooks `json:"hooks,omitempty"`
 
 	// override is the session-scoped --model flag value; never persisted.
 	override string
@@ -127,11 +158,13 @@ func defaults() *Config {
 // rawConfig mirrors the config file schema, including the pre-provider
 // single "model" field so old files migrate cleanly.
 type rawConfig struct {
-	Provider       string            `json:"provider"`
-	Models         map[string]string `json:"models"`
-	MaxTokens      int               `json:"max_tokens"`
-	PermissionMode string            `json:"permission_mode"`
-	Model          string            `json:"model"` // legacy single-model schema
+	Provider       string               `json:"provider"`
+	Models         map[string]string    `json:"models"`
+	MaxTokens      int                  `json:"max_tokens"`
+	PermissionMode string               `json:"permission_mode"`
+	MCPServers     map[string]MCPServer `json:"mcp_servers"`
+	Hooks          Hooks                `json:"hooks"`
+	Model          string               `json:"model"` // legacy single-model schema
 }
 
 // apply converts a parsed config file into a validated Config, filling
@@ -155,5 +188,9 @@ func (r rawConfig) apply() *Config {
 	if cfg.Models[cfg.Provider] == "" && r.Model != "" {
 		cfg.Models[cfg.Provider] = r.Model
 	}
+	if len(r.MCPServers) > 0 {
+		cfg.MCPServers = r.MCPServers
+	}
+	cfg.Hooks = r.Hooks
 	return cfg
 }

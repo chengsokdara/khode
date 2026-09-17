@@ -2,19 +2,33 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 
 	"khode/internal/agent"
 	"khode/internal/config"
 	"khode/internal/llm"
+	"khode/internal/mcp"
 	"khode/internal/tools"
 	"khode/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// sortedServerNames lists MCP server names in order, so startup output
+// and registration are deterministic.
+func sortedServerNames(servers map[string]config.MCPServer) []string {
+	names := make([]string, 0, len(servers))
+	for n := range servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
 
 // resumeFlag implements the tri-state --resume flag: bare --resume (the
 // flag package passes "true") opens the session picker; --resume=<name>
@@ -127,6 +141,24 @@ func main() {
 		fatal(err)
 	}
 	registry := tools.Default(workdir)
+
+	// MCP servers from config: start each one and register its tools. A
+	// server that fails warns but never keeps the app from starting.
+	for _, name := range sortedServerNames(cfg.MCPServers) {
+		sc := cfg.MCPServers[name]
+		ctx, cancel := context.WithTimeout(context.Background(), mcp.InitTimeout)
+		cli, err := mcp.Start(ctx, name, sc.Command, sc.Args, sc.Env)
+		cancel()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "khode: mcp server %q unavailable: %v\n", name, err)
+			continue
+		}
+		defer cli.Close()
+		if err := tools.AddMCP(registry, name, cli, sc.Risk); err != nil {
+			fmt.Fprintf(os.Stderr, "khode: mcp server %q has no tools: %v\n", name, err)
+			continue
+		}
+	}
 
 	m := ui.New(cfg, provider, sess, registry, workdir)
 	if pickerEntries != nil {

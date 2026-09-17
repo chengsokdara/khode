@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"khode/internal/agent"
@@ -488,6 +489,43 @@ func (m *Model) startTurn(input string) tea.Cmd {
 // values to the safe default.
 func (m *Model) mode() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
 
+// mcpStatus reports every configured MCP server and how many of its
+// tools made it into the registry; a configured server with zero tools
+// failed to start or to answer tools/list at launch.
+func (m *Model) mcpStatus() string {
+	if len(m.cfg.MCPServers) == 0 {
+		return "no MCP servers configured · add an mcp_servers object to ~/.khode/config.json"
+	}
+	names := make([]string, 0, len(m.cfg.MCPServers))
+	for n := range m.cfg.MCPServers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var lines []string
+	for _, n := range names {
+		prefix := "mcp__" + n + "__"
+		count := 0
+		for _, tn := range m.tools.Names() {
+			if strings.HasPrefix(tn, prefix) {
+				count++
+			}
+		}
+		if count == 0 {
+			lines = append(lines, fmt.Sprintf("%s — unavailable (see launch warnings)", n))
+			continue
+		}
+		var toolNames []string
+		for _, tn := range m.tools.Names() {
+			if strings.HasPrefix(tn, prefix) {
+				toolNames = append(toolNames, strings.TrimPrefix(tn, prefix))
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s — %d tools: %s", n, count, strings.Join(toolNames, ", ")))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // runCompact summarizes older turns now, off the UI goroutine. The loop
 // config mirrors startTurn so the forced compaction matches what the
 // next automatic one would do.
@@ -519,6 +557,7 @@ func (m *Model) command(input string) tea.Cmd {
 			"/mode [name]  permission mode: plan · ask · accept-edits · auto",
 			"/compact      summarize older turns to shrink the context",
 			"/tools        list tools the model can call",
+			"/mcp          MCP server status",
 			"/exit, /quit  leave khode",
 			"/help         this list",
 		}, "\n")})
@@ -562,6 +601,9 @@ func (m *Model) command(input string) tea.Cmd {
 			lines = append(lines, fmt.Sprintf("%-6s %s", n, t.Description()))
 		}
 		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join(lines, "\n")})
+
+	case "/mcp":
+		m.messages = append(m.messages, uiMessage{role: "system", raw: m.mcpStatus()})
 
 	case "/compact":
 		if m.streaming {
