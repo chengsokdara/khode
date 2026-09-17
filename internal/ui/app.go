@@ -118,6 +118,11 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.MaxHeight = maxInputHeight
+	// bubbles paints the focused cursor line with a hard black
+	// background, which renders as a black strip inside the input box on
+	// dark terminal themes; drop it so the line keeps the theme's colors.
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	ta.KeyMap.InsertNewline = key.NewBinding(
 		key.WithKeys("alt+enter"),
 		key.WithHelp("alt+enter", "newline"),
