@@ -203,3 +203,14 @@ func TestProviderProtocolCanonicalizes(t *testing.T) {
 		t.Error("IsBuiltinProvider(\"OpenAI\") = false")
 	}
 }
+
+func TestKeyOptional(t *testing.T) {
+	if !KeyOptional("khateway") || !KeyOptional("Khateway") {
+		t.Error("khateway must be key-optional (case-insensitive)")
+	}
+	for _, n := range []string{"anthropic", "openai", "groq", ""} {
+		if KeyOptional(n) {
+			t.Errorf("KeyOptional(%q) = true, want false", n)
+		}
+	}
+}

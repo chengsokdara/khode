@@ -89,3 +89,71 @@ func TestFetchModelsKhateway(t *testing.T) {
 		t.Errorf("models = %v", models)
 	}
 }
+
+// Keyless khateway must still produce a well-formed request on both
+// faces: the anonymous placeholder goes out (never a stray OPENAI_API_KEY
+// bearer, and the anthropic SDK must not refuse client-side).
+func TestKhatewayKeylessRequests(t *testing.T) {
+	var gotAuth, gotAPIKey string
+	openaiFace := func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}
+	anthropicFace := func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"m\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"))
+		w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n"))
+		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}
+
+	t.Run("openai face", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(openaiFace))
+		defer srv.Close()
+		t.Setenv("KHATEWAY_API_KEY", "")
+		t.Setenv("OPENAI_API_KEY", "stray-key") // must never reach khateway
+
+		p, err := New(ProviderKhateway, "", srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ch, err := p.Stream(t.Context(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for ev := range ch {
+			if e, ok := ev.(ErrorEvent); ok {
+				t.Fatalf("stream failed: %v", e.Err)
+			}
+		}
+		if gotAuth != "Bearer "+khatewayAnonKey {
+			t.Errorf("Authorization = %q, want the anonymous placeholder (stray env key must not leak)", gotAuth)
+		}
+	})
+
+	t.Run("anthropic face", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(anthropicFace))
+		defer srv.Close()
+		t.Setenv("KHATEWAY_API_KEY", "")
+		t.Setenv("ANTHROPIC_API_KEY", "") // unset: SDK would refuse client-side
+
+		p, err := New(ProviderKhateway, "", srv.URL+"/v1/messages")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ch, err := p.Stream(t.Context(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for ev := range ch {
+			if e, ok := ev.(ErrorEvent); ok {
+				t.Fatalf("stream failed: %v", e.Err)
+			}
+		}
+		if gotAPIKey != khatewayAnonKey {
+			t.Errorf("x-api-key = %q, want the anonymous placeholder", gotAPIKey)
+		}
+	})
+}

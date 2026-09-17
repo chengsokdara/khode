@@ -14,6 +14,13 @@ import "strings"
 // URL is configured. OpenAI-style shape: /v1 + /chat/completions etc.
 const DefaultKhatewayEndpoint = "http://localhost:8787/v1"
 
+// khatewayAnonKey is sent when the user configured no key. Both SDKs
+// need a non-empty credential: the anthropic client refuses to build a
+// request without one, and the openai client would fall back to
+// OPENAI_API_KEY — leaking an unrelated key to the gateway. Gateways
+// that front auth themselves just ignore the header.
+const khatewayAnonKey = "anonymous"
+
 // KhatewayProtocol resolves a khateway base URL into the wire protocol
 // and base URL its client expects. An anthropic-SDK-shaped base (…
 // /v1/messages) gets the anthropic client with the suffix stripped —

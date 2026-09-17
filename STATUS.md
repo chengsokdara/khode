@@ -126,6 +126,17 @@ screen), `internal/debug.Printf` is the gated logging call, and
 README → Development documents the loop (build/vet/test/run, fake-SSE
 tests, base-URL overrides, delve).
 
+**khateway keyless-native (2026-09-17):** khode no longer requires any
+client key for khateway — `config.KeyOptional` exempts it from the
+pre-flight key check (turns and /compact), the walkthrough's key step
+is skipped (choose khateway → straight to the model list → ready), and
+the settings api-key row reads "not required". With no key configured,
+requests carry an `anonymous` placeholder credential (Bearer / x-api-key):
+the anthropic SDK would otherwise refuse client-side and the openai SDK
+would leak OPENAI_API_KEY as the bearer token. `KHATEWAY_API_KEY` and a
+stored key still work as optional overrides for gateways that enforce
+client keys — the gateway side is expected to treat auth as optional.
+
 ## Next
 
 Backlog (no committed order):
@@ -169,3 +180,4 @@ Backlog (no committed order):
 | 2026-09-17 | khateway built-in provider: protocol picked from the endpoint shape (`llm.KhatewayProtocol`), model picker auto-fetch, no default model, `KHATEWAY_*` env vars; verified green on a clean worktree (parallel reasoning-WIP in-tree was unrelatedly red, untouched) | 662958b |
 | 2026-09-17 | Selectable text: mouse capture off by default (alt+m toggles wheel-scroll capture, pgup/pgdn scroll); thinking split from response (`llm.ThinkingDeltaEvent`, `<think>` stream splitter, `reasoning_content` raw-JSON read, `thinking` session field, ✻ display block) | 2a3a6c6 |
 | 2026-09-17 | Walkthrough model step: auto-fetch + pick for khateway/custom providers (no model yet) between key and ready; fetch-failure degrades to /settings pointer; `--debug` flag + `internal/debug` gated logging + README Development section | 945836c |
+| 2026-09-17 | khateway keyless-native: `config.KeyOptional` exempts it from pre-flight + walkthrough key step; missing key becomes the `anonymous` placeholder (no SDK env fallback, no client-side refusal); gateway side treats auth as optional | (this commit) |

@@ -224,3 +224,50 @@ func TestThinkingOnlyTurnRenders(t *testing.T) {
 		t.Error("thinking-only turn rendered no thinking block")
 	}
 }
+
+// khateway is keyless-native: with no key anywhere, a submitted turn
+// starts instead of being stopped by the pre-flight key check.
+func TestKhatewayTurnStartsWithoutKey(t *testing.T) {
+	m := newTestModel(t)
+	t.Setenv("KHATEWAY_API_KEY", "")
+	m.cfg.Provider = "khateway"
+	m.cfg.SetModel("gateway-model") // model pre-flight must pass too
+
+	m.textarea.SetValue("hello")
+	cmd := m.submit()
+
+	for _, msg := range m.messages {
+		if msg.role == "system" && strings.Contains(msg.raw, "no API key") {
+			t.Fatalf("keyless khateway turn was blocked: %q", msg.raw)
+		}
+	}
+	last := m.messages[len(m.messages)-1]
+	if last.role != llm.RoleUser || last.raw != "hello" {
+		t.Errorf("last message = %+v, want the user turn", last)
+	}
+	if !m.streaming || cmd == nil {
+		t.Error("turn did not start")
+	}
+	// cmd is deliberately not run: the test provider's channel is nil.
+}
+
+// Providers that do need a key keep the pre-flight: a keyless turn is
+// stopped with a pointer to /settings instead of a doomed request.
+func TestKeylessTurnStillBlockedForOtherProviders(t *testing.T) {
+	m := newTestModel(t) // provider "test", no key anywhere
+	m.textarea.SetValue("hello")
+	m.submit()
+
+	blocked := false
+	for _, msg := range m.messages {
+		if msg.role == "system" && strings.Contains(msg.raw, "no API key") {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Error("keyless turn was not stopped by the pre-flight")
+	}
+	if m.streaming {
+		t.Error("turn started without a key")
+	}
+}

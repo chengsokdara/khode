@@ -225,9 +225,14 @@ func (m *Model) registerTaskTool() {
 	}))
 }
 
-// hasCredentials reports whether the active provider has a usable API
-// key from either source, so a turn isn't started just to fail with 401.
+// hasCredentials reports whether turns may start on the active
+// provider: key-optional providers (khateway — the gateway fronts
+// upstream auth) always pass, everyone else needs a resolvable API key,
+// so a turn isn't started just to fail with 401.
 func (m *Model) hasCredentials() bool {
+	if config.KeyOptional(m.cfg.Provider) {
+		return true
+	}
 	key, _ := m.cfg.Credentials(m.auth, m.cfg.Provider)
 	return key != ""
 }

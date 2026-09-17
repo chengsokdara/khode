@@ -943,7 +943,8 @@ func (s *settings) value(m *Model, row settingsRow) string {
 }
 
 // apiKeyValue renders the key row: masked, with its source — the full
-// secret is never displayed.
+// secret is never displayed. Key-optional providers (khateway) say so
+// instead of nagging for a key they don't need.
 func (m *Model) apiKeyValue() string {
 	stored := m.auth.Key(m.cfg.Provider)
 	if env := os.Getenv(m.cfg.APIKeyEnvName(m.cfg.Provider)); env != "" {
@@ -951,6 +952,9 @@ func (m *Model) apiKeyValue() string {
 	}
 	if stored != "" {
 		return maskKey(stored) + dimStyle.Render("  saved")
+	}
+	if config.KeyOptional(m.cfg.Provider) {
+		return dimStyle.Render("not required · the gateway fronts auth (optional override)")
 	}
 	return dimStyle.Render("not set · enter to paste")
 }

@@ -22,13 +22,14 @@ go build -o khode ./cmd/khode   # or: go run ./cmd/khode
 
 No API key is required to launch. The first start walks you through it —
 what khode is, pick a provider (Anthropic, OpenAI, khateway, or your own
-endpoint), paste a key, and for gateway/custom endpoints pick a model
-from the freshly fetched list — then ends with suggestions for what to
-try first (`enter` to start chatting, `esc` skips). Keys are
-stored in `~/.khode/auth.json` (owner-only); setting `ANTHROPIC_API_KEY`
-or `OPENAI_API_KEY` in the environment also works and wins over the
-stored key. The status line tracks how full the model's context window
-is (`ctx NN%`, warning-colored near the auto-compact point).
+endpoint), paste a key for the ones that need it, and for gateway/custom
+endpoints pick a model from the freshly fetched list — then ends with
+suggestions for what to try first (`enter` to start chatting, `esc`
+skips). Keys are stored in `~/.khode/auth.json` (owner-only); setting
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment also works
+and wins over the stored key. The status line tracks how full the
+model's context window is (`ctx NN%`, warning-colored near the
+auto-compact point).
 
 ## Configuration
 
@@ -40,9 +41,11 @@ Everything is configurable from inside the TUI with `/settings` (alias
   OpenAI-compatible or Anthropic-protocol endpoint — Ollama, LM Studio,
   OpenRouter, proxies. New providers activate immediately and read
   `NAME_API_KEY`-style env vars if set. The built-in **khateway**
-  provider points at a self-hosted [Khateway](https://github.com/) router:
-  one base URL + one client key unlock every model the gateway exposes
-  (its endpoint shape picks the wire protocol automatically).
+  provider points at a self-hosted [Khateway](https://github.com/) router
+  and is keyless-native: pick it and start — no key step, the gateway
+  fronts upstream auth (its endpoint shape picks the wire protocol
+  automatically). Gateways that do check client keys accept
+  `KHATEWAY_API_KEY` as an optional override.
 - **api key** — masked editor; stored per provider in `auth.json`
 - **base url** — point a provider at a proxy or OpenAI-compatible
   endpoint

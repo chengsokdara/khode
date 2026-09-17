@@ -143,6 +143,13 @@ func (m *Model) welcomeKey(msg tea.KeyMsg) tea.Cmd {
 			if name != m.cfg.Provider {
 				m.switchProvider(name)
 			}
+			if config.KeyOptional(name) {
+				// khateway is keyless-native — the gateway fronts
+				// upstream auth, so a key step would be dead weight.
+				// Go straight to the model list (or the ready card if
+				// a model is already set).
+				return m.commitWelcomeKey()
+			}
 			w.input.Placeholder = "paste your " + name + " API key · leave empty to skip"
 			w.step = welcomeKey
 		}

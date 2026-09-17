@@ -45,6 +45,14 @@ func IsBuiltinProvider(name string) bool {
 		strings.EqualFold(name, "khateway")
 }
 
+// KeyOptional reports whether provider can run turns without any API
+// key. khateway is keyless-native: the gateway fronts upstream auth
+// itself, so khode never requires a client key (KHATEWAY_API_KEY stays
+// as an optional override for gateways that do check one).
+func KeyOptional(name string) bool {
+	return strings.EqualFold(name, "khateway")
+}
+
 // MCPServer is one configured Model Context Protocol server process.
 type MCPServer struct {
 	Command string   `json:"command"`

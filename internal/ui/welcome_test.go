@@ -182,30 +182,25 @@ func TestWelcomeKhatewayHint(t *testing.T) {
 		t.Error("khateway row lacks its explanatory hint")
 	}
 
-	// Choosing it stores no vendor default model: after the key step the
-	// walkthrough moves to the model step (its fetch command is
-	// discarded here, so the step sits in the fetching state), and
-	// enter skips ahead to the ready card.
+	// khateway is keyless-native: choosing it skips the key step
+	// entirely and lands on the model step (its fetch command is
+	// discarded here, so the step sits in the fetching state).
 	m = pressKeys(m, "right", "right", "enter")
-	if m.welcome.step != welcomeKey {
-		t.Fatalf("step = %d, want key after choosing khateway", m.welcome.step)
-	}
 	if m.cfg.Provider != "khateway" {
 		t.Fatalf("provider = %q, want khateway", m.cfg.Provider)
 	}
 	if m.provider.Name() != "khateway" {
 		t.Error("provider client not rebuilt for khateway")
 	}
-	m = pressKeys(m, "khat-e2e-key", "enter")
 	if m.welcome.step != welcomeModel {
-		t.Fatalf("step = %d, want model after the key step", m.welcome.step)
+		t.Fatalf("step = %d, want model (no key step for khateway)", m.welcome.step)
 	}
 	m = pressKeys(m, "enter", "enter") // skip the in-flight fetch → ready → close
 	if m.welcome != nil {
 		t.Error("walkthrough did not close after the ready card")
 	}
-	if got := m.auth.Key("khateway"); got != "khat-e2e-key" {
-		t.Errorf("stored key = %q", got)
+	if got := m.auth.Key("khateway"); got != "" {
+		t.Errorf("stored key = %q, want none (khateway is keyless)", got)
 	}
 	if got := m.cfg.Model(); got != "" {
 		t.Errorf("khateway model = %q, want empty until the picker fetches", got)
@@ -263,15 +258,16 @@ func TestWelcomeKhatewayModelStep(t *testing.T) {
 	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
 	m.OpenWelcome()
 
-	// intro → provider → khateway → key (skipped: empty) → model step.
-	m = pressKeys(m, "enter", "right", "right", "enter")
-	next, cmd := m.Update(keyMsg("enter")) // commit the empty key
+	// intro → provider → cursor on khateway → choosing it (keyless)
+	// lands directly on the model step with a fetch in flight.
+	m = pressKeys(m, "enter", "right", "right")
+	next, cmd := m.Update(keyMsg("enter"))
 	m = next.(Model)
 	if m.welcome.step != welcomeModel {
-		t.Fatalf("step = %d, want model after the key step", m.welcome.step)
+		t.Fatalf("step = %d, want model right after choosing khateway", m.welcome.step)
 	}
 	if cmd == nil || !m.welcome.fetching {
-		t.Fatal("key commit did not start a model-list fetch")
+		t.Fatal("choosing khateway did not start a model-list fetch")
 	}
 
 	// Run the fetch command and deliver its result the way the runtime
@@ -323,9 +319,12 @@ func TestWelcomeModelStepFetchFailure(t *testing.T) {
 	m := newSettingsModel(t)
 	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
 	m.OpenWelcome()
-	m = pressKeys(m, "enter", "right", "right", "enter")
-	next, cmd := m.Update(keyMsg("enter"))
+	m = pressKeys(m, "enter", "right", "right")
+	next, cmd := m.Update(keyMsg("enter")) // choose khateway → model step
 	m = next.(Model)
+	if m.welcome.step != welcomeModel {
+		t.Fatalf("step = %d, want model after choosing khateway", m.welcome.step)
+	}
 	if cmd == nil {
 		t.Fatal("no fetch started")
 	}
