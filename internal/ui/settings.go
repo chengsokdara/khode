@@ -663,12 +663,9 @@ func (m *Model) commitForm() tea.Cmd {
 			s.savedMsg = "✗ name and base url are required"
 			return nil
 		}
-		if name != f.origName {
-			_, exists := m.cfg.CustomProviders[name]
-			if exists || config.IsBuiltinProvider(name) {
-				s.savedMsg = "✗ a provider named " + name + " already exists"
-				return nil
-			}
+		if name != f.origName && m.providerNameTaken(name, f.origName) {
+			s.savedMsg = "✗ a provider named " + name + " already exists"
+			return nil
 		}
 		if m.cfg.CustomProviders == nil {
 			m.cfg.CustomProviders = map[string]config.CustomProvider{}
@@ -1105,6 +1102,23 @@ func (m *Model) providerNames() []string {
 	}
 	sort.Strings(customs)
 	return append(llm.Names(), customs...)
+}
+
+// providerNameTaken reports whether name collides with a built-in or
+// an already-configured custom provider, ignoring case (lookups treat
+// "Groq" and "groq" as one name). The entry being edited — origName,
+// "" when adding — does not count as a collision, so re-casing its own
+// name stays allowed.
+func (m *Model) providerNameTaken(name, origName string) bool {
+	if config.IsBuiltinProvider(name) {
+		return true
+	}
+	for n := range m.cfg.CustomProviders {
+		if strings.EqualFold(n, name) && !strings.EqualFold(n, origName) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) providerListKey(msg tea.KeyMsg) tea.Cmd {

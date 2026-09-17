@@ -9,13 +9,36 @@ import (
 // where its credentials come from, and which models it offers. Env vars
 // win over stored values, so shell and CI workflows stay untouched.
 
+// providerKey returns the key of a provider-keyed map matching name:
+// exactly when possible, otherwise case-insensitively, so a name whose
+// letter casing drifted between saves (older khode lowercased the
+// provider field on load) still finds its stored entries. ok reports
+// whether any entry matched.
+func providerKey[V any](m map[string]V, name string) (string, bool) {
+	if _, ok := m[name]; ok {
+		return name, true
+	}
+	for k := range m {
+		if strings.EqualFold(k, name) {
+			return k, true
+		}
+	}
+	return name, false
+}
+
 // ProviderProtocol returns the wire protocol provider speaks: built-ins
-// are their own protocol; custom providers carry theirs in Kind.
-// Unknown names come back unchanged, so a bad config value surfaces as
-// an llm.NewProtocol error instead of silently routing somewhere else.
+// are their own protocol; custom providers carry theirs in Kind. The
+// result is always a canonical lowercase protocol name. Unknown names
+// come back unchanged, so a bad config value surfaces as an
+// llm.NewProtocol error instead of silently routing somewhere else.
 func (c *Config) ProviderProtocol(provider string) string {
-	if cp, ok := c.CustomProviders[provider]; ok && cp.Kind != "" {
-		return cp.Kind
+	if k, ok := providerKey(c.CustomProviders, provider); ok {
+		if kind := strings.ToLower(strings.TrimSpace(c.CustomProviders[k].Kind)); kind != "" {
+			return kind
+		}
+	}
+	if IsBuiltinProvider(provider) {
+		return strings.ToLower(provider)
 	}
 	return provider
 }
@@ -26,7 +49,7 @@ func (c *Config) ProviderProtocol(provider string) string {
 // GROQ_API_KEY).
 func (c *Config) APIKeyEnvName(provider string) string {
 	if IsBuiltinProvider(provider) {
-		switch provider {
+		switch strings.ToLower(provider) {
 		case "anthropic":
 			return "ANTHROPIC_API_KEY"
 		case "openai":
@@ -40,7 +63,7 @@ func (c *Config) APIKeyEnvName(provider string) string {
 // provider's endpoint, following the same naming rule as APIKeyEnvName.
 func (c *Config) BaseURLEnvName(provider string) string {
 	if IsBuiltinProvider(provider) {
-		switch provider {
+		switch strings.ToLower(provider) {
 		case "anthropic":
 			return "ANTHROPIC_BASE_URL"
 		case "openai":
@@ -71,13 +94,13 @@ func envPrefix(provider string) string {
 func (c *Config) Credentials(a *Auth, provider string) (key, baseURL string) {
 	if v := os.Getenv(c.APIKeyEnvName(provider)); v != "" {
 		key = v
-	} else {
-		key = a.Key(provider)
+	} else if k, ok := providerKey(a.APIKeys, provider); ok {
+		key = a.APIKeys[k]
 	}
 	if v := os.Getenv(c.BaseURLEnvName(provider)); v != "" {
 		baseURL = v
-	} else if cp, ok := c.CustomProviders[provider]; ok && cp.BaseURL != "" {
-		baseURL = cp.BaseURL
+	} else if k, ok := providerKey(c.CustomProviders, provider); ok && c.CustomProviders[k].BaseURL != "" {
+		baseURL = c.CustomProviders[k].BaseURL
 	} else {
 		baseURL = c.BaseURL(provider)
 	}

@@ -223,7 +223,7 @@ func (m *Model) commitWelcomeCustom() tea.Cmd {
 		w.savedMsg = "✗ " + name + " is built-in — pick another name"
 		return nil
 	}
-	if _, exists := m.cfg.CustomProviders[name]; exists {
+	if m.providerNameTaken(name, "") {
 		w.savedMsg = "✗ a provider named " + name + " already exists"
 		return nil
 	}

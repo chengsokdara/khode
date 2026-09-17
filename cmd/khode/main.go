@@ -74,7 +74,14 @@ func main() {
 	key, baseURL := cfg.Credentials(auth, name)
 	provider, err := llm.NewProtocol(cfg.ProviderProtocol(name), name, key, baseURL)
 	if err != nil {
-		fatal(err)
+		// A bad provider entry (e.g. a hand-edited custom kind) must
+		// not keep khode from starting: warn, ride the default
+		// protocol, and let /settings → provider fix the entry.
+		fmt.Fprintf(os.Stderr, "khode: %v — starting with the anthropic provider; fix it under /settings → provider\n", err)
+		provider, err = llm.New(llm.ProviderAnthropic, "", "")
+		if err != nil {
+			fatal(err)
+		}
 	}
 
 	noSessions := func() {

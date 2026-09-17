@@ -120,3 +120,55 @@ func TestModelChoicesAddRemove(t *testing.T) {
 		t.Errorf("openai model after clearing choices = %q, want built-in default", got)
 	}
 }
+
+func TestCustomProviderNameCasing(t *testing.T) {
+	// The settings UI saves the provider name as typed ("KiosAPI");
+	// khode once lowercased the active provider field on load, splitting
+	// it from the map keys — the name then resurfaced as an unknown
+	// protocol. Both spellings must load to the same working config.
+	customs := map[string]CustomProvider{
+		"KiosAPI": {Kind: "OpenAI", BaseURL: "https://kiosapi.com/v1"},
+	}
+	models := map[string]string{"KiosAPI": "glm-5.3-flash"}
+	choices := map[string][]string{"KiosAPI": {"glm-5.3-flash", "kimi-k3"}}
+
+	for _, saved := range []string{"KiosAPI", "kiosapi"} {
+		cfg := rawConfig{Provider: saved, Models: models, CustomProviders: customs, ModelChoices: choices}.apply()
+
+		// The active name snaps to the stored key's casing.
+		if got, want := cfg.Provider, "KiosAPI"; got != want {
+			t.Errorf("provider saved as %q: loaded as %q, want %q", saved, got, want)
+		}
+		if got, want := cfg.ProviderProtocol(cfg.Provider), "openai"; got != want {
+			t.Errorf("protocol = %q, want openai (kind normalized)", got)
+		}
+		if got, want := cfg.Model(), "glm-5.3-flash"; got != want {
+			t.Errorf("model = %q, want glm-5.3-flash", got)
+		}
+
+		a := &Auth{}
+		a.SetKey("KiosAPI", "stored-key")
+		t.Setenv("KIOSAPI_API_KEY", "")
+		key, url := cfg.Credentials(a, cfg.Provider)
+		if key != "stored-key" || url != "https://kiosapi.com/v1" {
+			t.Errorf("credentials = %q/%q, want the stored key and custom base url", key, url)
+		}
+	}
+}
+
+func TestProviderProtocolCanonicalizes(t *testing.T) {
+	cfg := defaults()
+	cfg.CustomProviders = map[string]CustomProvider{
+		"gateway": {Kind: "  Anthropic ", BaseURL: "http://x"},
+	}
+	if got, want := cfg.ProviderProtocol("gateway"), "anthropic"; got != want {
+		t.Errorf("protocol = %q, want %q", got, want)
+	}
+	// Built-ins match case-insensitively and come back canonical.
+	if got, want := cfg.ProviderProtocol("OpenAI"), "openai"; got != want {
+		t.Errorf("protocol = %q, want %q", got, want)
+	}
+	if !IsBuiltinProvider("OpenAI") {
+		t.Error("IsBuiltinProvider(\"OpenAI\") = false")
+	}
+}

@@ -57,10 +57,12 @@ func TestLegacyMigration(t *testing.T) {
 		t.Errorf("legacy model not migrated: got %q", got)
 	}
 
-	// Legacy model seeds the configured provider's entry.
+	// Legacy model seeds the configured provider's entry. The name is
+	// kept as saved; lookups match built-ins case-insensitively, and
+	// "OpenAI" resolves the same default model as "openai".
 	cfg = rawConfig{Provider: "OpenAI", Model: "gpt-4o"}.apply()
-	if cfg.Provider != "openai" {
-		t.Errorf("provider not lowercased: %q", cfg.Provider)
+	if cfg.Provider != "OpenAI" {
+		t.Errorf("provider name rewritten: %q", cfg.Provider)
 	}
 	if got := cfg.Model(); got != "gpt-4o" {
 		t.Errorf("legacy model for openai = %q, want gpt-4o", got)

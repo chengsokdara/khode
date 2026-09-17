@@ -38,9 +38,10 @@ type CustomProvider struct {
 }
 
 // IsBuiltinProvider reports whether name is one of the two built-in
-// providers rather than a user-defined one.
+// providers rather than a user-defined one. Letter casing is ignored,
+// so "OpenAI" in a hand-edited config is still the built-in.
 func IsBuiltinProvider(name string) bool {
-	return name == "anthropic" || name == "openai"
+	return strings.EqualFold(name, "anthropic") || strings.EqualFold(name, "openai")
 }
 
 // MCPServer is one configured Model Context Protocol server process.
@@ -154,13 +155,15 @@ func (c *Config) Model() string {
 	if c.override != "" {
 		return c.override
 	}
-	if m := c.Models[c.Provider]; m != "" {
-		return m
+	if k, ok := providerKey(c.Models, c.Provider); ok && c.Models[k] != "" {
+		return c.Models[k]
 	}
-	if choices := c.ModelChoices[c.Provider]; len(choices) > 0 && choices[0] != "" {
-		return choices[0]
+	if k, ok := providerKey(c.ModelChoices, c.Provider); ok {
+		if choices := c.ModelChoices[k]; len(choices) > 0 && choices[0] != "" {
+			return choices[0]
+		}
 	}
-	if _, ok := c.CustomProviders[c.Provider]; ok {
+	if _, ok := providerKey(c.CustomProviders, c.Provider); ok {
 		return ""
 	}
 	if m := defaultModels[c.Provider]; m != "" {
@@ -216,7 +219,13 @@ type rawConfig struct {
 // defaults and seeding Models from the legacy field.
 func (r rawConfig) apply() *Config {
 	cfg := defaults()
-	if p := strings.ToLower(strings.TrimSpace(r.Provider)); p != "" {
+	// The provider name is kept exactly as saved: custom-provider,
+	// models, and model-choice map keys all carry the casing the UI
+	// wrote, and lookups re-match it case-insensitively if it drifts.
+	// (Lowercasing here once split the name from those keys, so a
+	// provider named "KiosAPI" came back as the unknown protocol
+	// "kiosapi".)
+	if p := strings.TrimSpace(r.Provider); p != "" {
 		cfg.Provider = p
 	}
 	if r.MaxTokens > 0 {
@@ -224,6 +233,16 @@ func (r rawConfig) apply() *Config {
 	}
 	// Unknown modes degrade to the safe default instead of erroring.
 	cfg.PermissionMode = string(perm.Parse(r.PermissionMode))
+	if len(r.CustomProviders) > 0 {
+		cfg.CustomProviders = r.CustomProviders
+		// Snap the active name to the stored key's casing so it lines
+		// up with the maps the UI wrote under that name.
+		if !IsBuiltinProvider(cfg.Provider) {
+			if k, ok := providerKey(cfg.CustomProviders, cfg.Provider); ok {
+				cfg.Provider = k
+			}
+		}
+	}
 	if len(r.Models) > 0 {
 		cfg.Models = r.Models
 	}
@@ -238,9 +257,6 @@ func (r rawConfig) apply() *Config {
 	}
 	if len(r.BaseURLs) > 0 {
 		cfg.BaseURLs = r.BaseURLs
-	}
-	if len(r.CustomProviders) > 0 {
-		cfg.CustomProviders = r.CustomProviders
 	}
 	if len(r.ModelChoices) > 0 {
 		cfg.ModelChoices = r.ModelChoices
