@@ -159,6 +159,45 @@ func TestWelcomeCustomProvider(t *testing.T) {
 	}
 }
 
+func TestWelcomeKhatewayHint(t *testing.T) {
+	m := newSettingsModel(t)
+	m.OpenWelcome()
+	m = pressKeys(m, "enter") // intro → provider
+
+	// The provider list now leads with khateway: anthropic, openai,
+	// khateway, custom… The khateway row explains what it is.
+	if got := m.providerChoices(); len(got) < 4 || got[0] != "anthropic" || got[1] != "openai" || got[2] != "khateway" {
+		t.Fatalf("choices = %v, want khateway third", got)
+	}
+	view := m.welcomeView()
+	if !strings.Contains(view, "khateway") || !strings.Contains(view, "router") {
+		t.Error("khateway row lacks its explanatory hint")
+	}
+
+	// Choosing it stores no vendor default model: the key step comes
+	// next, and the model is picked from the fetched list afterwards.
+	m = pressKeys(m, "right", "right", "enter")
+	if m.welcome.step != welcomeKey {
+		t.Fatalf("step = %d, want key after choosing khateway", m.welcome.step)
+	}
+	if m.cfg.Provider != "khateway" {
+		t.Fatalf("provider = %q, want khateway", m.cfg.Provider)
+	}
+	if m.provider.Name() != "khateway" {
+		t.Error("provider client not rebuilt for khateway")
+	}
+	m = pressKeys(m, "khat-e2e-key", "enter", "enter") // key → ready → close
+	if m.welcome != nil {
+		t.Error("walkthrough did not close after the ready card")
+	}
+	if got := m.auth.Key("khateway"); got != "khat-e2e-key" {
+		t.Errorf("stored key = %q", got)
+	}
+	if got := m.cfg.Model(); got != "" {
+		t.Errorf("khateway model = %q, want empty until the picker fetches", got)
+	}
+}
+
 func TestStatusLineContextMeter(t *testing.T) {
 	m := newSettingsModel(t) // anthropic default model, window known
 

@@ -293,6 +293,11 @@ func (m *Model) welcomeView() string {
 			switch {
 			case name == welcomeCustomEntry:
 				line = dimStyle.Render("add a custom provider — Ollama, OpenRouter, any OpenAI-compatible URL")
+			case strings.EqualFold(name, "khateway"):
+				line += dimStyle.Render("  self-hosted router · one key, every upstream model")
+				if u := m.cfg.BaseURL(name); u != "" {
+					line += dimStyle.Render("  " + clip(u, 24))
+				}
 			case !config.IsBuiltinProvider(name):
 				line += dimStyle.Render("  " + clip(m.cfg.CustomProviders[name].BaseURL, 30))
 			}
