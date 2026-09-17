@@ -53,6 +53,11 @@ type Info struct {
 	Messages int       // transcript line count
 }
 
+// NewMemorySession returns a session that lives only in memory: nothing
+// is ever written to disk. Subagent transcripts use it — their history
+// is scratch work the parent never replays.
+func NewMemorySession() *Session { return &Session{} }
+
 // NewSession creates a timestamped transcript file in dir.
 func NewSession(dir string) (*Session, error) {
 	return create(dir, time.Now().Format("2006-01-02-150405"))
@@ -241,8 +246,12 @@ func (s *Session) load() error {
 }
 
 // Append records a turn and persists it immediately (crash-safe-ish).
+// Memory sessions keep the message only.
 func (s *Session) Append(m llm.Message) error {
 	s.msgs = append(s.msgs, m)
+	if s.Path == "" {
+		return nil
+	}
 
 	data, err := marshalLine(m)
 	if err != nil {
@@ -262,7 +271,12 @@ func (s *Session) Append(m llm.Message) error {
 // Replace atomically rewrites the whole transcript with msgs (used by
 // compaction): lines go to a temp file that is synced and renamed into
 // place, so a crash leaves either the old or the new transcript intact.
+// Memory sessions swap the slice in place.
 func (s *Session) Replace(msgs []llm.Message) error {
+	if s.Path == "" {
+		s.msgs = append([]llm.Message(nil), msgs...)
+		return nil
+	}
 	var buf bytes.Buffer
 	for _, m := range msgs {
 		data, err := marshalLine(m)
@@ -300,5 +314,8 @@ func (s *Session) Messages() []llm.Message { return s.msgs }
 
 // Name returns the session's name (file name without the .jsonl suffix).
 func (s *Session) Name() string {
+	if s.Path == "" {
+		return "memory"
+	}
 	return strings.TrimSuffix(filepath.Base(s.Path), ".jsonl")
 }

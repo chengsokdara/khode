@@ -121,6 +121,18 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 		approvals: agent.NewBridge(),
 	}
 
+	// Subagents share the provider and the approval bridge; model, token
+	// budget, and permission mode are read live so /model and /mode
+	// apply to tasks spawned later.
+	reg.Register(agent.NewTaskTool(agent.SubagentConfig{
+		Provider:  p,
+		Workdir:   workdir,
+		Model:     cfg.Model,
+		MaxTokens: func() int { return cfg.MaxTokens },
+		Mode:      func() perm.Mode { return perm.Parse(cfg.PermissionMode) },
+		Approver:  m.approvals,
+	}))
+
 	for _, msg := range sess.Messages() {
 		switch {
 		case msg.Role == llm.RoleTool && msg.ToolResult != nil:
