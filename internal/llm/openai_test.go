@@ -284,3 +284,105 @@ func TestOpenAIToolCallStream(t *testing.T) {
 		t.Errorf("tool message = %v, want role tool for call_1", toolMsg)
 	}
 }
+
+// The fake server streams reasoning the way DeepSeek-style endpoints do:
+// a `reasoning_content` delta, then inline <think> tags in the content,
+// split so the closing tag straddles two chunks.
+func openaiThinkServer(t *testing.T, gotBody *map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decoding request: %v", err)
+			return
+		}
+		*gotBody = body
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		chunk := func(v any) {
+			data, _ := json.Marshal(v)
+			w.Write([]byte("data: " + string(data) + "\n\n"))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		base := map[string]any{
+			"id": "c3", "object": "chat.completion.chunk", "created": 1, "model": "gpt-test",
+		}
+		delta := func(d map[string]any) {
+			chunk(merge(base, map[string]any{"choices": []any{
+				map[string]any{"index": 0, "delta": d, "finish_reason": nil},
+			}}))
+		}
+		delta(map[string]any{"role": "assistant"})
+		delta(map[string]any{"reasoning_content": "ponder "})
+		delta(map[string]any{"content": "<think>more "})
+		delta(map[string]any{"content": "thought</thi"})
+		delta(map[string]any{"content": "nk>Answer "})
+		delta(map[string]any{"content": "text"})
+		chunk(merge(base, map[string]any{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 4, "completion_tokens": 9}}))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+}
+
+func TestOpenAIThinkingStream(t *testing.T) {
+	var body map[string]any
+	srv := openaiThinkServer(t, &body)
+	defer srv.Close()
+
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", srv.URL)
+	p := NewOpenAI()
+
+	ch, err := p.Stream(t.Context(), Request{
+		Model:     "gpt-test",
+		MaxTokens: 32,
+		Messages: []Message{
+			{Role: RoleUser, Content: "hi"},
+			// Legacy transcript content with tags must be stripped on
+			// replay so the reasoning never goes back to the provider.
+			{Role: RoleAssistant, Content: "<think>old</think>kept"},
+			{Role: RoleUser, Content: "think then answer"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var answer, thinking string
+	sawDone := false
+	for ev := range ch {
+		switch e := ev.(type) {
+		case TextDeltaEvent:
+			answer += e.Text
+		case ThinkingDeltaEvent:
+			thinking += e.Text
+		case UsageEvent:
+		case ErrorEvent:
+			t.Fatalf("ErrorEvent: %v", e.Err)
+		case DoneEvent:
+			sawDone = true
+		default:
+			t.Fatalf("unexpected event type %T", ev)
+		}
+	}
+	if !sawDone {
+		t.Error("channel closed without DoneEvent")
+	}
+	if thinking != "ponder more thought" {
+		t.Errorf("thinking = %q, want %q", thinking, "ponder more thought")
+	}
+	if answer != "Answer text" {
+		t.Errorf("answer = %q, want %q", answer, "Answer text")
+	}
+
+	// The replayed assistant turn carries clean content, no tags.
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want 3 turns", len(msgs))
+	}
+	assistant, _ := msgs[1].(map[string]any)
+	if c, _ := assistant["content"].(string); c != "kept" {
+		t.Errorf("replayed assistant content = %q, want %q", c, "kept")
+	}
+}

@@ -76,8 +76,13 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 		case RoleUser:
 			msgs = append(msgs, openai.UserMessage(m.Content))
 		case RoleAssistant:
+			// Thinking is display-only; strip legacy <think> tags so old
+			// transcripts never replay reasoning as answer content.
+			content := StripThinkTags(m.Content)
 			if len(m.ToolCalls) == 0 {
-				msgs = append(msgs, openai.AssistantMessage(m.Content))
+				if content != "" {
+					msgs = append(msgs, openai.AssistantMessage(content))
+				}
 				continue
 			}
 			calls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(m.ToolCalls))
@@ -95,9 +100,9 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 				})
 			}
 			am := openai.ChatCompletionAssistantMessageParam{ToolCalls: calls}
-			if m.Content != "" {
+			if content != "" {
 				am.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-					OfString: openai.Opt(m.Content),
+					OfString: openai.Opt(content),
 				}
 			}
 			msgs = append(msgs, openai.ChatCompletionMessageParamUnion{OfAssistant: &am})
@@ -182,13 +187,28 @@ func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletion
 	var order []int64
 	calls := map[int64]*callBuild{}
 
+	// Content deltas are run through a <think> splitter so inline
+	// reasoning (DeepSeek, Ollama, proxies) never lands in the answer.
+	var sp thinkSplitter
+
 	usage := UsageEvent{}
 	for stream.Next() {
 		chunk := stream.Current()
 		for _, choice := range chunk.Choices {
-			if choice.Delta.Content != "" {
+			if rc := reasoningContent(choice.Delta); rc != "" {
 				*emitted = true
-				ch <- TextDeltaEvent{Text: choice.Delta.Content}
+				ch <- ThinkingDeltaEvent{Text: rc}
+			}
+			if choice.Delta.Content != "" {
+				answer, think := sp.Feed(choice.Delta.Content)
+				if think != "" {
+					*emitted = true
+					ch <- ThinkingDeltaEvent{Text: think}
+				}
+				if answer != "" {
+					*emitted = true
+					ch <- TextDeltaEvent{Text: answer}
+				}
 			}
 			for _, tc := range choice.Delta.ToolCalls {
 				b := calls[tc.Index]
@@ -216,6 +236,16 @@ func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletion
 	if err := stream.Err(); err != nil {
 		return UsageEvent{}, err
 	}
+	// A held-back tag fragment that never resolved is literal text of
+	// whatever phase the stream was in.
+	if answer, think := sp.Flush(); answer != "" || think != "" {
+		*emitted = true
+		if think != "" {
+			ch <- ThinkingDeltaEvent{Text: think}
+		} else {
+			ch <- TextDeltaEvent{Text: answer}
+		}
+	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
 	for _, idx := range order {
 		b := calls[idx]
@@ -227,6 +257,22 @@ func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletion
 		ch <- ToolCallEvent{ToolCall{ID: b.id, Name: b.name, Input: input}}
 	}
 	return usage, nil
+}
+
+// reasoningContent extracts the DeepSeek-style `reasoning_content` delta
+// field from the raw JSON: openai-go v1.12 does not model the extension,
+// but it preserves every delta's raw bytes and lists unknown fields.
+func reasoningContent(delta openai.ChatCompletionChunkChoiceDelta) string {
+	if _, ok := delta.JSON.ExtraFields["reasoning_content"]; !ok {
+		return ""
+	}
+	var ext struct {
+		ReasoningContent string `json:"reasoning_content"`
+	}
+	if err := json.Unmarshal([]byte(delta.RawJSON()), &ext); err != nil {
+		return ""
+	}
+	return ext.ReasoningContent
 }
 
 // openaiRetryable classifies stream errors: API errors by status code,

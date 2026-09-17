@@ -100,6 +100,19 @@ face, otherwise openai face; both serve `/models` listings); the model
 row opens the auto-fetch picker; khateway never inherits a vendor
 default model. Env: `KHATEWAY_API_KEY` / `KHATEWAY_BASE_URL`.
 
+**Selectable text + thinking (2026-09-17):** mouse capture is off at
+startup, so drag-select and the terminal's copy-on-select work natively
+(anyway: shift+drag selects even under capture). alt+m toggles capture
+for wheel scrolling, and pgup/pgdn always scroll the chat. Model
+reasoning is now separated from the answer: `llm.ThinkingDeltaEvent`
+carries it (Anthropic thinking blocks; DeepSeek-style
+`reasoning_content` read from the delta's raw JSON; inline
+`<think>…</think>` tags split out of OpenAI-protocol content even when
+the tags straddle deltas), the agent loop stores it on the assistant
+message (`thinking` session field, never replayed to providers), and
+the TUI renders it as a dimmed italic `✻` block that collapses into its
+own bubble ahead of the markdown answer.
+
 ## Next
 
 Backlog (no committed order):
@@ -141,3 +154,4 @@ Backlog (no committed order):
 | 2026-09-17 | Phase 7: custom providers in the first-run walkthrough (inline add form) | 6a25702 |
 | 2026-09-17 | Fix: provider names keep their casing (case-insensitive lookups), bad protocol warns + falls back at startup, chat input's black cursor-line strip removed | 557a92a d4426e0 |
 | 2026-09-17 | khateway built-in provider: protocol picked from the endpoint shape (`llm.KhatewayProtocol`), model picker auto-fetch, no default model, `KHATEWAY_*` env vars; verified green on a clean worktree (parallel reasoning-WIP in-tree was unrelatedly red, untouched) | 662958b |
+| 2026-09-17 | Selectable text: mouse capture off by default (alt+m toggles wheel-scroll capture, pgup/pgdn scroll); thinking split from response (`llm.ThinkingDeltaEvent`, `<think>` stream splitter, `reasoning_content` raw-JSON read, `thinking` session field, ✻ display block) | 7583112 |

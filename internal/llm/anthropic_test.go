@@ -302,3 +302,127 @@ func TestAnthropicToolCallStream(t *testing.T) {
 		t.Errorf("result block = %v, want tool_result for toolu_1", res)
 	}
 }
+
+// The fake server streams a thinking block followed by a text block,
+// the shape extended-thinking responses use.
+func anthropicThinkServer(t *testing.T, gotBody *map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decoding request: %v", err)
+			return
+		}
+		*gotBody = body
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		send := func(event string, v any) {
+			data, _ := json.Marshal(v)
+			w.Write([]byte("event: " + event + "\ndata: " + string(data) + "\n\n"))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		send("message_start", map[string]any{
+			"type": "message_start",
+			"message": map[string]any{
+				"id": "msg_2", "type": "message", "role": "assistant",
+				"content": []any{}, "model": "claude-test",
+				"usage": map[string]any{"input_tokens": 7, "output_tokens": 0},
+			},
+		})
+		send("content_block_start", map[string]any{
+			"type": "content_block_start", "index": 0,
+			"content_block": map[string]any{"type": "thinking", "thinking": ""},
+		})
+		send("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": 0,
+			"delta": map[string]any{"type": "thinking_delta", "thinking": "hmm "},
+		})
+		send("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": 0,
+			"delta": map[string]any{"type": "thinking_delta", "thinking": "let me see"},
+		})
+		send("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
+		send("content_block_start", map[string]any{
+			"type": "content_block_start", "index": 1,
+			"content_block": map[string]any{"type": "text", "text": ""},
+		})
+		send("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": 1,
+			"delta": map[string]any{"type": "text_delta", "text": "the answer"},
+		})
+		send("content_block_stop", map[string]any{"type": "content_block_stop", "index": 1})
+		send("message_delta", map[string]any{
+			"type":  "message_delta",
+			"delta": map[string]any{"stop_reason": "end_turn"},
+			"usage": map[string]any{"output_tokens": 6},
+		})
+		send("message_stop", map[string]any{"type": "message_stop"})
+	}))
+}
+
+func TestAnthropicThinkingStream(t *testing.T) {
+	var body map[string]any
+	srv := anthropicThinkServer(t, &body)
+	defer srv.Close()
+
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("ANTHROPIC_BASE_URL", srv.URL)
+	p := NewAnthropic()
+
+	ch, err := p.Stream(t.Context(), Request{
+		Model:     "claude-test",
+		MaxTokens: 32,
+		Messages: []Message{
+			{Role: RoleUser, Content: "hi"},
+			// Display-only thinking must never replay to the API.
+			{Role: RoleAssistant, Content: "earlier", Thinking: "old reasoning"},
+			{Role: RoleUser, Content: "go on"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var answer, thinking string
+	sawDone := false
+	for ev := range ch {
+		switch e := ev.(type) {
+		case TextDeltaEvent:
+			answer += e.Text
+		case ThinkingDeltaEvent:
+			thinking += e.Text
+		case UsageEvent:
+		case ErrorEvent:
+			t.Fatalf("ErrorEvent: %v", e.Err)
+		case DoneEvent:
+			sawDone = true
+		default:
+			t.Fatalf("unexpected event type %T", ev)
+		}
+	}
+	if !sawDone {
+		t.Error("channel closed without DoneEvent")
+	}
+	if thinking != "hmm let me see" {
+		t.Errorf("thinking = %q, want %q", thinking, "hmm let me see")
+	}
+	if answer != "the answer" {
+		t.Errorf("answer = %q, want %q", answer, "the answer")
+	}
+
+	// The replayed assistant turn carries a single clean text block.
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want 3 turns", len(msgs))
+	}
+	assistant, _ := msgs[1].(map[string]any)
+	blocks, _ := assistant["content"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("replayed assistant has %d blocks, want 1", len(blocks))
+	}
+	if b, _ := blocks[0].(map[string]any); b["type"] != "text" || b["text"] != "earlier" {
+		t.Errorf("replayed block = %v, want text/earlier", b)
+	}
+}

@@ -13,6 +13,7 @@ var (
 	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	toolStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	thinkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
 	resultStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	addStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	delStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))

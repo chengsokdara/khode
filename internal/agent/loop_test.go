@@ -299,3 +299,50 @@ func (b *blockingTool) Exec(ctx context.Context, args json.RawMessage) (string, 
 	<-ctx.Done()
 	return "", ctx.Err()
 }
+
+// Thinking deltas are forwarded to the UI and stored on the assistant
+// message for display, while the answer text stays in Content.
+func TestRunnerThinkingPersists(t *testing.T) {
+	p := &fakeProvider{responses: [][]llm.Event{
+		{
+			llm.ThinkingDeltaEvent{Text: "think "},
+			llm.ThinkingDeltaEvent{Text: "hard"},
+			llm.TextDeltaEvent{Text: "the answer"},
+		},
+	}}
+	r, sess := newTestRunner(t, p, nil)
+
+	evs := drain(t, r.Run(t.Context(), "question"))
+	sawThink := false
+	for _, ev := range evs {
+		if th, ok := ev.(llm.ThinkingDeltaEvent); ok {
+			sawThink = true
+			if th.Text == "" {
+				t.Error("empty ThinkingDeltaEvent forwarded")
+			}
+		}
+	}
+	if !sawThink {
+		t.Error("thinking deltas were not forwarded")
+	}
+
+	msgs := sess.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("session has %d messages, want 2", len(msgs))
+	}
+	a := msgs[1]
+	if a.Role != llm.RoleAssistant {
+		t.Fatalf("msgs[1].Role = %q, want assistant", a.Role)
+	}
+	if a.Content != "the answer" {
+		t.Errorf("Content = %q, want the answer", a.Content)
+	}
+	if a.Thinking != "think hard" {
+		t.Errorf("Thinking = %q, want %q", a.Thinking, "think hard")
+	}
+
+	// The provider request replays content only — no thinking echo.
+	if got := p.requests[0].Messages[0].Content; got != "question" {
+		t.Errorf("request content = %q, want question", got)
+	}
+}

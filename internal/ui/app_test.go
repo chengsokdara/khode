@@ -166,3 +166,61 @@ func TestTodoResultShowsWholeList(t *testing.T) {
 		t.Error("todo result was not flagged full")
 	}
 }
+
+// Thinking streams into its own styled block ahead of the answer: the
+// ✻ marker marks it, and the answer never mixes with the reasoning.
+func TestThinkingBlockSeparatesFromAnswer(t *testing.T) {
+	evs := []llm.Event{
+		llm.ThinkingDeltaEvent{Text: "weighing options"},
+		llm.TextDeltaEvent{Text: "final answer"},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	var sawThink, sawAnswer bool
+	for i, msg := range m.messages {
+		out := m.block(i, 80)
+		switch {
+		case msg.kind == kindThinking:
+			sawThink = true
+			if !strings.Contains(out, "✻ weighing options") {
+				t.Errorf("thinking block = %q, want marker + reasoning", out)
+			}
+		case msg.role == llm.RoleAssistant:
+			sawAnswer = true
+			if strings.Contains(out, "weighing options") {
+				t.Errorf("answer block leaked thinking: %q", out)
+			}
+			if !strings.Contains(out, "final answer") {
+				t.Errorf("answer block = %q", out)
+			}
+		}
+	}
+	if !sawThink || !sawAnswer {
+		t.Fatalf("blocks missing: think=%v answer=%v", sawThink, sawAnswer)
+	}
+}
+
+// A thinking-only turn (model thought, then stopped) still renders the
+// reasoning block after the stream ends.
+func TestThinkingOnlyTurnRenders(t *testing.T) {
+	evs := []llm.Event{
+		llm.ThinkingDeltaEvent{Text: "just thinking"},
+		llm.DoneEvent{},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	found := false
+	for i, msg := range m.messages {
+		if msg.kind == kindThinking {
+			found = true
+			if out := m.block(i, 80); !strings.Contains(out, "✻ just thinking") {
+				t.Errorf("thinking block = %q", out)
+			}
+		}
+	}
+	if !found {
+		t.Error("thinking-only turn rendered no thinking block")
+	}
+}

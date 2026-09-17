@@ -40,6 +40,7 @@ type uiMessageKind int
 
 const (
 	kindText uiMessageKind = iota
+	kindThinking
 	kindToolCall
 	kindToolResult
 )
@@ -82,11 +83,18 @@ type Model struct {
 	streaming bool
 	cancel    context.CancelFunc
 	events    <-chan llm.Event
-	// partial accumulates the in-flight reply. It is a pointer because
-	// Model is copied by value through Update; a value Builder would
-	// trip its copied-by-value check whenever the escape analyzer
-	// chooses not to alias the copies.
-	partial *strings.Builder
+	// partial accumulates the in-flight reply and partialThink the
+	// in-flight thinking. Both are pointers because Model is copied by
+	// value through Update; a value Builder would trip its
+	// copied-by-value check whenever the escape analyzer chooses not to
+	// alias the copies.
+	partial      *strings.Builder
+	partialThink *strings.Builder
+
+	// mouse reports whether mouse capture is on (wheel scrolling). It
+	// defaults to off so the terminal handles text selection and
+	// copy-on-select natively; alt+m toggles it.
+	mouse bool
 
 	// ctxIn/ctxOut are the most recent request's usage: ctxIn is the
 	// transcript size the provider saw, so the status line can render
@@ -134,18 +142,19 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	m := Model{
-		cfg:        cfg,
-		auth:       auth,
-		provider:   p,
-		session:    sess,
-		tools:      reg,
-		mcpClients: mcpClients,
-		workdir:    workdir,
-		textarea:   ta,
-		spinner:    sp,
-		viewport:   viewport.New(60, 10),
-		partial:    new(strings.Builder),
-		approvals:  agent.NewBridge(),
+		cfg:          cfg,
+		auth:         auth,
+		provider:     p,
+		session:      sess,
+		tools:        reg,
+		mcpClients:   mcpClients,
+		workdir:      workdir,
+		textarea:     ta,
+		spinner:      sp,
+		viewport:     viewport.New(60, 10),
+		partial:      new(strings.Builder),
+		partialThink: new(strings.Builder),
+		approvals:    agent.NewBridge(),
 	}
 
 	m.registerTaskTool()
@@ -166,6 +175,9 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 				history: true,
 			})
 		case msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0:
+			if msg.Thinking != "" {
+				m.messages = append(m.messages, uiMessage{role: msg.Role, kind: kindThinking, raw: msg.Thinking, history: true})
+			}
 			if msg.Content != "" {
 				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
 			}
@@ -175,7 +187,12 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 				})
 			}
 		default:
-			m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
+			if msg.Role == llm.RoleAssistant && msg.Thinking != "" {
+				m.messages = append(m.messages, uiMessage{role: msg.Role, kind: kindThinking, raw: msg.Thinking, history: true})
+			}
+			if msg.Content != "" {
+				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
+			}
 		}
 	}
 	m.banner()
@@ -336,6 +353,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.submit()
+		case msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown:
+			// Keyboard scrolling works regardless of the mouse mode, so
+			// text selection never costs the ability to scroll.
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		case msg.String() == "alt+m":
+			return m, m.toggleMouse()
 		}
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
@@ -372,7 +397,7 @@ func (m Model) View() string {
 	status := m.statusLine()
 	inputBox := inputBorder.Render(m.textarea.View())
 	help := dimStyle.Width(m.width).Render(
-		"enter send · alt+enter newline · esc stop stream · ctrl+c quit",
+		"enter send · alt+enter newline · pgup/pgdn scroll · alt+m mouse · esc stop stream · ctrl+c quit",
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -412,8 +437,17 @@ func (m *Model) pump() tea.Cmd {
 
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	switch e := ev.(type) {
+	case llm.ThinkingDeltaEvent:
+		m.ensureStreamingBlock(kindThinking)
+		m.partialThink.WriteString(e.Text)
+		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
+			m.messages[idx].raw = m.partialThink.String()
+		}
+		m.renderAll()
+		return m.pump()
+
 	case llm.TextDeltaEvent:
-		m.ensureStreamingBlock()
+		m.ensureStreamingBlock(kindText)
 		m.partial.WriteString(e.Text)
 		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
 			m.messages[idx].raw = m.partial.String()
@@ -465,19 +499,31 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	return m.pump()
 }
 
-// ensureStreamingBlock opens a fresh streaming text bubble when the last
-// block is not one (turn start, or a new round after tool calls).
-func (m *Model) ensureStreamingBlock() {
-	if len(m.messages) > 0 && m.messages[len(m.messages)-1].streaming {
-		return
+// ensureStreamingBlock opens a fresh streaming bubble of the given kind
+// when the last block is not one (turn start, a new round after tool
+// calls, or the thinking ↔ answer switch within one round — the switch
+// seals the old phase and appends the new one). A sealed block always
+// carries content by the time the stream moves on.
+func (m *Model) ensureStreamingBlock(kind uiMessageKind) {
+	if len(m.messages) > 0 {
+		last := &m.messages[len(m.messages)-1]
+		if last.streaming {
+			if last.kind == kind {
+				return
+			}
+			last.streaming = false
+			m.partial.Reset()
+			m.partialThink.Reset()
+		}
 	}
-	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true, history: true})
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kind, streaming: true, history: true})
 }
 
 // sealStreamingText finalizes the open streaming bubble for display: the
 // session write itself belongs to the agent loop, not the UI.
 func (m *Model) sealStreamingText() {
 	m.partial.Reset()
+	m.partialThink.Reset()
 	idx := len(m.messages) - 1
 	if idx < 0 || !m.messages[idx].streaming {
 		return
@@ -519,6 +565,26 @@ func (m *Model) stopStream() {
 	if m.cancel != nil {
 		m.cancel()
 	}
+}
+
+// toggleMouse switches between mouse capture (wheel scrolling) and free
+// text selection. While captured, the terminal hands every drag to the
+// app, so native selection — and the terminal's copy-on-select — is
+// impossible; released, selection and copy work but the wheel does not.
+func (m *Model) toggleMouse() tea.Cmd {
+	m.mouse = !m.mouse
+	var note string
+	var cmd tea.Cmd
+	if m.mouse {
+		cmd = tea.EnableMouseCellMotion
+		note = "mouse capture on · wheel scrolls the chat · alt+m to release for text selection"
+	} else {
+		cmd = tea.DisableMouse
+		note = "mouse capture off · drag to select and copy · alt+m to re-enable wheel scrolling"
+	}
+	m.messages = append(m.messages, uiMessage{role: "system", raw: note})
+	m.renderAll()
+	return cmd
 }
 
 // --- input handling ----------------------------------------------------------
@@ -588,6 +654,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 	m.streaming = true
 	m.lastErr = ""
 	m.partial.Reset()
+	m.partialThink.Reset()
 	return tea.Batch(m.pump(), m.spinner.Tick)
 }
 
@@ -867,6 +934,8 @@ func (m *Model) block(i int, width int) string {
 	switch {
 	case msg.kind == kindToolCall:
 		out = toolStyle.Width(width).Render("⏺ " + msg.raw)
+	case msg.kind == kindThinking:
+		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
 	case msg.kind == kindToolResult:
 		if msg.full {
 			out = resultStyle.Width(width).Render(fullResultBody(msg.raw))

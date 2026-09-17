@@ -28,12 +28,14 @@ var ErrSessionExists = errors.New("session already exists")
 // maxNameLen caps session-name slugs so they stay readable in the picker.
 const maxNameLen = 64
 
-// line is the on-disk JSONL schema for one message. Tool calls and results
-// are additive fields; older transcripts without them load unchanged.
+// line is the on-disk JSONL schema for one message. Tool calls, results,
+// and thinking are additive fields; older transcripts without them load
+// unchanged.
 type line struct {
 	TS         string          `json:"ts"`
 	Role       llm.Role        `json:"role"`
 	Content    string          `json:"content"`
+	Thinking   string          `json:"thinking,omitempty"`
 	ToolCalls  []llm.ToolCall  `json:"tool_calls,omitempty"`
 	ToolResult *llm.ToolResult `json:"tool_result,omitempty"`
 }
@@ -238,6 +240,7 @@ func (s *Session) load() error {
 		s.msgs = append(s.msgs, llm.Message{
 			Role:       l.Role,
 			Content:    l.Content,
+			Thinking:   l.Thinking,
 			ToolCalls:  l.ToolCalls,
 			ToolResult: l.ToolResult,
 		})
@@ -304,6 +307,7 @@ func marshalLine(m llm.Message) ([]byte, error) {
 		TS:         time.Now().UTC().Format(time.RFC3339),
 		Role:       m.Role,
 		Content:    m.Content,
+		Thinking:   m.Thinking,
 		ToolCalls:  m.ToolCalls,
 		ToolResult: m.ToolResult,
 	})

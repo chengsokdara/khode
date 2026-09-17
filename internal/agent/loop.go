@@ -105,13 +105,16 @@ func (r *Runner) round(ctx context.Context, out chan<- llm.Event) ([]llm.ToolCal
 		return nil, fmt.Errorf("starting stream: %w", err)
 	}
 
-	var text strings.Builder
+	var text, think strings.Builder
 	var calls []llm.ToolCall
 	sawTerminal := false
 	for ev := range ch {
 		switch e := ev.(type) {
 		case llm.TextDeltaEvent:
 			text.WriteString(e.Text)
+			out <- ev
+		case llm.ThinkingDeltaEvent:
+			think.WriteString(e.Text)
 			out <- ev
 		case llm.ToolCallEvent:
 			calls = append(calls, e.ToolCall)
@@ -140,8 +143,8 @@ func (r *Runner) round(ctx context.Context, out chan<- llm.Event) ([]llm.ToolCal
 	}
 
 	// An empty reply with no calls (rare) is not worth a transcript line.
-	if text.Len() > 0 || len(calls) > 0 {
-		msg := llm.Message{Role: llm.RoleAssistant, Content: text.String(), ToolCalls: msgCalls}
+	if text.Len() > 0 || think.Len() > 0 || len(calls) > 0 {
+		msg := llm.Message{Role: llm.RoleAssistant, Content: text.String(), Thinking: think.String(), ToolCalls: msgCalls}
 		if err := r.Session.Append(msg); err != nil {
 			return nil, fmt.Errorf("appending assistant turn: %w", err)
 		}

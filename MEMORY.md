@@ -142,6 +142,10 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Walkthrough trigger = no key AND no custom providers AND no model choices | any setup evidence means "not first run", or a keyless Ollama user would see the walkthrough every launch |
 | 2026-09-17 | Provider names keep the casing they were saved with; provider-keyed lookups (custom providers, models, choices, auth keys) fall back to case-insensitive matching via `config.providerKey`, and Load snaps the active name to the stored custom-provider key | Load used to lowercase the provider field, splitting "KiosAPI" from its map keys — the name resurfaced as the unknown protocol "kiosapi" and khode died at startup |
 | 2026-09-17 | An unknown protocol at startup warns on stderr and falls back to the anthropic client instead of `fatal` | one broken config entry must not brick the app (same principle as a failing MCP server); /settings → provider is where the entry gets fixed |
+| 2026-09-17 | Mouse capture is OFF at startup; alt+m toggles it on for wheel scrolling; pgup/pgdn always scroll | while the app reports mouse events the terminal hands every drag to the app and native selection/copy-on-select dies — selectable text is worth more than wheel scrolling; the toggle and keyboard scrolling keep both reachable |
+| 2026-09-17 | Thinking rides a dedicated `llm.ThinkingDeltaEvent` and is stored on the assistant message (`thinking` session field) for display only — providers never replay it | Anthropic thinking blocks need signatures khode doesn't keep; echoing reasoning back as content would confuse models; resume display only needs the text |
+| 2026-09-17 | OpenAI-protocol reasoning is harvested two ways: DeepSeek-style `reasoning_content` read from the delta's raw JSON, plus a stateful `<think>` splitter over content deltas (holds trailing tag fragments across deltas) | openai-go v1.12 doesn't model `reasoning_content`; DeepSeek/Ollama/proxies inline the tags, often split mid-tag by chunk boundaries |
+| 2026-09-17 | Assistant history replay strips `<think>` tags (`llm.StripThinkTags`) in both providers | transcripts written before thinking was split carry the tags in Content; replaying them would resurface reasoning as answer text |
 
 ## Gotchas & lessons learned
 
@@ -261,6 +265,24 @@ If you are starting a session, or recovering after an interrupt:
   the whole inside of the chat input box renders as a black strip.
   Override `ta.FocusedStyle.CursorLine` / `ta.BlurredStyle.CursorLine`
   with `lipgloss.NewStyle()` right after `textarea.New()`.
+- **Mouse reporting vs text selection are mutually exclusive in a
+  terminal**: once the app emits mouse-enable escapes, EVERY drag goes to
+  the app (the terminal never starts a selection). `tea.WithMouseCellMotion`
+  therefore kills copy-paste for the whole session; enable mouse at
+  runtime with the `tea.EnableMouseCellMotion()` / `tea.DisableMouse()`
+  commands instead of the program option when the app must support both.
+- **openai-go v1.12 has no `ReasoningContent` on the chat delta**
+  (DeepSeek/OpenRouter extension): the SDK keeps each delta's raw JSON
+  (`Delta.RawJSON()`) and lists unknown keys in `Delta.JSON.ExtraFields`,
+  so gate on the ExtraFields entry and unmarshal the raw bytes into a
+  one-field struct — verified end-to-end against a fake SSE server.
+- **An indexer-style "hold trailing tag fragments" splitter must emit
+  `s[:keep]` unconditionally**, not only when `keep < len(s)` — when no
+  hold happens keep IS len(s), and gating the write silently drops the
+  whole delta. Also mind the classic `Update`-return trap: a
+  bubbletea helper that "seals the old block" on a kind switch must fall
+  through to appending the new block, or the caller's `messages[idx].raw`
+  write lands back on the sealed block.
 
 ## Session log (append one entry per session)
 
@@ -279,3 +301,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Phase 7 follow-up: custom providers + model fetching (002796f), docs | 002796f |
 | 2026-09-17 | Fixed custom-provider startup crash (name-casing split from map keys), bad-protocol startup fallback, chat input's black cursor-line strip; provider-name collision guard; verified the user's custom provider end-to-end (model list + streaming turn) | 557a92a d4426e0 |
 | 2026-09-17 | khateway built-in provider (KhatewayProtocol endpoint-shape resolution, model-picker auto-fetch, no default model, KHATEWAY_* env vars). Verified build/vet/gofmt/tests green on a clean HEAD worktree; the shared working tree had unrelated parallel WIP (reasoning/think-tag support) whose 2 OpenAI tests were red — not ours, left untouched | 662958b |
+| 2026-09-17 | Selectable text (mouse capture off by default, alt+m toggle, pgup/pgdn scroll) + thinking split from response (`llm.ThinkingDeltaEvent`, `<think>` splitter, `reasoning_content` raw-JSON read, `thinking` session field, ✻ display block, no provider replay). Note: the main.go mouse-capture hunk rode along in the khateway commit 662958b (shared worktree race) | 7583112 |

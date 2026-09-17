@@ -49,6 +49,9 @@ type ToolResult struct {
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
+	// Thinking is the assistant's reasoning for this turn, kept for
+	// display on resume only: providers never replay it to the API.
+	Thinking string `json:"thinking,omitempty"`
 	// ToolCalls lists the calls requested by an assistant turn.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// ToolResult carries the outcome of one tool call (role tool).
@@ -65,14 +68,22 @@ type Request struct {
 }
 
 // Event is one item streamed back by a Provider. Implementations send zero
-// or more TextDeltaEvent / ToolCallEvent / UsageEvent values, at most one
-// ErrorEvent, exactly one DoneEvent, then close the channel.
+// or more TextDeltaEvent / ThinkingDeltaEvent / ToolCallEvent / UsageEvent
+// values, at most one ErrorEvent, exactly one DoneEvent, then close the
+// channel.
 type Event interface {
 	isEvent()
 }
 
 // TextDeltaEvent carries an incremental chunk of assistant text.
 type TextDeltaEvent struct {
+	Text string
+}
+
+// ThinkingDeltaEvent carries an incremental chunk of the model's reasoning
+// (Anthropic thinking blocks, DeepSeek-style reasoning_content, or inline
+// <think> tags on OpenAI-protocol streams) as opposed to its answer.
+type ThinkingDeltaEvent struct {
 	Text string
 }
 
@@ -113,13 +124,14 @@ type ErrorEvent struct {
 // DoneEvent marks the successful end of a response.
 type DoneEvent struct{}
 
-func (TextDeltaEvent) isEvent()  {}
-func (ToolCallEvent) isEvent()   {}
-func (ToolResultEvent) isEvent() {}
-func (UsageEvent) isEvent()      {}
-func (CompactEvent) isEvent()    {}
-func (ErrorEvent) isEvent()      {}
-func (DoneEvent) isEvent()       {}
+func (TextDeltaEvent) isEvent()     {}
+func (ThinkingDeltaEvent) isEvent() {}
+func (ToolCallEvent) isEvent()      {}
+func (ToolResultEvent) isEvent()    {}
+func (UsageEvent) isEvent()         {}
+func (CompactEvent) isEvent()       {}
+func (ErrorEvent) isEvent()         {}
+func (DoneEvent) isEvent()          {}
 
 // Provider streams completions for a chat conversation.
 type Provider interface {

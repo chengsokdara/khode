@@ -73,8 +73,10 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 			msgs = append(msgs, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
 		case RoleAssistant:
 			blocks := make([]anthropic.ContentBlockParamUnion, 0, len(m.ToolCalls)+1)
-			if m.Content != "" {
-				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
+			// Thinking is display-only: the API needs signed thinking
+			// blocks khode never keeps, so only the answer is replayed.
+			if c := StripThinkTags(m.Content); c != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(c))
 			}
 			for _, c := range m.ToolCalls {
 				input := c.Input
@@ -175,6 +177,11 @@ func (a *Anthropic) streamAttempt(ctx context.Context, params anthropic.MessageN
 				if d.Text != "" {
 					*emitted = true
 					ch <- TextDeltaEvent{Text: d.Text}
+				}
+			case anthropic.ThinkingDelta:
+				if d.Thinking != "" {
+					*emitted = true
+					ch <- ThinkingDeltaEvent{Text: d.Thinking}
 				}
 			case anthropic.InputJSONDelta:
 				if b := builds[ev.Index]; b != nil {
