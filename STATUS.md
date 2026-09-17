@@ -92,6 +92,14 @@ rename) with env vars keeping precedence. MCP changes apply live via
 (agent loop reads it while the overlay mutates it); `Model.partial` is
 a pointer `strings.Builder` (see Gotchas).
 
+**khateway built-in (2026-09-17):** khode talks to a self-hosted
+Khateway router as a third built-in provider — one base URL + one
+client key (`khat-…`) unlock every model the gateway admin configured.
+The endpoint shape picks the wire protocol (…/v1/messages → anthropic
+face, otherwise openai face; both serve `/models` listings); the model
+row opens the auto-fetch picker; khateway never inherits a vendor
+default model. Env: `KHATEWAY_API_KEY` / `KHATEWAY_BASE_URL`.
+
 ## Next
 
 Backlog (no committed order):
@@ -132,3 +140,4 @@ Backlog (no committed order):
 | 2026-09-17 | Phase 7: custom providers (any OpenAI/Anthropic-protocol endpoint), model-list fetching with manual fallback | 002796f |
 | 2026-09-17 | Phase 7: custom providers in the first-run walkthrough (inline add form) | 6a25702 |
 | 2026-09-17 | Fix: provider names keep their casing (case-insensitive lookups), bad protocol warns + falls back at startup, chat input's black cursor-line strip removed | 557a92a d4426e0 |
+| 2026-09-17 | khateway built-in provider: protocol picked from the endpoint shape (`llm.KhatewayProtocol`), model picker auto-fetch, no default model, `KHATEWAY_*` env vars; verified green on a clean worktree (parallel reasoning-WIP in-tree was unrelatedly red, untouched) | 662958b |

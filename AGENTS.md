@@ -21,6 +21,9 @@ edit, and run code in the user's project behind a permission system.
   - Anthropic: `github.com/anthropics/anthropic-sdk-go` (v1.73+ style:
     plain param fields, no `anthropic.F()` wrappers)
   - OpenAI: planned (`openai/openai-go`)
+  - Khateway: built-in provider speaking to a self-hosted Khateway
+    router through one of the two SDK clients (endpoint shape decides;
+    see `internal/llm/khateway.go`)
 
 ## Architecture
 
@@ -35,6 +38,7 @@ internal/llm/        provider-agnostic contract
   anthropic.go         Anthropic SDK → Event channel translation
   openai.go            OpenAI SDK → Event channel translation
   factory.go           llm.New/NewProtocol (protocol + display name), env-name helpers gone to config
+  khateway.go          built-in khateway router provider: endpoint-shape → protocol resolution
   models.go            FetchModels: model-list HTTP APIs per protocol
   retry.go             shared retry policy (transient failures, backoff)
   context.go           per-model context-window table

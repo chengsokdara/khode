@@ -37,7 +37,10 @@ Everything is configurable from inside the TUI with `/settings` (alias
   where `n` adds a custom provider (name, protocol, base URL) for any
   OpenAI-compatible or Anthropic-protocol endpoint — Ollama, LM Studio,
   OpenRouter, proxies. New providers activate immediately and read
-  `NAME_API_KEY`-style env vars if set.
+  `NAME_API_KEY`-style env vars if set. The built-in **khateway**
+  provider points at a self-hosted [Khateway](https://github.com/) router:
+  one base URL + one client key unlock every model the gateway exposes
+  (its endpoint shape picks the wire protocol automatically).
 - **api key** — masked editor; stored per provider in `auth.json`
 - **base url** — point a provider at a proxy or OpenAI-compatible
   endpoint
