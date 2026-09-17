@@ -176,6 +176,11 @@ func (m *Model) activateRow() tea.Cmd {
 	case rowAPIKey:
 		m.openEditor(rowAPIKey)
 	case rowBaseURL:
+		if config.ManagedEndpoint(m.cfg.Provider) {
+			s.savedMsg = m.cfg.Provider + "'s endpoint is fixed · set " +
+				m.cfg.BaseURLEnvName(m.cfg.Provider) + " to point elsewhere"
+			break
+		}
 		m.openEditor(rowBaseURL)
 	case rowModel:
 		return m.openModelRow()
@@ -320,6 +325,13 @@ func (m *Model) commitEditor() tea.Cmd {
 			s.savedMsg = "✓ key saved " + maskKey(val)
 		}
 	case rowBaseURL:
+		// Defense in depth: the editor never opens for managed
+		// endpoints, so a commit here would only happen through a bug.
+		if config.ManagedEndpoint(m.cfg.Provider) {
+			s.savedMsg = "✗ " + m.cfg.Provider + "'s endpoint is fixed · use " +
+				m.cfg.BaseURLEnvName(m.cfg.Provider) + " to override"
+			break
+		}
 		if val == "" {
 			delete(m.cfg.BaseURLs, m.cfg.Provider)
 			m.rebuildProvider()
@@ -914,6 +926,20 @@ func (s *settings) value(m *Model, row settingsRow) string {
 	case rowAPIKey:
 		return m.apiKeyValue()
 	case rowBaseURL:
+		if config.ManagedEndpoint(m.cfg.Provider) {
+			envName := m.cfg.BaseURLEnvName(m.cfg.Provider)
+			u := os.Getenv(envName)
+			note := "from " + envName
+			if u == "" {
+				u = m.cfg.BaseURL(m.cfg.Provider)
+				note = "from config"
+			}
+			if u == "" {
+				u = llm.DefaultKhatewayEndpoint
+				note = "fixed · " + envName + " to override"
+			}
+			return clip(u, 40) + dimStyle.Render("  "+note)
+		}
 		if u := m.cfg.BaseURL(m.cfg.Provider); u != "" {
 			return clip(u, 44)
 		}

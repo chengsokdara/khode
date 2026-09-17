@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"khode/internal/config"
+	"khode/internal/llm"
+
+	"github.com/charmbracelet/bubbles/textinput"
 )
 
 // newModelListServer serves an OpenAI-style model list and records the
@@ -155,5 +158,89 @@ func TestModelPickerManualAdd(t *testing.T) {
 	m = pressKeys(m, "d")
 	if m.cfg.Model() != "llama3" {
 		t.Errorf("model after removing the active one = %q, want llama3", m.cfg.Model())
+	}
+}
+
+// khateway is select-only in the provider list: enter activates it,
+// delete is refused, and no edit form ever opens for it.
+func TestKhatewaySelectOnlyInProviderList(t *testing.T) {
+	m := newSettingsModel(t)
+	m.OpenSettings(rowProvider)
+	m = pressKeys(m, "enter") // → provider list
+
+	names := m.providerNames()
+	khatewayIdx := -1
+	for i, n := range names {
+		if n == "khateway" {
+			khatewayIdx = i
+		}
+	}
+	if khatewayIdx < 0 {
+		t.Fatal("khateway missing from the provider list")
+	}
+
+	// d refuses deletion…
+	for range khatewayIdx {
+		m = pressKeys(m, "down")
+	}
+	m = pressKeys(m, "d")
+	if !strings.Contains(m.settings.savedMsg, "can't be removed") {
+		t.Errorf("flash = %q, want the built-in removal refusal", m.settings.savedMsg)
+	}
+	if _, ok := m.cfg.CustomProviders["khateway"]; ok {
+		t.Error("khateway ended up in custom providers")
+	}
+
+	// …and enter only selects it.
+	m = pressKeys(m, "enter")
+	if m.cfg.Provider != "khateway" {
+		t.Errorf("provider = %q, want khateway", m.cfg.Provider)
+	}
+	if m.provider.Name() != "khateway" {
+		t.Error("provider client not rebuilt")
+	}
+	if m.settings.form != nil {
+		t.Error("an edit form opened for a built-in provider")
+	}
+}
+
+// The base-url row is read-only for khateway: enter explains the
+// KHATEWAY_BASE_URL escape hatch instead of opening the editor, the
+// display shows the effective endpoint, and the commit path refuses
+// writes even if an editor somehow opens.
+func TestKhatewayBaseURLReadOnly(t *testing.T) {
+	m := newSettingsModel(t)
+	m.switchProvider("khateway")
+	m.OpenSettings(rowBaseURL)
+
+	// Default endpoint shown, then the env override wins and is labeled.
+	if v := m.settings.value(&m, rowBaseURL); !strings.Contains(v, llm.DefaultKhatewayEndpoint) {
+		t.Errorf("base-url value = %q, want the built-in default", v)
+	}
+	t.Setenv("KHATEWAY_BASE_URL", "https://gw.example.com/v1")
+	if v := m.settings.value(&m, rowBaseURL); !strings.Contains(v, "gw.example.com") ||
+		!strings.Contains(v, "from KHATEWAY_BASE_URL") {
+		t.Errorf("base-url value = %q, want the labeled env override", v)
+	}
+
+	// enter must not open the editor.
+	m.activateRow()
+	if m.settings.editor != nil {
+		t.Fatal("base-url editor opened for khateway")
+	}
+	if !strings.Contains(m.settings.savedMsg, "KHATEWAY_BASE_URL") {
+		t.Errorf("flash = %q, want the env-override hint", m.settings.savedMsg)
+	}
+
+	// Commit path refuses even with an editor forced open.
+	in := textinput.New()
+	in.SetValue("http://evil.example")
+	m.settings.editor = &textEditor{row: rowBaseURL, input: in}
+	m.commitEditor()
+	if got := m.cfg.BaseURL("khateway"); got != "" {
+		t.Errorf("base url was written anyway: %q", got)
+	}
+	if !strings.Contains(m.settings.savedMsg, "fixed") {
+		t.Errorf("flash = %q, want the fixed-endpoint refusal", m.settings.savedMsg)
 	}
 }

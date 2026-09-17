@@ -53,6 +53,15 @@ func KeyOptional(name string) bool {
 	return strings.EqualFold(name, "khateway")
 }
 
+// ManagedEndpoint reports whether provider's endpoint is fixed by khode
+// and therefore not editable in the TUI: the provider row only selects
+// it, the base-url row is read-only, and pointing it somewhere else is
+// an environment concern (KHATEWAY_BASE_URL). khateway is khode-native —
+// its identity must not be repointed at an arbitrary origin by accident.
+func ManagedEndpoint(name string) bool {
+	return strings.EqualFold(name, "khateway")
+}
+
 // MCPServer is one configured Model Context Protocol server process.
 type MCPServer struct {
 	Command string   `json:"command"`

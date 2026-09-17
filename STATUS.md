@@ -137,6 +137,17 @@ would leak OPENAI_API_KEY as the bearer token. `KHATEWAY_API_KEY` and a
 stored key still work as optional overrides for gateways that enforce
 client keys — the gateway side is expected to treat auth as optional.
 
+**khateway select-only (2026-09-17):** khateway is no longer editable
+in the TUI — `config.ManagedEndpoint` makes its endpoint fixed. The
+provider list only selects it (enter activates, d refuses removal like
+any built-in, the add/edit form rejects the name), and the base-url row
+is read-only while khateway is active: it displays the effective
+endpoint (env override → stored value → the built-in default), enter
+explains `KHATEWAY_BASE_URL` instead of opening the editor, and the
+commit path refuses writes as defense in depth. The api-key row stays
+paste-able as the optional override for enforcement-mode gateways; the
+model row stays fully usable (picking a model is using the provider).
+
 ## Next
 
 Backlog (no committed order):
@@ -181,3 +192,4 @@ Backlog (no committed order):
 | 2026-09-17 | Selectable text: mouse capture off by default (alt+m toggles wheel-scroll capture, pgup/pgdn scroll); thinking split from response (`llm.ThinkingDeltaEvent`, `<think>` stream splitter, `reasoning_content` raw-JSON read, `thinking` session field, ✻ display block) | 2a3a6c6 |
 | 2026-09-17 | Walkthrough model step: auto-fetch + pick for khateway/custom providers (no model yet) between key and ready; fetch-failure degrades to /settings pointer; `--debug` flag + `internal/debug` gated logging + README Development section | 945836c |
 | 2026-09-17 | khateway keyless-native: `config.KeyOptional` exempts it from pre-flight + walkthrough key step; missing key becomes the `anonymous` placeholder (no SDK env fallback, no client-side refusal); gateway side treats auth as optional | 0ec4212 |
+| 2026-09-17 | khateway select-only: `config.ManagedEndpoint` locks the endpoint — base-url row read-only (shows effective URL, enter explains `KHATEWAY_BASE_URL`), commit path refuses, provider list enter=select / d=refused; model + api-key rows stay usable | (this commit) |

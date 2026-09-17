@@ -214,3 +214,14 @@ func TestKeyOptional(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedEndpoint(t *testing.T) {
+	if !ManagedEndpoint("khateway") || !ManagedEndpoint("Khateway") {
+		t.Error("khateway must have a managed endpoint")
+	}
+	for _, n := range []string{"anthropic", "openai", "groq", ""} {
+		if ManagedEndpoint(n) {
+			t.Errorf("ManagedEndpoint(%q) = true, want false", n)
+		}
+	}
+}
