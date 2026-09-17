@@ -34,13 +34,18 @@ type Runner struct {
 	Mode perm.Mode
 	// Approver resolves perm.DecisionAsk outcomes; nil declines them.
 	Approver Approver
+
+	// lastInput is the most recent provider-reported input-token count,
+	// the exact signal behind the compaction trigger; 0 until the turn's
+	// first UsageEvent (estimates fill in before that).
+	lastInput int
 }
 
 // Run appends the user turn and drives the loop, forwarding stream events
 // on the returned channel. The channel carries zero or more
-// TextDeltaEvent / ToolCallEvent / ToolResultEvent / UsageEvent values,
-// then exactly one ErrorEvent or DoneEvent before closing — the same
-// termination contract as Provider.Stream.
+// TextDeltaEvent / ToolCallEvent / ToolResultEvent / UsageEvent /
+// CompactEvent values, then exactly one ErrorEvent or DoneEvent before
+// closing — the same termination contract as Provider.Stream.
 func (r *Runner) Run(ctx context.Context, userText string) <-chan llm.Event {
 	out := make(chan llm.Event, 64)
 	go func() {
@@ -56,6 +61,7 @@ func (r *Runner) Run(ctx context.Context, userText string) <-chan llm.Event {
 			maxRounds = DefaultMaxRounds
 		}
 		for round := 0; round < maxRounds; round++ {
+			r.maybeCompact(ctx, out)
 			calls, err := r.round(ctx, out)
 			if err != nil {
 				out <- llm.ErrorEvent{Err: err}
@@ -107,6 +113,7 @@ func (r *Runner) round(ctx context.Context, out chan<- llm.Event) ([]llm.ToolCal
 			calls = append(calls, e.ToolCall)
 			out <- ev
 		case llm.UsageEvent:
+			r.lastInput = int(e.InputTokens)
 			out <- ev
 		case llm.ErrorEvent:
 			return nil, e.Err

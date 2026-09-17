@@ -4,6 +4,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -243,26 +244,55 @@ func (s *Session) load() error {
 func (s *Session) Append(m llm.Message) error {
 	s.msgs = append(s.msgs, m)
 
+	data, err := marshalLine(m)
+	if err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
 
-	data, err := json.Marshal(line{
+// Replace atomically rewrites the whole transcript with msgs (used by
+// compaction): lines go to a temp file that is synced and renamed into
+// place, so a crash leaves either the old or the new transcript intact.
+func (s *Session) Replace(msgs []llm.Message) error {
+	var buf bytes.Buffer
+	for _, m := range msgs {
+		data, err := marshalLine(m)
+		if err != nil {
+			return err
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+	tmp := s.Path + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.Path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	s.msgs = append([]llm.Message(nil), msgs...)
+	return nil
+}
+
+// marshalLine encodes one transcript line (schema shared with load).
+func marshalLine(m llm.Message) ([]byte, error) {
+	return json.Marshal(line{
 		TS:         time.Now().UTC().Format(time.RFC3339),
 		Role:       m.Role,
 		Content:    m.Content,
 		ToolCalls:  m.ToolCalls,
 		ToolResult: m.ToolResult,
 	})
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	return f.Sync()
 }
 
 // Messages returns the full conversation history.

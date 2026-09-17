@@ -171,6 +171,12 @@ type streamEventMsg struct{ ev llm.Event }
 // a terminal event (e.g. ctx cancelled before we drained it).
 type streamClosedMsg struct{}
 
+// compactDoneMsg carries the outcome of a manual /compact run.
+type compactDoneMsg struct {
+	removed int
+	err     error
+}
+
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, m.spinner.Tick)
 }
@@ -201,6 +207,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamClosedMsg:
 		return m, m.finishStream()
+
+	case compactDoneMsg:
+		switch {
+		case msg.err != nil:
+			m.lastErr = fmt.Sprintf("compaction failed: %v", msg.err)
+		case msg.removed == 0:
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: "nothing to compact · the conversation is already short"})
+		default:
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: fmt.Sprintf("compacted · summarized %d messages (session transcript rewritten)", msg.removed)})
+		}
+		m.renderAll()
+		return m, nil
 
 	case permRequestMsg:
 		if !m.streaming || m.events == nil {
@@ -335,6 +355,12 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		}
 		return m.pump()
 
+	case llm.CompactEvent:
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("context compacted · summarized %d earlier messages, %d recent turns kept in the transcript", e.Removed, e.Kept)})
+		m.renderAll()
+		return m.pump()
+
 	case llm.ErrorEvent:
 		if !errors.Is(e.Err, context.Canceled) {
 			m.lastErr = e.Err.Error()
@@ -462,6 +488,26 @@ func (m *Model) startTurn(input string) tea.Cmd {
 // values to the safe default.
 func (m *Model) mode() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
 
+// runCompact summarizes older turns now, off the UI goroutine. The loop
+// config mirrors startTurn so the forced compaction matches what the
+// next automatic one would do.
+func (m *Model) runCompact() tea.Cmd {
+	runner := &agent.Runner{
+		Provider:  m.provider,
+		Session:   m.session,
+		Tools:     m.tools,
+		Model:     m.cfg.Model(),
+		MaxTokens: m.cfg.MaxTokens,
+		System:    agent.SystemPrompt(m.workdir),
+		Mode:      m.mode(),
+		Approver:  m.approvals,
+	}
+	return func() tea.Msg {
+		n, err := runner.Compact(context.Background())
+		return compactDoneMsg{removed: n, err: err}
+	}
+}
+
 func (m *Model) command(input string) tea.Cmd {
 	parts := strings.Fields(input)
 	switch parts[0] {
@@ -471,6 +517,7 @@ func (m *Model) command(input string) tea.Cmd {
 			"/sessions     switch session (picker)",
 			"/model <name> switch model (persisted)",
 			"/mode [name]  permission mode: plan · ask · accept-edits · auto",
+			"/compact      summarize older turns to shrink the context",
 			"/tools        list tools the model can call",
 			"/exit, /quit  leave khode",
 			"/help         this list",
@@ -515,6 +562,14 @@ func (m *Model) command(input string) tea.Cmd {
 			lines = append(lines, fmt.Sprintf("%-6s %s", n, t.Description()))
 		}
 		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join(lines, "\n")})
+
+	case "/compact":
+		if m.streaming {
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: "wait for the current turn to finish, then /compact"})
+			break
+		}
+		return m.runCompact()
 
 	case "/new":
 		var (

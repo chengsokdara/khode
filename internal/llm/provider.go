@@ -96,6 +96,14 @@ type UsageEvent struct {
 	OutputTokens int64
 }
 
+// CompactEvent reports that the agent loop rewrote the session with an
+// LLM summary: Removed messages became part of the summary, Kept recent
+// messages stay verbatim.
+type CompactEvent struct {
+	Removed int
+	Kept    int
+}
+
 // ErrorEvent reports a failure (including context.Canceled when the user
 // interrupts a stream).
 type ErrorEvent struct {
@@ -109,6 +117,7 @@ func (TextDeltaEvent) isEvent()  {}
 func (ToolCallEvent) isEvent()   {}
 func (ToolResultEvent) isEvent() {}
 func (UsageEvent) isEvent()      {}
+func (CompactEvent) isEvent()    {}
 func (ErrorEvent) isEvent()      {}
 func (DoneEvent) isEvent()       {}
 

@@ -121,6 +121,25 @@ func TestErrorResultBlock(t *testing.T) {
 	}
 }
 
+func TestCompactEventNotice(t *testing.T) {
+	evs := []llm.Event{
+		llm.TextDeltaEvent{Text: "working on it"},
+		llm.CompactEvent{Removed: 12, Kept: 4},
+		llm.TextDeltaEvent{Text: "done"},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+
+	found := false
+	for _, msg := range m.messages {
+		if msg.role == "system" && strings.Contains(msg.raw, "summarized 12 earlier messages") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("compaction notice missing from the transcript")
+	}
+}
+
 func TestTodoResultShowsWholeList(t *testing.T) {
 	evs := []llm.Event{
 		llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "todo", Input: json.RawMessage(`{}`)}},
