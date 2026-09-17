@@ -31,7 +31,8 @@ func newTestModel(t *testing.T) Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cfg, nameOnlyProvider{}, sess, tools.Default(t.TempDir()), t.TempDir())
+	return New(cfg, &config.Auth{}, nameOnlyProvider{}, sess,
+		tools.Default(t.TempDir()), nil, t.TempDir())
 }
 
 // pumpModel feeds scripted events through the real Update loop the same

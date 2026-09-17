@@ -60,29 +60,20 @@ func main() {
 		cfg.SetModelOverride(*model)
 	}
 
+	// No key is required to launch: credentials come from the
+	// environment when set, otherwise from ~/.khode/auth.json (saved by
+	// the settings UI). With neither, khode still starts — the settings
+	// overlay opens so the key can be pasted in, and a turn without one
+	// fails with a pointer there instead of a raw 401.
 	name := *providerName
 	if name == "" {
 		name = cfg.Provider
 	}
-	var provider llm.Provider
-	switch name {
-	case "anthropic":
-		if os.Getenv("ANTHROPIC_API_KEY") == "" {
-			fmt.Fprintln(os.Stderr, "khode: ANTHROPIC_API_KEY is not set")
-			fmt.Fprintln(os.Stderr, "export ANTHROPIC_API_KEY=sk-ant-... and try again")
-			os.Exit(1)
-		}
-		provider = llm.NewAnthropic()
-	case "openai":
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			fmt.Fprintln(os.Stderr, "khode: OPENAI_API_KEY is not set")
-			fmt.Fprintln(os.Stderr, "export OPENAI_API_KEY=sk-... and try again")
-			os.Exit(1)
-		}
-		provider = llm.NewOpenAI()
-	default:
-		fmt.Fprintf(os.Stderr, "khode: unknown provider %q (want anthropic or openai)\n", name)
-		os.Exit(1)
+	auth := config.LoadAuth()
+	key, baseURL := llm.Resolve(name, auth.Key(name), cfg.BaseURL(name))
+	provider, err := llm.New(name, key, baseURL)
+	if err != nil {
+		fatal(err)
 	}
 
 	noSessions := func() {
@@ -144,6 +135,9 @@ func main() {
 
 	// MCP servers from config: start each one and register its tools. A
 	// server that fails warns but never keeps the app from starting.
+	// The running set is handed to the UI so /settings can start and
+	// stop servers live.
+	mcpClients := map[string]*mcp.Client{}
 	for _, name := range sortedServerNames(cfg.MCPServers) {
 		sc := cfg.MCPServers[name]
 		ctx, cancel := context.WithTimeout(context.Background(), mcp.InitTimeout)
@@ -154,15 +148,21 @@ func main() {
 			continue
 		}
 		defer cli.Close()
+		mcpClients[name] = cli
 		if err := tools.AddMCP(registry, name, cli, sc.Risk); err != nil {
 			fmt.Fprintf(os.Stderr, "khode: mcp server %q has no tools: %v\n", name, err)
 			continue
 		}
 	}
 
-	m := ui.New(cfg, provider, sess, registry, workdir)
+	m := ui.New(cfg, auth, provider, sess, registry, mcpClients, workdir)
 	if pickerEntries != nil {
 		m.OpenPicker(pickerEntries)
+	} else if key == "" {
+		// First-run setup: nothing in the env or on disk to authenticate
+		// with, so open the settings overlay on the API-key row. Esc
+		// still leaves a usable app.
+		m.OpenSettings(ui.RowAPIKey)
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())

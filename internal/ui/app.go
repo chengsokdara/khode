@@ -16,6 +16,7 @@ import (
 	"khode/internal/config"
 	"khode/internal/hooks"
 	"khode/internal/llm"
+	"khode/internal/mcp"
 	"khode/internal/perm"
 	"khode/internal/tools"
 
@@ -60,6 +61,7 @@ type uiMessage struct {
 // Model is the root Bubble Tea model.
 type Model struct {
 	cfg      *config.Config
+	auth     *config.Auth // stored API keys (~/.khode/auth.json)
 	provider llm.Provider
 	session  *agent.Session
 	tools    *tools.Registry
@@ -73,12 +75,21 @@ type Model struct {
 
 	messages []uiMessage
 
-	picker *picker // session chooser overlay; nil when closed
+	picker   *picker   // session chooser overlay; nil when closed
+	settings *settings // configuration overlay; nil when closed
 
 	streaming bool
 	cancel    context.CancelFunc
 	events    <-chan llm.Event
-	partial   strings.Builder // text accumulated for the in-flight reply
+	// partial accumulates the in-flight reply. It is a pointer because
+	// Model is copied by value through Update; a value Builder would
+	// trip its copied-by-value check whenever the escape analyzer
+	// chooses not to alias the copies.
+	partial *strings.Builder
+
+	// mcpClients holds the running MCP server connections so /settings
+	// can start and stop servers live.
+	mcpClients map[string]*mcp.Client
 
 	approvals *agent.Bridge  // permission questions to/from the agent loop
 	perm      *agent.Request // open approval dialog; nil when closed
@@ -93,7 +104,7 @@ type Model struct {
 
 // New builds the root model, restoring prior conversation history from the
 // session transcript (used by --resume).
-func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Registry, workdir string) Model {
+func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Session, reg *tools.Registry, mcpClients map[string]*mcp.Client, workdir string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask khode to do something…"
 	ta.Prompt = " "
@@ -111,32 +122,25 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	m := Model{
-		cfg:       cfg,
-		provider:  p,
-		session:   sess,
-		tools:     reg,
-		workdir:   workdir,
-		textarea:  ta,
-		spinner:   sp,
-		viewport:  viewport.New(60, 10),
-		approvals: agent.NewBridge(),
+		cfg:        cfg,
+		auth:       auth,
+		provider:   p,
+		session:    sess,
+		tools:      reg,
+		mcpClients: mcpClients,
+		workdir:    workdir,
+		textarea:   ta,
+		spinner:    sp,
+		viewport:   viewport.New(60, 10),
+		partial:    new(strings.Builder),
+		approvals:  agent.NewBridge(),
 	}
 
-	// Subagents share the provider and the approval bridge; model, token
-	// budget, and permission mode are read live so /model and /mode
-	// apply to tasks spawned later.
-	modeFn := func() perm.Mode { return perm.Parse(cfg.PermissionMode) }
-	reg.Register(agent.NewTaskTool(agent.SubagentConfig{
-		Provider:  p,
-		Workdir:   workdir,
-		Model:     cfg.Model,
-		MaxTokens: func() int { return cfg.MaxTokens },
-		Mode:      modeFn,
-		Approver:  m.approvals,
-		Hooks:     func() *hooks.Runner { return hooks.New(cfg.Hooks, workdir) },
-	}))
+	m.registerTaskTool()
 	// The plan tool rides the same bridge: approval switches the app to
-	// accept-edits mode (answerPerm does the switching).
+	// accept-edits mode (answerPerm does the switching). It holds no
+	// provider reference, so it never needs re-registration.
+	modeFn := func() perm.Mode { return perm.Parse(cfg.PermissionMode) }
 	reg.Register(agent.NewPlanTool(m.approvals, modeFn))
 
 	for _, msg := range sess.Messages() {
@@ -169,9 +173,33 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 func (m *Model) banner() {
 	m.messages = append(m.messages, uiMessage{
 		role: "system",
-		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · %s mode · /help for commands",
+		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · %s mode · /help commands · /settings config",
 			Version, m.provider.Name(), m.cfg.Model(), m.session.Name(), m.mode()),
 	})
+}
+
+// registerTaskTool (re)registers the task tool against the current
+// provider. Subagents read model, token budget, mode, and hooks live,
+// but the provider was captured by value — re-registration is how a
+// settings-overlay provider switch reaches them.
+func (m *Model) registerTaskTool() {
+	modeFn := func() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
+	m.tools.Register(agent.NewTaskTool(agent.SubagentConfig{
+		Provider:  m.provider,
+		Workdir:   m.workdir,
+		Model:     m.cfg.Model,
+		MaxTokens: func() int { return m.cfg.MaxTokens },
+		Mode:      modeFn,
+		Approver:  m.approvals,
+		Hooks:     func() *hooks.Runner { return hooks.New(m.cfg.Hooks, m.workdir) },
+	}))
+}
+
+// hasCredentials reports whether the active provider has a usable API
+// key from either source, so a turn isn't started just to fail with 401.
+func (m *Model) hasCredentials() bool {
+	key, _ := llm.Resolve(m.cfg.Provider, m.auth.Key(m.cfg.Provider), m.cfg.BaseURL(m.cfg.Provider))
+	return key != ""
 }
 
 // useSession makes sess the active conversation and resets the view.
@@ -251,9 +279,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.perm = &msg.req
 		return m, nil // dialog open; the pump resumes when it is answered
 
+	case mcpApplyMsg:
+		m.applyMCPResult(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.perm != nil {
 			return m, m.permKey(msg)
+		}
+		if m.settings != nil {
+			return m, m.settingsKey(msg)
 		}
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
@@ -286,6 +321,9 @@ func (m Model) View() string {
 	}
 	if m.perm != nil {
 		return m.permView()
+	}
+	if m.settings != nil {
+		return m.settingsView()
 	}
 	if m.picker != nil {
 		return m.pickerView()
@@ -460,6 +498,13 @@ func (m *Model) submit() tea.Cmd {
 	if strings.HasPrefix(input, "/") {
 		return m.command(input)
 	}
+	if !m.hasCredentials() {
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("no API key for %s · open /settings → api key and paste one (or set %s)",
+				m.cfg.Provider, llm.APIKeyEnv(m.cfg.Provider))})
+		m.renderAll()
+		return nil
+	}
 
 	m.messages = append(m.messages, uiMessage{role: llm.RoleUser, raw: input, history: true})
 	m.renderAll()
@@ -524,7 +569,7 @@ func (m *Model) setMode(want perm.Mode) {
 // failed to start or to answer tools/list at launch.
 func (m *Model) mcpStatus() string {
 	if len(m.cfg.MCPServers) == 0 {
-		return "no MCP servers configured · add an mcp_servers object to ~/.khode/config.json"
+		return "no MCP servers configured · add one with /settings → mcp servers"
 	}
 	names := make([]string, 0, len(m.cfg.MCPServers))
 	for n := range m.cfg.MCPServers {
@@ -583,6 +628,7 @@ func (m *Model) command(input string) tea.Cmd {
 		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join([]string{
 			"/new [name]   fresh session, optionally named",
 			"/sessions     switch session (picker)",
+			"/settings     configure keys, provider, model, MCP, hooks",
 			"/model <name> switch model (persisted)",
 			"/mode [name]  permission mode: plan · ask · accept-edits · auto",
 			"/compact      summarize older turns to shrink the context",
@@ -591,6 +637,9 @@ func (m *Model) command(input string) tea.Cmd {
 			"/exit, /quit  leave khode",
 			"/help         this list",
 		}, "\n")})
+
+	case "/settings", "/config":
+		m.OpenSettings(rowProvider)
 
 	case "/mode":
 		if len(parts) < 2 {
@@ -634,6 +683,12 @@ func (m *Model) command(input string) tea.Cmd {
 		if m.streaming {
 			m.messages = append(m.messages, uiMessage{role: "system",
 				raw: "wait for the current turn to finish, then /compact"})
+			break
+		}
+		if !m.hasCredentials() {
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: fmt.Sprintf("no API key for %s · compaction needs one · see /settings",
+					m.cfg.Provider)})
 			break
 		}
 		return m.runCompact()
