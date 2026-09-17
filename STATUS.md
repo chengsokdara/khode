@@ -48,28 +48,35 @@ One-glance project state. Update at the end of **every** task (see
         the TUI switches to accept-edits
   - [x] Hooks: `pre_tool` (veto with exit 2) and `post_tool` shell
         hooks from config
+- [x] **Phase 7 — Configurable in the TUI**
+  - [x] API keys in `~/.khode/auth.json` (0600, atomic write); env
+        vars still win (`llm.Resolve`)
+  - [x] Keyless startup: no env gate; with no credentials anywhere the
+        settings overlay opens on the api-key row; pre-flight check
+        stops keyless turns with a pointer to `/settings`
+  - [x] `/settings` overlay: provider (live switch), api key, base
+        url, model, max tokens, mode — every row saves on commit
+  - [x] MCP servers + hooks edited in the TUI; MCP servers started,
+        stopped, and restarted live from the overlay
 
 ## Now
 
-Phase 6 complete — khode is advanced-agent territory. MCP servers are
-configured per-process in `~/.khode/config.json` (`mcp_servers`: command,
-args, env, optional risk override); khode starts each at launch over a
-hand-rolled stdio JSON-RPC client (`internal/mcp`: initialize handshake,
-paginated tools/list, tools/call, ping answered, server stderr kept for
-errors) and registers their tools namespaced `mcp__<server>__<tool>`,
-exec-risk by default. The `task` tool spawns a subagent Runner on a
-`NewMemorySession` (no disk), with the same file tools (no recursion),
-the live permission mode, and the shared approval bridge; only its final
-report (capped 16 KiB) enters the parent transcript. Plan mode is now a
-workflow: the read-risk `plan` tool raises a plan question on the bridge
-(`KindPlan`), the TUI shows the plan markdown, and y switches khode to
-accept-edits (persisted) while n feeds "declined" back to the model.
-Hooks (`internal/hooks`) run user shell commands from `config.hooks`
-around every executed tool call with a JSON stdin payload; a pre_tool
-hook exiting 2 vetoes the call (stderr is the model-visible reason),
-timeouts (60 s) never block, and hook processes get the same
-process-group kill as the bash tool. `/mode` and plan approval share
-`setMode`.
+Phase 7 complete — nothing in khode needs hand-editing config.json.
+`/settings` (alias `/config`) opens an overlay where provider and mode
+cycle with ←/→ and api key / base url / model / max tokens open masked
+single-line editors; every row persists the moment it commits. Keys live
+in `~/.khode/auth.json` (0600, atomic rename) with env vars keeping
+precedence via `llm.Resolve`; switching provider rebuilds the client
+(`llm.New`) and re-registers the task tool so subagents follow, while
+in-flight turns keep the old client. The MCP sub-list starts, stops, and
+restarts servers live: `applyMCPCmd` runs off the UI goroutine from
+`maps.Clone` snapshots, closes removed servers (`tools.RemoveMCP`),
+starts new ones (`mcp.Start` + `tools.AddMCP`), and force-restarts
+edited ones; results arrive as `mcpApplyMsg` and are reported in chat.
+Hook edits apply next turn (a fresh `hooks.Runner` is built per turn).
+The registry gained an RWMutex because the agent loop reads it from its
+goroutine while the overlay mutates it. `Model.partial` became a
+pointer `strings.Builder` (see Gotchas).
 
 ## Next
 
@@ -105,3 +112,5 @@ Backlog (no committed order):
 | 2026-09-17 | Phase 6: `task` subagent tool on in-memory sessions | 0d21ba2 |
 | 2026-09-17 | Phase 6: `plan` tool + plan-approval dialog → accept-edits | 94d1049 |
 | 2026-09-17 | Phase 6: pre/post tool-use hooks with pre_tool veto | 698ffba |
+| 2026-09-17 | Phase 7: auth.json key store (0600, atomic) + `base_urls`; llm keyed constructors + factory; registry RWMutex + RemoveMCP | b46b15f |
+| 2026-09-17 | Phase 7: `/settings` overlay, keyless startup + first-run setup, live MCP apply | 2351355 |

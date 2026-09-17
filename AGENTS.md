@@ -26,11 +26,14 @@ edit, and run code in the user's project behind a permission system.
 
 ```
 cmd/khode/           entry point: flags, config, session setup, tea.Program
-internal/config/     ~/.khode/config.json load/save
+internal/config/     user-level state
+  config.go            ~/.khode/config.json load/save (+ base_urls)
+  auth.go              ~/.khode/auth.json API-key store (0600, atomic)
 internal/llm/        provider-agnostic contract
   provider.go          Message, Request, Event, Provider interface
   anthropic.go         Anthropic SDK → Event channel translation
   openai.go            OpenAI SDK → Event channel translation
+  factory.go           llm.New(name, key, url), env-name helpers, env-over-stored Resolve
   retry.go             shared retry policy (transient failures, backoff)
   context.go           per-model context-window table
   pricing.go           per-model price table
@@ -50,6 +53,7 @@ internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands
   perm.go              approval dialog (diff preview) + plan dialog + /mode
   picker.go            session picker overlay
+  settings.go          /settings overlay: keys, provider, model, mode, MCP, hooks
   styles.go            lipgloss palette
 ```
 
@@ -86,8 +90,13 @@ go build -o khode ./cmd/khode && ./khode   # run
 go test ./...           # tests (add them as packages grow)
 ```
 
-Env: `ANTHROPIC_API_KEY` must be set to talk to Anthropic. State lives in
-`~/.khode/` (config + `sessions/*.jsonl`). Never commit API keys.
+Env: an API key is optional. `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (and
+`*_BASE_URL`) win when set; otherwise keys come from
+`~/.khode/auth.json`, saved by `/settings`. With neither, khode starts
+anyway and opens settings on the api-key row; a keyless turn is stopped
+by a pre-flight check instead of failing on a 401. State lives in
+`~/.khode/` (config, auth, `sessions/*.jsonl`). Never commit API keys,
+and never put them in `config.json` — that file must stay shareable.
 
 ## Conventions
 

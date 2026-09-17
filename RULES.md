@@ -34,7 +34,9 @@ uncommitted diff is the interrupted task (see the recovery procedure in
 
 ## 4. Scope and safety
 
-- Never commit secrets (`ANTHROPIC_API_KEY`, etc.). Env vars only.
+- Never commit secrets. User API keys live in `~/.khode/auth.json`
+  (0600) or env vars — never in the repo, and never in `config.json`
+  (that file must stay shareable).
 - Don't touch `.crush/` (user's local Crush state) or anything outside
   this repo.
 - Don't upgrade dependencies casually; when forced to (build breakage),

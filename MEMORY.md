@@ -22,29 +22,34 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
-- **Working:** Phase 6 complete — advanced features. `internal/mcp` is a
-  hand-rolled stdio MCP client (newline-delimited JSON-RPC 2.0):
-  initialize handshake (`2024-11-05`, server's version accepted), paginated
-  tools/list, tools/call (text blocks joined, isError → error), ping
-  answered inline, unknown server requests get -32601, notifications
-  ignored, stderr tail kept for error messages. Servers are configured in
-  `config.mcp_servers` (command/args/env + optional `risk`), started at
-  launch (failures warn, never block), and their tools are registered
-  namespaced `mcp__<server>__<tool>` with exec risk by default; `/mcp`
-  shows per-server status. The `task` tool spawns a subagent `Runner` on
-  `NewMemorySession` (Path=="" skips all disk writes) with a fresh
-  `tools.Default` registry (no task/plan → no recursion), the live mode
-  and shared approval bridge; only its final report (16 KiB cap) becomes
-  the tool result. The `plan` tool (read-risk, plan-mode-only) raises a
-  `KindPlan` request on the shared bridge; the TUI's plan dialog shows the
-  markdown and y switches khode to accept-edits via `setMode` (shared with
-  /mode), n feeds "declined" back so the model refines. Hooks
-  (`internal/hooks`, `config.hooks.pre_tool/post_tool`) run bash commands
-  with a JSON stdin payload (`event`, `tool`, `args`, `output`, `error`)
-  after permission decisions; pre_tool exit 2 vetoes the call with stderr
-  as the model-visible reason, 60 s timeouts and other failures never
-  block, and hook shells get the bash tool's process-group SIGKILL on
-  timeout.
+- **Working:** Phase 7 complete — khode is configurable entirely from
+  the TUI and starts without any API key. Secrets live in
+  `~/.khode/auth.json` (`config.Auth`, 0600, atomic temp+rename write);
+  env vars beat stored values via `llm.Resolve(provider, storedKey,
+  storedURL)`, and `llm.New(name, key, baseURL)` builds either provider
+  from explicit credentials (empty values fall back to the SDK env
+  lookup). `main.go` has no key gates anymore: with no resolvable key it
+  calls `m.OpenSettings(ui.RowAPIKey)` for first-run setup (skipped when
+  the `--resume` picker is showing), and `Model.hasCredentials` blocks
+  submit and /compact with a "/settings" pointer instead of starting a
+  turn that would 401. The `/settings` overlay (`internal/ui/
+  settings.go`) edits provider, api key, base url, model, max tokens,
+  mode, MCP servers, and hooks; provider and mode cycle with ←/→, text
+  rows open masked `textinput` editors, and every commit saves
+  immediately (config via `cfg.Save`, keys via `auth.Save`). A provider
+  switch rebuilds `m.provider` and re-registers the task tool
+  (`registerTaskTool`) because `SubagentConfig` captured the provider by
+  value; in-flight turns keep the old client. MCP changes apply live:
+  `applyMCPCmd` runs off the UI goroutine from `maps.Clone` snapshots,
+  closes removed servers (`tools.RemoveMCP`), starts new ones
+  (`mcp.Start` + `tools.AddMCP`), and force-restarts edited ones
+  (command/env/risk are fixed at `mcp.Start`); results ride
+  `mcpApplyMsg` into `applyMCPResult`, which moves clients into
+  `Model.mcpClients` and reports in chat. Hook edits apply next turn (a
+  fresh `hooks.Runner` is built per turn). `tools.Registry` gained an
+  RWMutex — the agent loop reads it from its goroutine while the overlay
+  mutates it. `Model.partial` is now a `*strings.Builder`; see Gotchas
+  for why.
 - **Not yet started:** backlog only — see STATUS.md "Next".
 
 ## Decision log
@@ -99,6 +104,14 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Hooks run after permission decisions, before execution; post_tool is informational | a denied/declined call never executes, so its hooks must not either; post_tool veto was deliberately left out |
 | 2026-09-17 | Hook veto = pre_tool exit code 2, stderr becomes the error; other exits and timeouts are non-blocking | Claude Code convention; a hook must be able to block, but a broken hook must not wedge every turn |
 | 2026-09-17 | Hook shells get their own process group killed on timeout (same as the bash tool) | `exec.Cmd.Wait` blocks on output-copy goroutines; a hook's backgrounded child keeps the pipe open |
+| 2026-09-17 | API keys live in `~/.khode/auth.json` (0600, atomic rename), not config.json | the config stays shareable; secrets get owner-only perms; env vars still win (`llm.Resolve`) so shell/CI workflows are untouched |
+| 2026-09-17 | Missing keys never exit khode; a pre-flight check blocks turns with a pointer to /settings | "run khode" must not require setup, and a keyless turn would only die on a 401 anyway — catch it before spending the request |
+| 2026-09-17 | Settings rows save on commit; no staged apply step | matches the `setMode` precedent; nothing to lose and nothing to forget |
+| 2026-09-17 | Provider switch rebuilds the client AND re-registers the task tool | `SubagentConfig` captured the provider by value; the ref swap is safe because in-flight turns hold the old provider |
+| 2026-09-17 | MCP reconciliation runs in a `tea.Cmd` from `maps.Clone` snapshots; results applied in `Update` | an initialize handshake can take seconds and the UI goroutine must never touch Model-owned maps from another goroutine |
+| 2026-09-17 | Editing a running MCP server force-restarts it | a client's command/env/risk are frozen at `mcp.Start`; diff-based start/stop alone would leave the old process serving |
+| 2026-09-17 | Registry uses an RWMutex; `Definitions` uses a `namesLocked` helper instead of calling `Names` | settings mutates the map while the agent loop reads; nested RLocks can deadlock when a writer is queued |
+| 2026-09-17 | MCP form args/env are space-separated (`strings.Fields`), no quoting | v1 simplicity; documented in the field placeholder |
 
 ## Gotchas & lessons learned
 
@@ -203,6 +216,15 @@ If you are starting a session, or recovering after an interrupt:
   fields, but here MCP server / hook types live in `config` itself (wire
   types belong to the config file schema, matching the `MCPServer`
   precedent); packages take what they need (`hooks.New(config.Hooks, …)`).
+- **`strings.Builder` must not be a value field of a bubbletea Model.**
+  Model is copied through `Update`'s value receiver, and a used Builder
+  panics ("illegal use of non-zero Builder copied by value") when a
+  later copy writes — whether that happens is decided by escape analysis
+  aliasing, so the SAME code passed at HEAD and panicked after adding
+  three unrelated fields. Use `*strings.Builder` (initialized in `New`).
+- `t.Setenv("VAR", "")` sets the variable to empty (not unset);
+  `os.Getenv` returns `""`, which is exactly what the llm.Resolve
+  precedence check treats as "no env override" — tests rely on this.
 
 ## Session log (append one entry per session)
 
@@ -216,3 +238,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Phase 4: write tools + diff (2c277fa), perm package + loop gate + bridge (557bafe), TUI approval dialog + /mode (f1483c7), docs | f1483c7 |
 | 2026-09-17 | Phase 5: project context (f1c8f78), retry/backoff (5d441f3), todo tool (bc422f2), compaction + /compact (98eccb1), docs | 1a50dd3 |
 | 2026-09-17 | Phase 6: MCP client (1af8588), subagents (0d21ba2), plan workflow (94d1049), hooks (698ffba), docs | 698ffba |
+| 2026-09-17 | Phase 7: auth.json + llm factory + registry mutex (b46b15f), /settings overlay + keyless startup (2351355), docs | b46b15f 2351355 |
