@@ -159,10 +159,10 @@ func main() {
 	if pickerEntries != nil {
 		m.OpenPicker(pickerEntries)
 	} else if key == "" {
-		// First-run setup: nothing in the env or on disk to authenticate
-		// with, so open the settings overlay on the API-key row. Esc
-		// still leaves a usable app.
-		m.OpenSettings(ui.RowAPIKey)
+		// First run: nothing in the env or on disk to authenticate
+		// with, so walk through setup. Esc skips it; khode stays
+		// usable and collects a key later via /settings.
+		m.OpenWelcome()
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())

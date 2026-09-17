@@ -77,6 +77,7 @@ type Model struct {
 
 	picker   *picker   // session chooser overlay; nil when closed
 	settings *settings // configuration overlay; nil when closed
+	welcome  *welcome  // first-run walkthrough; nil when closed
 
 	streaming bool
 	cancel    context.CancelFunc
@@ -86,6 +87,12 @@ type Model struct {
 	// trip its copied-by-value check whenever the escape analyzer
 	// chooses not to alias the copies.
 	partial *strings.Builder
+
+	// ctxIn/ctxOut are the most recent request's usage: ctxIn is the
+	// transcript size the provider saw, so the status line can render
+	// how full the model's context window is.
+	ctxIn  int64
+	ctxOut int64
 
 	// mcpClients holds the running MCP server connections so /settings
 	// can start and stop servers live.
@@ -203,8 +210,11 @@ func (m *Model) hasCredentials() bool {
 }
 
 // useSession makes sess the active conversation and resets the view.
+// The context estimate resets with it: the new transcript is empty
+// until the first usage report comes back.
 func (m *Model) useSession(sess *agent.Session) {
 	m.session = sess
+	m.ctxIn, m.ctxOut = 0, 0
 	m.messages = nil
 	m.banner()
 	m.renderAll()
@@ -287,6 +297,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.perm != nil {
 			return m, m.permKey(msg)
 		}
+		if m.welcome != nil {
+			return m, m.welcomeKey(msg)
+		}
 		if m.settings != nil {
 			return m, m.settingsKey(msg)
 		}
@@ -321,6 +334,9 @@ func (m Model) View() string {
 	}
 	if m.perm != nil {
 		return m.permView()
+	}
+	if m.welcome != nil {
+		return m.welcomeView()
 	}
 	if m.settings != nil {
 		return m.settingsView()
@@ -406,6 +422,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.UsageEvent:
 		m.inTokens += e.InputTokens
 		m.outTokens += e.OutputTokens
+		m.ctxIn, m.ctxOut = e.InputTokens, e.OutputTokens
 		if c, ok := llm.CostEstimate(m.cfg.Model(), e.InputTokens, e.OutputTokens); ok {
 			m.cost += c
 			m.hasCost = true
@@ -752,6 +769,41 @@ func (m *Model) command(input string) tea.Cmd {
 
 // --- rendering --------------------------------------------------------------
 
+// ctxWarnFrac is the context fullness where the status meter turns
+// warning-colored; it mirrors the agent loop's compaction trigger.
+const ctxWarnFrac = 0.8
+
+// ctxUsage reports how full the model's context window is, from the
+// most recent request: its input tokens are the transcript the provider
+// saw, plus the reply that has since joined it. ok is false until the
+// first usage report of the session.
+func (m *Model) ctxUsage() (pct int, warn bool, ok bool) {
+	if m.ctxIn <= 0 {
+		return 0, false, false
+	}
+	window := llm.ContextWindow(m.cfg.Model())
+	if window <= 0 {
+		return 0, false, false
+	}
+	used := m.ctxIn + m.ctxOut
+	return min(int(used*100/int64(window)), 100),
+		float64(used) >= ctxWarnFrac*float64(window), true
+}
+
+// ctxLabel renders the status-line context segment; warning-colored
+// once compaction is near.
+func (m *Model) ctxLabel() string {
+	pct, warn, ok := m.ctxUsage()
+	if !ok {
+		return ""
+	}
+	label := fmt.Sprintf("ctx %d%%", pct)
+	if warn {
+		return delStyle.Render(label)
+	}
+	return dimStyle.Render(label)
+}
+
 func (m *Model) statusLine() string {
 	var state string
 	switch {
@@ -762,8 +814,15 @@ func (m *Model) statusLine() string {
 	default:
 		state = okStyle.Render("● ready")
 	}
-	tok := dimStyle.Render(fmt.Sprintf("in %s · out %s · %s",
-		humanTokens(m.inTokens), humanTokens(m.outTokens), m.costLabel()))
+	segs := []string{
+		dimStyle.Render(fmt.Sprintf("in %s · out %s",
+			humanTokens(m.inTokens), humanTokens(m.outTokens))),
+	}
+	if c := m.ctxLabel(); c != "" {
+		segs = append(segs, c)
+	}
+	segs = append(segs, dimStyle.Render(m.costLabel()))
+	tok := strings.Join(segs, dimStyle.Render(" · "))
 
 	gap := m.width - lipgloss.Width(state) - lipgloss.Width(tok)
 	if gap < 1 {

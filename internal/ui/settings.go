@@ -25,10 +25,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// RowAPIKey is the settings row holding the active provider's API key;
-// main opens the overlay here when no credentials exist at all.
-const RowAPIKey = rowAPIKey
-
 // settingsRow enumerates the top-level rows.
 type settingsRow int
 
@@ -195,7 +191,7 @@ func (m *Model) cycleSetting(dir int) {
 				idx = i
 			}
 		}
-		m.applyProvider(names[(idx+dir+len(names))%len(names)])
+		m.switchProvider(names[(idx+dir+len(names))%len(names)])
 	case rowMode:
 		modes := perm.Modes()
 		idx := 0
@@ -210,21 +206,29 @@ func (m *Model) cycleSetting(dir int) {
 
 // --- saving ------------------------------------------------------------------
 
-// saveSettings persists the config and flashes the fact in the footer.
-// Key changes save through auth.Save instead.
+// saveSettings persists the config and flashes the fact. The flash goes
+// to whichever overlay is open — the welcome walkthrough also switches
+// providers, so settings may be nil. Key changes save through
+// auth.Save instead.
 func (m *Model) saveSettings(what string) {
 	if err := m.cfg.Save(); err != nil {
 		m.lastErr = err.Error()
 		return
 	}
-	m.settings.savedMsg = "✓ saved " + what
+	flash := "✓ saved " + what
+	if m.settings != nil {
+		m.settings.savedMsg = flash
+	}
+	if m.welcome != nil {
+		m.welcome.savedMsg = flash
+	}
 }
 
-// applyProvider switches providers in place: the client is rebuilt with
-// the new provider's credentials and the task tool re-registered, so the
-// next turn and future subagents use it. In-flight turns keep the old
-// client. The choice persists immediately.
-func (m *Model) applyProvider(name string) {
+// switchProvider persists a provider change and rebuilds the client, so
+// the next turn and future subagents use it. In-flight turns keep the
+// old client. Both /settings and the welcome walkthrough switch through
+// here.
+func (m *Model) switchProvider(name string) {
 	m.cfg.Provider = name
 	m.rebuildProvider()
 	m.saveSettings("provider → " + name + " · model " + m.cfg.Model())
@@ -775,14 +779,24 @@ func (m *Model) settingsView() string {
 	switch {
 	case footer != "":
 	case s.editor != nil:
-		footer = "enter save · esc cancel · " + s.editor.hint
+		footer = keyHint("enter", "save") + dimStyle.Render(" · ") +
+			keyHint("esc", "cancel") + dimStyle.Render(" · "+s.editor.hint)
 	default:
-		footer = "↑/↓ move · ←/→ change · enter edit · esc close"
+		footer = keyHint("↑/↓", "move") + dimStyle.Render(" · ") +
+			keyHint("←/→", "change") + dimStyle.Render(" · ") +
+			keyHint("enter", "edit") + dimStyle.Render(" · ") +
+			keyHint("esc", "close")
 	}
 
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
-		title, "", strings.Join(body, "\n"), "", dimStyle.Render(footer)))
+		title, "", strings.Join(body, "\n"), "", footer))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// keyHint renders one footer fragment: the key name highlighted, the
+// verb dim — footer keys must be findable, not wallpaper.
+func keyHint(keyName, verb string) string {
+	return pickSel.Render(keyName) + dimStyle.Render(" "+verb)
 }
 
 func (s *settings) rowsView(m *Model) []string {
