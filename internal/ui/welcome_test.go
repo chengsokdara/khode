@@ -22,19 +22,16 @@ func TestWelcomeFullFlow(t *testing.T) {
 		t.Fatalf("step = %d, want provider", m.welcome.step)
 	}
 
-	// Provider step: ←/→ switches live and persists.
-	m = pressKeys(m, "right")
+	// Provider step: ←/→ moves the cursor, enter switches live.
+	m = pressKeys(m, "right", "enter")
 	if m.cfg.Provider != "openai" {
-		t.Fatalf("provider = %q, want openai after →", m.cfg.Provider)
+		t.Fatalf("provider = %q, want openai after → + enter", m.cfg.Provider)
 	}
 	if m.provider.Name() != "openai" {
 		t.Error("provider client not rebuilt on walkthrough switch")
 	}
-
-	// Key step: a pasted key is stored per provider, masked on screen.
-	m = pressKeys(m, "enter")
 	if m.welcome.step != welcomeKey {
-		t.Fatal("enter did not reach the key step")
+		t.Fatalf("step = %d, want key after choosing a provider", m.welcome.step)
 	}
 	m = pressKeys(m, "sk-openai-test")
 	if strings.Contains(m.welcomeView(), "sk-openai-test") {
@@ -93,6 +90,72 @@ func TestWelcomeBackNavigation(t *testing.T) {
 	m = pressKeys(m, "shift+tab")
 	if m.welcome.step != welcomeProvider {
 		t.Fatal("shift+tab did not go back to the provider step")
+	}
+}
+
+func TestWelcomeCustomProvider(t *testing.T) {
+	m := newSettingsModel(t)
+	m.OpenWelcome()
+
+	// intro → provider; the list ends with the custom entry:
+	// anthropic, openai, custom…  (→ → → lands on it)
+	m = pressKeys(m, "enter", "right", "right", "right")
+	if m.welcome.step != welcomeProvider {
+		t.Fatal("did not reach the provider step")
+	}
+	if !strings.Contains(m.welcomeView(), "custom") {
+		t.Error("provider step does not offer a custom entry")
+	}
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeCustom {
+		t.Fatal("enter on the custom entry did not open the inline form")
+	}
+
+	// Fill the inline form: name, base url, protocol stays openai, save.
+	m = pressKeys(m, "ollama", "down", "http://localhost:11434/v1", "down", "down")
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeKey {
+		t.Fatalf("saving the custom provider did not reach the key step: %d", m.welcome.step)
+	}
+	if m.cfg.Provider != "ollama" {
+		t.Fatalf("provider = %q, want ollama (fresh customs activate)", m.cfg.Provider)
+	}
+	if m.provider.Name() != "ollama" {
+		t.Error("live provider not rebuilt for the custom provider")
+	}
+	cp := m.cfg.CustomProviders["ollama"]
+	if cp.Kind != "openai" || cp.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("custom provider = %+v", cp)
+	}
+	if _, err := os.Stat(config.Path()); err != nil {
+		t.Error("custom provider not persisted")
+	}
+
+	// Key-less endpoints skip the key step with an empty enter.
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeReady {
+		t.Fatal("empty key did not advance to the ready card")
+	}
+	// With no model yet, the ready card must point at the next step.
+	if !strings.Contains(m.welcomeView(), "model") {
+		t.Error("ready card does not mention picking a model")
+	}
+
+	// A fresh walkthrough lists the saved provider, and the inline form
+	// rejects a duplicate name.
+	m = pressKeys(m, "enter") // close the walkthrough
+	m.OpenWelcome()
+	// choices: anthropic, openai, ollama, custom… → ×3 lands on custom…
+	m = pressKeys(m, "enter", "right", "right", "right", "enter")
+	if m.welcome.step != welcomeCustom {
+		t.Fatal("did not re-open the custom form")
+	}
+	m = pressKeys(m, "ollama", "down", "http://x/v1", "down", "down", "enter")
+	if m.welcome.step != welcomeCustom {
+		t.Error("duplicate provider name was accepted")
+	}
+	if !strings.Contains(m.welcome.savedMsg, "already exists") {
+		t.Errorf("flash = %q, want a duplicate-name error", m.welcome.savedMsg)
 	}
 }
 

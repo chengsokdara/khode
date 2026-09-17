@@ -159,10 +159,11 @@ func main() {
 	m := ui.New(cfg, auth, provider, sess, registry, mcpClients, workdir)
 	if pickerEntries != nil {
 		m.OpenPicker(pickerEntries)
-	} else if key == "" {
-		// First run: nothing in the env or on disk to authenticate
-		// with, so walk through setup. Esc skips it; khode stays
-		// usable and collects a key later via /settings.
+	} else if key == "" && len(cfg.CustomProviders) == 0 && len(cfg.ModelChoices) == 0 {
+		// First run — no credentials, no custom provider, no model ever
+		// chosen — walks through setup. A keyless setup (Ollama) or an
+		// env-var user must not see it again; esc skips it regardless,
+		// and khode stays usable either way.
 		m.OpenWelcome()
 	}
 

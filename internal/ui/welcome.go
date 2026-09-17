@@ -1,16 +1,17 @@
 package ui
 
 // welcome.go — the first-run walkthrough. khode opens it when no
-// credentials exist anywhere: three short steps (intro, provider, api
-// key) and a ready card with what to try first. Esc skips it at any
-// point — khode stays usable, and the pre-flight check points at
-// /settings if a turn is attempted without a key.
+// credentials exist anywhere: intro, provider (built-ins, any custom
+// provider already configured, or an inline form to add one), api key,
+// and a ready card with what to try first. Esc skips it at any point —
+// khode stays usable, and the pre-flight check points at /settings if a
+// turn is attempted without a key or model.
 
 import (
 	"fmt"
 	"strings"
 
-	"khode/internal/llm"
+	"khode/internal/config"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,16 +22,26 @@ import (
 const (
 	welcomeIntro = iota
 	welcomeProvider
+	welcomeCustom
 	welcomeKey
 	welcomeReady
 	welcomeSteps // keep last
 )
 
+// welcomeCustomEntry is the provider step's last option: instead of
+// naming a provider, it opens the inline custom-provider form.
+const welcomeCustomEntry = "custom…"
+
 // welcome is the first-run walkthrough; Model.welcome is non-nil while
 // it is open.
 type welcome struct {
 	step     int
+	provIdx  int             // cursor in the provider step's choice list
 	input    textinput.Model // api-key editor on the key step
+	cName    textinput.Model // custom provider form: name
+	cURL     textinput.Model // custom provider form: base url
+	cField   int             // custom form: 0 name, 1 url, 2 protocol, 3 save
+	cProto   int             // custom form: 0 openai, 1 anthropic
 	savedMsg string          // last "✓ …" flash from a save
 }
 
@@ -43,7 +54,43 @@ func (m *Model) OpenWelcome() {
 	in.Width = 52
 	in.Placeholder = "paste your API key · enter saves"
 	in.Focus()
-	m.welcome = &welcome{step: welcomeIntro, input: in}
+
+	name := textinput.New()
+	name.Prompt = ""
+	name.Width = 40
+	name.Placeholder = "unique name (e.g. groq, ollama)"
+	url := textinput.New()
+	url.Prompt = ""
+	url.Width = 40
+	url.Placeholder = "http://localhost:11434/v1"
+
+	w := &welcome{input: in, cName: name, cURL: url}
+	// The provider cursor starts on the configured provider.
+	w.provIdx = indexOf(m.providerNames(), m.cfg.Provider)
+	if w.provIdx < 0 {
+		w.provIdx = 0
+	}
+	w.focusCustom()
+	m.welcome = w
+}
+
+// providerChoices lists the walkthrough's provider options: the
+// built-ins, any custom providers already configured, and the entry
+// that opens the inline add form.
+func (m *Model) providerChoices() []string {
+	return append(m.providerNames(), welcomeCustomEntry)
+}
+
+// focusCustom moves the custom form's input focus to its current field.
+func (w *welcome) focusCustom() {
+	w.cName.Blur()
+	w.cURL.Blur()
+	switch w.cField {
+	case 0:
+		w.cName.Focus()
+	case 1:
+		w.cURL.Focus()
+	}
 }
 
 // welcomeKey handles input while the walkthrough is open.
@@ -66,13 +113,68 @@ func (m *Model) welcomeKey(msg tea.KeyMsg) tea.Cmd {
 		}
 
 	case welcomeProvider:
+		choices := m.providerChoices()
 		switch msg.String() {
-		case "left", "h":
-			m.switchProvider(neighborProvider(m.cfg.Provider, -1))
-		case "right", "l":
-			m.switchProvider(neighborProvider(m.cfg.Provider, 1))
+		case "left", "h", "up", "k":
+			if w.provIdx > 0 {
+				w.provIdx--
+			}
+		case "right", "l", "down", "j":
+			if w.provIdx < len(choices)-1 {
+				w.provIdx++
+			}
 		case "enter":
+			name := choices[min(w.provIdx, len(choices)-1)]
+			if name == welcomeCustomEntry {
+				w.cField, w.savedMsg = 0, ""
+				w.focusCustom()
+				w.step = welcomeCustom
+				break
+			}
+			if name != m.cfg.Provider {
+				m.switchProvider(name)
+			}
+			w.input.Placeholder = "paste your " + name + " API key · leave empty to skip"
 			w.step = welcomeKey
+		}
+
+	case welcomeCustom:
+		switch msg.String() {
+		case "shift+tab":
+			w.step = welcomeProvider
+		case "up", "k", "ctrl+p":
+			if w.cField > 0 {
+				w.cField--
+				w.focusCustom()
+			}
+		case "down", "tab", "ctrl+n":
+			w.advanceCustomField()
+		case "left", "h":
+			if w.cField == 2 {
+				w.cProto = (w.cProto + 1) % 2
+			}
+		case "right", "l":
+			if w.cField == 2 {
+				w.cProto = (w.cProto + 1) % 2
+			}
+		case "enter":
+			switch w.cField {
+			case 2: // protocol row: enter cycles, like settings forms
+				w.cProto = (w.cProto + 1) % 2
+			case 3: // save row
+				return m.commitWelcomeCustom()
+			default:
+				w.advanceCustomField()
+			}
+		default:
+			var cmd tea.Cmd
+			switch w.cField {
+			case 0:
+				w.cName, cmd = w.cName.Update(msg)
+			case 1:
+				w.cURL, cmd = w.cURL.Update(msg)
+			}
+			return cmd
 		}
 
 	case welcomeKey:
@@ -95,6 +197,47 @@ func (m *Model) welcomeKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+// advanceCustomField moves the custom form's cursor down, wrapping from
+// the save row back to the first field.
+func (w *welcome) advanceCustomField() {
+	w.cField = (w.cField + 1) % 4
+	w.focusCustom()
+}
+
+// commitWelcomeCustom saves the inline custom provider, activates it,
+// and moves to the key step — which endpoints like Ollama can skip with
+// an empty key.
+func (m *Model) commitWelcomeCustom() tea.Cmd {
+	w := m.welcome
+	name := strings.TrimSpace(w.cName.Value())
+	baseURL := strings.TrimSpace(w.cURL.Value())
+	kind := "openai"
+	if w.cProto == 1 {
+		kind = "anthropic"
+	}
+	switch {
+	case name == "" || baseURL == "":
+		w.savedMsg = "✗ name and base url are required"
+		return nil
+	case config.IsBuiltinProvider(name):
+		w.savedMsg = "✗ " + name + " is built-in — pick another name"
+		return nil
+	}
+	if _, exists := m.cfg.CustomProviders[name]; exists {
+		w.savedMsg = "✗ a provider named " + name + " already exists"
+		return nil
+	}
+	if m.cfg.CustomProviders == nil {
+		m.cfg.CustomProviders = map[string]config.CustomProvider{}
+	}
+	m.cfg.CustomProviders[name] = config.CustomProvider{Kind: kind, BaseURL: baseURL}
+	m.switchProvider(name)
+	w.input.Placeholder = "paste your " + name + " API key · leave empty if it needs none"
+	w.savedMsg = "✓ provider " + name + " added"
+	w.step = welcomeKey
+	return nil
+}
+
 // commitWelcomeKey saves the pasted key and moves to the ready card.
 // An empty key is not an error: the walkthrough still advances, and the
 // pre-flight check points at /settings if a turn is attempted.
@@ -113,16 +256,14 @@ func (m *Model) commitWelcomeKey() tea.Cmd {
 	return nil
 }
 
-// neighborProvider returns the provider dir steps around name, wrapping.
-func neighborProvider(name string, dir int) string {
-	names := llm.Names()
-	idx := 0
-	for i, n := range names {
-		if n == name {
-			idx = i
+// indexOf returns i's position in xs, or -1.
+func indexOf(xs []string, x string) int {
+	for i, v := range xs {
+		if v == x {
+			return i
 		}
 	}
-	return names[(idx+dir+len(names))%len(names)]
+	return -1
 }
 
 func (m *Model) welcomeView() string {
@@ -135,18 +276,54 @@ func (m *Model) welcomeView() string {
 			"a coding agent for your terminal.",
 			"",
 			"  " + pickSel.Render("·") + " reads, edits, and runs code here — always with your approval",
-			"  " + pickSel.Render("·") + " answers stream from Anthropic or OpenAI models",
+			"  " + pickSel.Render("·") + " answers stream from Anthropic, OpenAI, or your own endpoints",
 			"  " + pickSel.Render("·") + " every session is saved; resume with khode --resume",
 			"",
 			"setup takes a minute: pick a provider, paste a key.",
 		}, "\n")
 	case welcomeProvider:
 		title = "◆ pick a provider"
+		var rows []string
+		for i, name := range m.providerChoices() {
+			cur := "  "
+			if i == w.provIdx {
+				cur = "❯ "
+			}
+			line := name
+			switch {
+			case name == welcomeCustomEntry:
+				line = dimStyle.Render("add a custom provider — Ollama, OpenRouter, any OpenAI-compatible URL")
+			case !config.IsBuiltinProvider(name):
+				line += dimStyle.Render("  " + clip(m.cfg.CustomProviders[name].BaseURL, 30))
+			}
+			if name == m.cfg.Provider && name != welcomeCustomEntry {
+				line += "  " + okStyle.Render("●")
+			}
+			rows = append(rows, cur+line)
+		}
+		body = strings.Join(rows, "\n") + "\n\n" +
+			dimStyle.Render("  keys are stored per provider; you can switch any time.")
+	case welcomeCustom:
+		title = "◆ add a custom provider"
+		proto := "openai" + dimStyle.Render("  · <base>/models  ←/→ cycle")
+		if w.cProto == 1 {
+			proto = "anthropic" + dimStyle.Render("  · <base>/v1/models  ←/→ cycle")
+		}
+		cur1, cur2, cur3 := "  ", "  ", "  "
+		switch w.cField {
+		case 0:
+			cur1 = "❯ "
+		case 1:
+			cur2 = "❯ "
+		case 2:
+			cur3 = "❯ "
+		}
 		body = strings.Join([]string{
-			"  provider   " + pickSel.Render(m.cfg.Provider),
-			"  model      " + m.cfg.Model() + dimStyle.Render("  (default)"),
+			cur1 + "  " + fmt.Sprintf("%-9s", "name") + w.cName.View(),
+			cur2 + "  " + fmt.Sprintf("%-9s", "base url") + w.cURL.View(),
+			cur3 + "  " + fmt.Sprintf("%-9s", "protocol") + proto,
 			"",
-			dimStyle.Render("  keys are stored per provider; you can switch any time."),
+			dimStyle.Render("  the provider activates right away; its key can stay empty."),
 		}, "\n")
 	case welcomeKey:
 		title = "◆ paste your API key"
@@ -159,14 +336,22 @@ func (m *Model) welcomeView() string {
 		}, "\n")
 	case welcomeReady:
 		title = "◆ you're set"
-		body = strings.Join([]string{
+		rows := []string{
 			"try asking khode:",
 			"",
 			"  " + userStyle.Render("summarize what this repo does"),
 			"  " + userStyle.Render("find and fix the failing test"),
 			"",
-			dimStyle.Render("  /help commands · /settings configuration · esc stops a stream"),
-		}, "\n")
+		}
+		if m.cfg.Model() == "" {
+			rows = append(rows,
+				"  "+pickSel.Render("next:")+" open /settings → model and pick one from "+
+					m.cfg.Provider+" ("+keyHint("f", "fetches the list")+")",
+				"")
+		}
+		rows = append(rows,
+			dimStyle.Render("  /help commands · /settings configuration · esc stops a stream"))
+		body = strings.Join(rows, "\n")
 	}
 
 	var footer string
@@ -174,7 +359,9 @@ func (m *Model) welcomeView() string {
 	case welcomeIntro:
 		footer = keyHint("enter", "start setup") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 	case welcomeProvider:
-		footer = keyHint("←/→", "switch") + dimStyle.Render("  ·  ") + keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		footer = keyHint("←/→", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+	case welcomeCustom:
+		footer = keyHint("tab", "next field") + dimStyle.Render("  ·  ") + keyHint("←/→", "protocol") + dimStyle.Render("  ·  ") + keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back")
 	case welcomeKey:
 		footer = keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 	case welcomeReady:
