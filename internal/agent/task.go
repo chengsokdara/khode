@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"khode/internal/hooks"
 	"khode/internal/llm"
 	"khode/internal/perm"
 	"khode/internal/tools"
@@ -32,6 +33,9 @@ type SubagentConfig struct {
 	// Approver is shared with the main loop: a subagent's risky call
 	// raises the same approval dialog in the UI.
 	Approver Approver
+	// Hooks builds the lifecycle-hook runner for subagent calls; nil
+	// disables hooks inside subagents.
+	Hooks func() *hooks.Runner
 }
 
 // TaskTool runs one subagent per call.
@@ -82,6 +86,9 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 		System:    t.subagentSystem(),
 		Mode:      t.cfg.Mode(),
 		Approver:  t.cfg.Approver,
+	}
+	if t.cfg.Hooks != nil {
+		sub.Hooks = t.cfg.Hooks()
 	}
 
 	var report strings.Builder

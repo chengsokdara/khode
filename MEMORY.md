@@ -22,30 +22,30 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
-- **Working:** Phase 5 complete — agent quality. `agent.SystemPrompt`
-  composes the base prompt with project guidance: at every directory level
-  from root to workdir, AGENTS.md is read (CLAUDE.md as fallback for that
-  level), ancestors first, capped at 16 KiB, re-read every turn. Both
-  providers retry transient stream failures (408/409/429/5xx/529, net
-  timeouts, resets, truncated bodies) with exponential backoff honoring
-  Retry-After — but only while zero content events were forwarded, so a
-  retry can never duplicate visible output; after the first delta, errors
-  surface unchanged. The `todo` tool (full-list replacement per call,
-  in-memory, read-risk → usable in plan mode) keeps the model's task list;
-  the TUI renders `todo` tool results in full (matched by event name)
-  instead of the 2-line preview. The runner tracks exact input tokens from
-  UsageEvents (char/4 estimates until the first arrives) and compacts when
-  the conversation reaches 80% of `llm.ContextWindow(model)` (prefix
-  table, conservative 128k default): `cutIndex` keeps the newest tail that
-  fits 30% of the window and always lands on a user boundary (tool
-  results never start a tail), an LLM call with the summarizer prompt in
-  the system role (no tools advertised) condenses everything before the
-  cut, the summary merges into the first kept user turn (no consecutive
-  user messages), and `Session.Replace` rewrites the JSONL atomically
-  (temp + rename). Compaction failures are swallowed — the turn continues
-  uncompressed. `/compact` forces it; a `llm.CompactEvent` surfaces a
-  notice in the TUI.
-- **Not yet started:** Phase 6 — MCP client, subagents, plan mode, hooks.
+- **Working:** Phase 6 complete — advanced features. `internal/mcp` is a
+  hand-rolled stdio MCP client (newline-delimited JSON-RPC 2.0):
+  initialize handshake (`2024-11-05`, server's version accepted), paginated
+  tools/list, tools/call (text blocks joined, isError → error), ping
+  answered inline, unknown server requests get -32601, notifications
+  ignored, stderr tail kept for error messages. Servers are configured in
+  `config.mcp_servers` (command/args/env + optional `risk`), started at
+  launch (failures warn, never block), and their tools are registered
+  namespaced `mcp__<server>__<tool>` with exec risk by default; `/mcp`
+  shows per-server status. The `task` tool spawns a subagent `Runner` on
+  `NewMemorySession` (Path=="" skips all disk writes) with a fresh
+  `tools.Default` registry (no task/plan → no recursion), the live mode
+  and shared approval bridge; only its final report (16 KiB cap) becomes
+  the tool result. The `plan` tool (read-risk, plan-mode-only) raises a
+  `KindPlan` request on the shared bridge; the TUI's plan dialog shows the
+  markdown and y switches khode to accept-edits via `setMode` (shared with
+  /mode), n feeds "declined" back so the model refines. Hooks
+  (`internal/hooks`, `config.hooks.pre_tool/post_tool`) run bash commands
+  with a JSON stdin payload (`event`, `tool`, `args`, `output`, `error`)
+  after permission decisions; pre_tool exit 2 vetoes the call with stderr
+  as the model-visible reason, 60 s timeouts and other failures never
+  block, and hook shells get the bash tool's process-group SIGKILL on
+  timeout.
+- **Not yet started:** backlog only — see STATUS.md "Next".
 
 ## Decision log
 
@@ -84,6 +84,21 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Summarizer gets the summarizer prompt in the system role and no tools | no extra user turn to break alternation; tool-less requests cannot derail into tool calls |
 | 2026-09-17 | `Session.Replace` writes a temp file, syncs, renames | compaction is the first operation that rewrites history; a crash must leave a loadable transcript |
 | 2026-09-17 | Compaction failures are non-fatal (turn continues uncompressed) | summarizing is best-effort; the next provider call reports a real error if the history truly cannot fit |
+| 2026-09-17 | MCP client is hand-rolled JSON-RPC over stdio in `internal/mcp`, no SDK | the subset khode needs (initialize, tools/list, tools/call) is small; house style avoids casual deps (glob/diff precedents) |
+| 2026-09-17 | MCP tools are namespaced `mcp__<server>__<tool>` (Claude Code convention) | collisions with local tools and between servers are impossible; /mcp groups by prefix |
+| 2026-09-17 | MCP tools default to exec risk with a per-server `risk` override (read/write/exec) | a remote tool can do anything, so it must be gated like a shell command by default; trusted read-only servers opt into plan-mode usability |
+| 2026-09-17 | MCP tool list is a startup snapshot; `tools/list_changed` is ignored | refresh = restart khode; keeps the pump free of notification machinery for now |
+| 2026-09-17 | A failing MCP server warns at launch but khode still starts | one broken server must not take the app down; /mcp shows "unavailable" |
+| 2026-09-17 | `mcp.Client` is built on `newConn(r, w)` so tests drive the protocol over in-memory pipes; one subprocess test covers real pipes + env | exec pipes in tests are slow and flaky; the seam is 5 lines |
+| 2026-09-17 | Subagents run on `NewMemorySession` (Path=="" skips disk in Append/Replace/Name) | subagent transcripts are scratch work; persisting every task call would litter the sessions dir |
+| 2026-09-17 | Subagent registry is a fresh `tools.Default` — no task, no plan | no recursion; plan approval is a main-loop dialog contract |
+| 2026-09-17 | Subagent config is function-valued (Model/MaxTokens/Mode read per call), shares the main Bridge, and builds fresh hooks | /model and /mode changes apply to tasks spawned later; a subagent's risky call raises the same TUI dialog; user hooks (e.g. a banned-command veto) must apply inside subagents too |
+| 2026-09-17 | Task results are capped at 16 KiB with an in-cut truncation marker | a verbose child must not flood the parent's context window |
+| 2026-09-17 | The plan tool is read-risk and plan-mode-only; approval switches to accept-edits in the UI (`setMode`), not in the tool | mode persistence is UI/config state; the tool only needs the boolean, and the result text tells the model the new mode |
+| 2026-09-17 | Bridge questions carry a `Kind` (tool permission vs whole plan) on one channel | the stale-request drain and dialog plumbing stay single-machinery |
+| 2026-09-17 | Hooks run after permission decisions, before execution; post_tool is informational | a denied/declined call never executes, so its hooks must not either; post_tool veto was deliberately left out |
+| 2026-09-17 | Hook veto = pre_tool exit code 2, stderr becomes the error; other exits and timeouts are non-blocking | Claude Code convention; a hook must be able to block, but a broken hook must not wedge every turn |
+| 2026-09-17 | Hook shells get their own process group killed on timeout (same as the bash tool) | `exec.Cmd.Wait` blocks on output-copy goroutines; a hook's backgrounded child keeps the pipe open |
 
 ## Gotchas & lessons learned
 
@@ -173,6 +188,21 @@ If you are starting a session, or recovering after an interrupt:
 - Cutting injected text to a byte cap must reserve room for the
   "(…truncated)" marker inside the cut, or the output exceeds the cap
   you just asserted.
+- **`io.Pipe` is unbuffered and synchronous**: a write blocks until the
+  other side reads. The MCP tests hung the whole run because the client's
+  initialize write happened before the fake server's reader goroutine
+  started — always `go serve()` BEFORE the handshake in pipe-based tests.
+- `exec.Cmd.Wait` blocks on output-copy goroutines, and the hook's
+  `sleep 30` inherits the stdout/stderr pipe write end — killing bash
+  alone leaves `Wait` hanging until the child exits. This re-bite in
+  hooks is why the process-group kill lives in both `tools` and `hooks`.
+- A struct field typed `any` (e.g. `rpcMsg.Params`) unmarshals JSON
+  objects as `map[string]any`, not `json.RawMessage` — tests that want
+  the raw bytes must re-marshal.
+- Renaming config-file schema: `encoding/json` promotes embedded-struct
+  fields, but here MCP server / hook types live in `config` itself (wire
+  types belong to the config file schema, matching the `MCPServer`
+  precedent); packages take what they need (`hooks.New(config.Hooks, …)`).
 
 ## Session log (append one entry per session)
 
@@ -185,3 +215,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-16 | Phase 3: llm tool contract + provider translation (ecb9255), tools pkg (57c6c43), agent loop (a997292), UI wiring + tests (c3eac1a), docs | c3eac1a |
 | 2026-09-17 | Phase 4: write tools + diff (2c277fa), perm package + loop gate + bridge (557bafe), TUI approval dialog + /mode (f1483c7), docs | f1483c7 |
 | 2026-09-17 | Phase 5: project context (f1c8f78), retry/backoff (5d441f3), todo tool (bc422f2), compaction + /compact (98eccb1), docs | 1a50dd3 |
+| 2026-09-17 | Phase 6: MCP client (1af8588), subagents (0d21ba2), plan workflow (94d1049), hooks (698ffba), docs | 698ffba |

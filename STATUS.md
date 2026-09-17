@@ -38,36 +38,47 @@ One-glance project state. Update at the end of **every** task (see
   - [x] AGENTS.md-style project context in system prompt
   - [x] Context compaction when nearing the token window
   - [x] Todo tracking tool, API retry/backoff
-- [ ] **Phase 6 — Advanced**
-  - [ ] MCP client, subagents, plan mode, hooks
+- [x] **Phase 6 — Advanced**
+  - [x] MCP client (stdio JSON-RPC, no SDK): `mcp_servers` config,
+        tools registered as `mcp__<server>__<tool>`, per-server risk
+        override, `/mcp` status
+  - [x] Subagents: `task` tool runs a fresh Runner on an in-memory
+        session and returns the final report
+  - [x] Plan mode workflow: `plan` tool presents a plan, approval in
+        the TUI switches to accept-edits
+  - [x] Hooks: `pre_tool` (veto with exit 2) and `post_tool` shell
+        hooks from config
 
 ## Now
 
-Phase 5 complete: khode is a quality agent. `agent.SystemPrompt` composes
-the base prompt with project guidance read from AGENTS.md (CLAUDE.md as
-fallback) at every directory level from root to the working directory
-(ancestors first, 16 KiB cap, re-read every turn). Both providers retry
-transient failures — 408/409/429/5xx/529 and transport errors — with
-exponential backoff (500 ms→8 s) honoring Retry-After, but only while zero
-content events have been forwarded, so output can never duplicate. The new
-`todo` tool keeps a full-replacement task list (in-memory, read-risk, so
-usable in every mode) that the TUI renders in full instead of the 2-line
-preview. The loop now tracks exact input usage from UsageEvents (char/4
-estimates until the first one) and compacts when the conversation reaches
-80% of the model's context window (`llm.ContextWindow` prefix table):
-turns before a clean user boundary are summarized by a tool-less LLM call,
-the summary is merged into the first kept user turn, and `Session.Replace`
-atomically rewrites the transcript (temp file + rename). Compaction
-failures never kill a turn. `/compact` forces it manually.
+Phase 6 complete — khode is advanced-agent territory. MCP servers are
+configured per-process in `~/.khode/config.json` (`mcp_servers`: command,
+args, env, optional risk override); khode starts each at launch over a
+hand-rolled stdio JSON-RPC client (`internal/mcp`: initialize handshake,
+paginated tools/list, tools/call, ping answered, server stderr kept for
+errors) and registers their tools namespaced `mcp__<server>__<tool>`,
+exec-risk by default. The `task` tool spawns a subagent Runner on a
+`NewMemorySession` (no disk), with the same file tools (no recursion),
+the live permission mode, and the shared approval bridge; only its final
+report (capped 16 KiB) enters the parent transcript. Plan mode is now a
+workflow: the read-risk `plan` tool raises a plan question on the bridge
+(`KindPlan`), the TUI shows the plan markdown, and y switches khode to
+accept-edits (persisted) while n feeds "declined" back to the model.
+Hooks (`internal/hooks`) run user shell commands from `config.hooks`
+around every executed tool call with a JSON stdin payload; a pre_tool
+hook exiting 2 vetoes the call (stderr is the model-visible reason),
+timeouts (60 s) never block, and hook processes get the same
+process-group kill as the bash tool. `/mode` and plan approval share
+`setMode`.
 
 ## Next
 
-Phase 6 — advanced:
+Backlog (no committed order):
 
-1. MCP client.
-2. Subagents.
-3. Plan mode.
-4. Hooks.
+1. Stream subagent activity into the TUI instead of hiding it.
+2. MCP: re-list tools on `tools/list_changed`; resources/prompts.
+3. Hooks: feed post_tool output to the model as feedback.
+4. OpenAI tool-call unit parity for MCP edge cases as they surface.
 
 ## Changelog
 
@@ -90,3 +101,7 @@ Phase 6 — advanced:
 | 2026-09-17 | Phase 5: transient-failure retry with backoff in both providers (no retry after content) | 5d441f3 |
 | 2026-09-17 | Phase 5: `todo` task-list tool, rendered whole in the TUI | bc422f2 |
 | 2026-09-17 | Phase 5: context compaction (80% trigger, clean-boundary cut, atomic rewrite) + `llm.ContextWindow` + `/compact` | 98eccb1 |
+| 2026-09-17 | Phase 6: MCP stdio client + `mcp_servers` config + registry bridge + `/mcp` | 1af8588 |
+| 2026-09-17 | Phase 6: `task` subagent tool on in-memory sessions | 0d21ba2 |
+| 2026-09-17 | Phase 6: `plan` tool + plan-approval dialog → accept-edits | 94d1049 |
+| 2026-09-17 | Phase 6: pre/post tool-use hooks with pre_tool veto | 698ffba |

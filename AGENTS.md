@@ -36,15 +36,19 @@ internal/llm/        provider-agnostic contract
   pricing.go           per-model price table
 internal/perm/       permission policy: modes × risk classes → allow/ask/deny
 internal/tools/      tools (read, glob, grep, edit, write, bash, todo) + Registry
+internal/mcp/        minimal MCP client (stdio JSON-RPC): initialize, tools/list, tools/call
+internal/hooks/      user lifecycle hooks around tool calls (pre_tool veto, post_tool)
 internal/agent/      conversation machinery
   session.go           JSONL transcript (source of truth for LLM history)
   loop.go              agent loop: stream → gated tool calls → results → stream
   compact.go           context compaction: summarize near the token window
   context.go           AGENTS.md/CLAUDE.md project context for the system prompt
-  approve.go           Approver interface + Bridge carrying permission questions
+  approve.go           Approver interface + Bridge carrying tool/plan questions
+  task.go              subagent task tool (fresh in-memory session, report back)
+  plan.go              plan tool: present a plan, approval switches to accept-edits
 internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands
-  perm.go              approval dialog (diff preview) + /mode
+  perm.go              approval dialog (diff preview) + plan dialog + /mode
   picker.go            session picker overlay
   styles.go            lipgloss palette
 ```

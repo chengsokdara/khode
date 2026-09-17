@@ -133,6 +133,7 @@ func New(cfg *config.Config, p llm.Provider, sess *agent.Session, reg *tools.Reg
 		MaxTokens: func() int { return cfg.MaxTokens },
 		Mode:      modeFn,
 		Approver:  m.approvals,
+		Hooks:     func() *hooks.Runner { return hooks.New(cfg.Hooks, workdir) },
 	}))
 	// The plan tool rides the same bridge: approval switches the app to
 	// accept-edits mode (answerPerm does the switching).
