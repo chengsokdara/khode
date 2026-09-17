@@ -45,14 +45,18 @@ func mustExec(t *testing.T, tool Tool, args string) string {
 
 func TestRegistry(t *testing.T) {
 	reg := Default(writeTree(t))
-	if got := reg.Names(); len(got) != 6 {
-		t.Fatalf("Names() = %v, want 6 tools", got)
+	want := []string{"bash", "edit", "glob", "grep", "read", "todo", "write"}
+	if got := reg.Names(); len(got) != len(want) {
+		t.Fatalf("Names() = %v, want %d tools", got, len(want))
 	}
 	defs := reg.Definitions()
-	if len(defs) != 6 || defs[0].Name != "bash" || defs[1].Name != "edit" ||
-		defs[2].Name != "glob" || defs[3].Name != "grep" || defs[4].Name != "read" || defs[5].Name != "write" {
-		t.Fatalf("Definitions() order wrong: %s/%s/%s/%s/%s/%s",
-			defs[0].Name, defs[1].Name, defs[2].Name, defs[3].Name, defs[4].Name, defs[5].Name)
+	if len(defs) != len(want) {
+		t.Fatalf("Definitions() = %d, want %d", len(defs), len(want))
+	}
+	for i, name := range want {
+		if defs[i].Name != name {
+			t.Fatalf("Definitions()[%d] = %s, want %s (order %v)", i, defs[i].Name, name, want)
+		}
 	}
 	var schema map[string]any
 	if err := json.Unmarshal(defs[4].Parameters, &schema); err != nil {

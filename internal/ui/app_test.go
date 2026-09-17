@@ -120,3 +120,29 @@ func TestErrorResultBlock(t *testing.T) {
 		t.Error("error result block missing")
 	}
 }
+
+func TestTodoResultShowsWholeList(t *testing.T) {
+	evs := []llm.Event{
+		llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "todo", Input: json.RawMessage(`{}`)}},
+		llm.ToolResultEvent{CallID: "c1", Name: "todo",
+			Output: "❯ one\n☐ two\n☐ three\n☐ four\n☑ five"},
+		llm.DoneEvent{},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+
+	found := false
+	for i, msg := range m.messages {
+		if msg.kind == kindToolResult && msg.full {
+			found = true
+			out := m.block(i, 80)
+			for _, want := range []string{"❯ one", "☑ five"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("todo block %q missing %q — list must render whole", out, want)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("todo result was not flagged full")
+	}
+}

@@ -51,6 +51,7 @@ type uiMessage struct {
 	rendered  string
 	streaming bool
 	isErr     bool
+	full      bool // tool results meant to be read whole (todo lists)
 	history   bool
 }
 
@@ -320,6 +321,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.ToolResultEvent:
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleTool, kind: kindToolResult, raw: e.Output, isErr: e.IsError,
+			full: e.Name == "todo",
 		})
 		m.renderAll()
 		return m.pump()
@@ -605,6 +607,10 @@ func (m *Model) block(i int, width int) string {
 	case msg.kind == kindToolCall:
 		out = toolStyle.Width(width).Render("⏺ " + msg.raw)
 	case msg.kind == kindToolResult:
+		if msg.full {
+			out = resultStyle.Width(width).Render(fullResultBody(msg.raw))
+			break
+		}
 		body := summarizeToolResult(msg.raw)
 		style := resultStyle
 		prefix := "⎿  "
@@ -732,6 +738,16 @@ func summarizeToolResult(raw string) string {
 			fmt.Sprintf("  (+%d more lines)", len(lines)-toolResultPreviewLines)
 	}
 	return truncate(strings.Join(shown, " · "), 200)
+}
+
+// fullResultBody indents a multi-line tool result under the result
+// marker, for tools whose output is the point (the todo list).
+func fullResultBody(raw string) string {
+	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = "   " + lines[i]
+	}
+	return "⎿  " + strings.Join(lines, "\n")
 }
 
 // compactJSON squeezes a tool call's input onto one line.

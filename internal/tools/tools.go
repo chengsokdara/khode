@@ -102,7 +102,7 @@ func (r *Registry) Names() []string {
 	return names
 }
 
-// Default builds the phase-4 toolset, rooted at dir: relative paths
+// Default builds the phase-5 toolset, rooted at dir: relative paths
 // given by the model resolve against it.
 func Default(dir string) *Registry {
 	r := NewRegistry()
@@ -112,6 +112,7 @@ func Default(dir string) *Registry {
 	r.Register(&Edit{Root: dir})
 	r.Register(&Write{Root: dir})
 	r.Register(&Bash{Root: dir})
+	r.Register(NewTodos())
 	return r
 }
 
