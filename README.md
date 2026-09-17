@@ -21,8 +21,10 @@ go build -o khode ./cmd/khode   # or: go run ./cmd/khode
 ```
 
 No API key is required to launch. The first start walks you through it —
-what khode is, pick a provider, paste a key — and ends with suggestions
-for what to try first (`enter` to start chatting, `esc` skips). Keys are
+what khode is, pick a provider (Anthropic, OpenAI, khateway, or your own
+endpoint), paste a key, and for gateway/custom endpoints pick a model
+from the freshly fetched list — then ends with suggestions for what to
+try first (`enter` to start chatting, `esc` skips). Keys are
 stored in `~/.khode/auth.json` (owner-only); setting `ANTHROPIC_API_KEY`
 or `OPENAI_API_KEY` in the environment also works and wins over the
 stored key. The status line tracks how full the model's context window
@@ -58,3 +60,36 @@ Other commands: `/new [name]` (optionally named sessions), `/sessions`
 status line shows how full the model's context window is (`ctx NN%`,
 warning near auto-compact) and a running cost estimate from a built-in
 per-model price table; models it doesn't know display `$–`.
+
+## Development
+
+The inner loop is plain Go: edit, `go build ./... && go vet ./...`,
+`go test ./...`, then `go build -o khode ./cmd/khode && ./khode` and
+exercise the change in the live TUI. There is no separate production
+build — the binary you run in development is the binary, and
+`~/.khode/` state is shared, so use `--resume` to get back to a session
+you were debugging.
+
+Provider behavior is tested wire-level: the fake-SSE tests
+(`internal/llm/*_test.go`) run real HTTP against `httptest` servers
+speaking Anthropic/OpenAI SSE, so streaming, tool calls, thinking
+blocks, and retries are covered without a key or network. To point a
+*running* khode at a fake or local endpoint instead, set
+`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `KHATEWAY_BASE_URL` (or the
+base-url row in `/settings`).
+
+**Debugging the TUI:** printing to the terminal from inside a Bubble Tea
+app corrupts the screen, so `--debug` redirects the standard logger to
+`khode-debug.log`:
+
+```sh
+./khode --debug                 # in another terminal:
+tail -f khode-debug.log         # turn starts, tool calls, permission decisions
+```
+
+`internal/debug.Printf` is the only sanctioned logging call — it compiles
+to a no-op unless `--debug` is on. For breakpoints, delve works fine
+with TUI programs (the UI just freezes while you inspect):
+`dlv debug ./cmd/khode -- --continue`. TUI behavior itself is verified
+through the `Model.Update`/`View` unit tests in `internal/ui` rather
+than screen-scraping.

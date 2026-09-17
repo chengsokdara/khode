@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"khode/internal/debug"
 	"khode/internal/hooks"
 	"khode/internal/llm"
 	"khode/internal/perm"
@@ -59,6 +60,7 @@ func (r *Runner) Run(ctx context.Context, userText string) <-chan llm.Event {
 			out <- llm.ErrorEvent{Err: fmt.Errorf("appending user message: %w", err)}
 			return
 		}
+		debug.Printf("turn start: model=%s session=%s", r.Model, r.Session.Name())
 
 		maxRounds := r.MaxRounds
 		if maxRounds <= 0 {
@@ -149,6 +151,7 @@ func (r *Runner) round(ctx context.Context, out chan<- llm.Event) ([]llm.ToolCal
 			return nil, fmt.Errorf("appending assistant turn: %w", err)
 		}
 	}
+	debug.Printf("round done: %d answer chars, %d thinking chars, %d tool calls", text.Len(), think.Len(), len(calls))
 	return calls, nil
 }
 
@@ -202,7 +205,9 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 		mode = perm.DefaultMode
 	}
 	risk := r.Tools.RiskOf(c.Name)
-	switch perm.Decide(mode, risk) {
+	decision := perm.Decide(mode, risk)
+	debug.Printf("tool %s: risk=%s mode=%s decision=%v", c.Name, risk, mode, decision)
+	switch decision {
 	case perm.DecisionDeny:
 		return "", fmt.Errorf("%s tools are blocked in %s mode — present a plan with the plan tool instead; the user can switch modes with /mode",
 			risk, mode)

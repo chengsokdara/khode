@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -131,10 +133,16 @@ func TestWelcomeCustomProvider(t *testing.T) {
 		t.Error("custom provider not persisted")
 	}
 
-	// Key-less endpoints skip the key step with an empty enter.
+	// Key-less endpoints skip the key step with an empty enter. A custom
+	// provider has no model yet, so the next step offers the endpoint's
+	// list (the fetch command is discarded here — enter skips ahead).
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeModel {
+		t.Fatalf("empty key did not advance to the model step: %d", m.welcome.step)
+	}
 	m = pressKeys(m, "enter")
 	if m.welcome.step != welcomeReady {
-		t.Fatal("empty key did not advance to the ready card")
+		t.Fatal("model step enter did not reach the ready card")
 	}
 	// With no model yet, the ready card must point at the next step.
 	if !strings.Contains(m.welcomeView(), "model") {
@@ -174,8 +182,10 @@ func TestWelcomeKhatewayHint(t *testing.T) {
 		t.Error("khateway row lacks its explanatory hint")
 	}
 
-	// Choosing it stores no vendor default model: the key step comes
-	// next, and the model is picked from the fetched list afterwards.
+	// Choosing it stores no vendor default model: after the key step the
+	// walkthrough moves to the model step (its fetch command is
+	// discarded here, so the step sits in the fetching state), and
+	// enter skips ahead to the ready card.
 	m = pressKeys(m, "right", "right", "enter")
 	if m.welcome.step != welcomeKey {
 		t.Fatalf("step = %d, want key after choosing khateway", m.welcome.step)
@@ -186,7 +196,11 @@ func TestWelcomeKhatewayHint(t *testing.T) {
 	if m.provider.Name() != "khateway" {
 		t.Error("provider client not rebuilt for khateway")
 	}
-	m = pressKeys(m, "khat-e2e-key", "enter", "enter") // key → ready → close
+	m = pressKeys(m, "khat-e2e-key", "enter")
+	if m.welcome.step != welcomeModel {
+		t.Fatalf("step = %d, want model after the key step", m.welcome.step)
+	}
+	m = pressKeys(m, "enter", "enter") // skip the in-flight fetch → ready → close
 	if m.welcome != nil {
 		t.Error("walkthrough did not close after the ready card")
 	}
@@ -230,5 +244,101 @@ func TestStatusLineContextMeter(t *testing.T) {
 	m.ctxIn, m.ctxOut = 10_000, 1_000
 	if line := m.statusLine(); !strings.Contains(line, "ctx") {
 		t.Errorf("status line %q missing ctx segment", line)
+	}
+}
+
+// Choosing khateway in the walkthrough fetches the gateway's model list
+// and lets the first-run user pick one on the spot — no /settings
+// detour. The fetch rides the khateway openai face (GET <base>/models).
+func TestWelcomeKhatewayModelStep(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[{"id":"gateway-mini"},{"id":"gateway-max"}]}`))
+	}))
+	defer srv.Close()
+
+	m := newSettingsModel(t)
+	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
+	m.OpenWelcome()
+
+	// intro → provider → khateway → key (skipped: empty) → model step.
+	m = pressKeys(m, "enter", "right", "right", "enter")
+	next, cmd := m.Update(keyMsg("enter")) // commit the empty key
+	m = next.(Model)
+	if m.welcome.step != welcomeModel {
+		t.Fatalf("step = %d, want model after the key step", m.welcome.step)
+	}
+	if cmd == nil || !m.welcome.fetching {
+		t.Fatal("key commit did not start a model-list fetch")
+	}
+
+	// Run the fetch command and deliver its result the way the runtime
+	// would. The view then lists the gateway's models.
+	msg := cmd()
+	next, _ = m.Update(msg)
+	m = next.(Model)
+	if m.welcome.fetching || m.welcome.fetchErr != "" {
+		t.Fatalf("fetch did not complete: fetching=%v err=%q", m.welcome.fetching, m.welcome.fetchErr)
+	}
+	if gotPath != "/models" {
+		t.Errorf("fetch hit %q, want /models (the openai face)", gotPath)
+	}
+	if !strings.Contains(m.welcomeView(), "gateway-mini") || !strings.Contains(m.welcomeView(), "gateway-max") {
+		t.Errorf("model step view = %q, want the fetched list", m.welcomeView())
+	}
+
+	// Enter picks the cursor's model (the fetch sorts the list, so
+	// gateway-max is first) and lands on the ready card, which shows the
+	// choice; it is persisted to config.
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeReady {
+		t.Fatalf("step = %d, want ready after picking a model", m.welcome.step)
+	}
+	if got := m.cfg.Model(); got != "gateway-max" {
+		t.Errorf("model = %q, want gateway-max", got)
+	}
+	if !strings.Contains(m.welcomeView(), "gateway-max") {
+		t.Error("ready card does not show the picked model")
+	}
+	if err := m.cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Models["khateway"] != "gateway-max" {
+		t.Errorf("persisted khateway model = %q, want gateway-max", saved.Models["khateway"])
+	}
+}
+
+// A gateway that is down must not wedge the walkthrough: the fetch
+// failure renders as a hint and enter continues to the ready card.
+func TestWelcomeModelStepFetchFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // dead port → connection refused
+
+	m := newSettingsModel(t)
+	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
+	m.OpenWelcome()
+	m = pressKeys(m, "enter", "right", "right", "enter")
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("no fetch started")
+	}
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+	if m.welcome.fetchErr == "" {
+		t.Error("fetch failure not surfaced")
+	}
+	if !strings.Contains(m.welcomeView(), "/settings") {
+		t.Error("failure card does not point at /settings")
+	}
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeReady {
+		t.Fatalf("step = %d, want ready after continuing past the failure", m.welcome.step)
 	}
 }

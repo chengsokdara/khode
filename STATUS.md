@@ -113,6 +113,19 @@ message (`thinking` session field, never replayed to providers), and
 the TUI renders it as a dimmed italic `✻` block that collapses into its
 own bubble ahead of the markdown answer.
 
+**khateway on first run + dev workflow (2026-09-17):** the walkthrough
+gained a model step between key and ready: whenever the chosen provider
+has no model yet (khateway, customs — only the endpoint knows its
+list), khode fetches it off the UI goroutine and the user picks one
+right there, so "choose khateway → use right away" holds; a failed
+fetch (gateway down) degrades to the old /settings pointer. Fetch
+results now route to the walkthrough's step when it is open (settings
+picker keeps precedence). Development workflow: `--debug` redirects the
+standard logger to `khode-debug.log` (stderr writes corrupt the alt
+screen), `internal/debug.Printf` is the gated logging call, and
+README → Development documents the loop (build/vet/test/run, fake-SSE
+tests, base-URL overrides, delve).
+
 ## Next
 
 Backlog (no committed order):
@@ -155,3 +168,4 @@ Backlog (no committed order):
 | 2026-09-17 | Fix: provider names keep their casing (case-insensitive lookups), bad protocol warns + falls back at startup, chat input's black cursor-line strip removed | 557a92a d4426e0 |
 | 2026-09-17 | khateway built-in provider: protocol picked from the endpoint shape (`llm.KhatewayProtocol`), model picker auto-fetch, no default model, `KHATEWAY_*` env vars; verified green on a clean worktree (parallel reasoning-WIP in-tree was unrelatedly red, untouched) | 662958b |
 | 2026-09-17 | Selectable text: mouse capture off by default (alt+m toggles wheel-scroll capture, pgup/pgdn scroll); thinking split from response (`llm.ThinkingDeltaEvent`, `<think>` stream splitter, `reasoning_content` raw-JSON read, `thinking` session field, ✻ display block) | 2a3a6c6 |
+| 2026-09-17 | Walkthrough model step: auto-fetch + pick for khateway/custom providers (no model yet) between key and ready; fetch-failure degrades to /settings pointer; `--debug` flag + `internal/debug` gated logging + README Development section | (this commit) |

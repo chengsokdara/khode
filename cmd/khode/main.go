@@ -11,6 +11,7 @@ import (
 
 	"khode/internal/agent"
 	"khode/internal/config"
+	"khode/internal/debug"
 	"khode/internal/llm"
 	"khode/internal/mcp"
 	"khode/internal/tools"
@@ -44,12 +45,27 @@ func main() {
 	flag.Var(&resume, "resume", "open the session picker, or resume one: --resume=<name>")
 	providerName := flag.String("provider", "", "provider override: anthropic, openai, khateway (default from config)")
 	model := flag.String("model", "", "model override, e.g. claude-sonnet-4-5")
+	debugFlag := flag.Bool("debug", false, "log development debug output to khode-debug.log")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println("khode", ui.Version)
 		return
+	}
+
+	if *debugFlag {
+		// The log file, not stderr: anything written to the terminal
+		// mid-frame would corrupt the TUI's alternate screen. Point the
+		// standard logger there, then internal/debug.Printf works
+		// anywhere in the codebase.
+		f, err := tea.LogToFile("khode-debug.log", "khode ")
+		if err != nil {
+			fatal(err)
+		}
+		defer f.Close()
+		debug.Enable()
+		fmt.Fprintln(os.Stderr, "khode: debugging on — tail khode-debug.log (details survive the TUI)")
 	}
 
 	cfg, err := config.Load()

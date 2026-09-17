@@ -14,6 +14,7 @@ import (
 
 	"khode/internal/agent"
 	"khode/internal/config"
+	"khode/internal/debug"
 	"khode/internal/hooks"
 	"khode/internal/llm"
 	"khode/internal/mcp"
@@ -647,6 +648,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 		Approver:  m.approvals,
 		Hooks:     hooks.New(m.cfg.Hooks, m.workdir),
 	}
+	debug.Printf("start turn: %s/%s session=%s", m.provider.Name(), m.cfg.Model(), m.session.Name())
 	ch := runner.Run(ctx, input)
 
 	m.cancel = cancel

@@ -18,12 +18,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// welcome steps, in order.
+// welcome steps, in order. The model step is skipped entirely when the
+// chosen provider already has a model (built-in defaults), so most
+// users never see it — khateway and custom endpoints always do, since
+// only the endpoint knows which models exist.
 const (
 	welcomeIntro = iota
 	welcomeProvider
 	welcomeCustom
 	welcomeKey
+	welcomeModel
 	welcomeReady
 	welcomeSteps // keep last
 )
@@ -43,6 +47,11 @@ type welcome struct {
 	cField   int             // custom form: 0 name, 1 url, 2 protocol, 3 save
 	cProto   int             // custom form: 0 openai, 1 anthropic
 	savedMsg string          // last "✓ …" flash from a save
+
+	models   []string // fetched choices on the model step
+	mCur     int      // cursor in models
+	fetching bool     // model-list request in flight
+	fetchErr string   // non-empty when the fetch failed
 }
 
 // OpenWelcome starts the walkthrough at the intro card.
@@ -189,6 +198,31 @@ func (m *Model) welcomeKey(msg tea.KeyMsg) tea.Cmd {
 			return cmd
 		}
 
+	case welcomeModel:
+		switch msg.String() {
+		case "up", "k", "ctrl+p":
+			if w.mCur > 0 {
+				w.mCur--
+			}
+		case "down", "j", "ctrl+n":
+			if w.mCur < len(w.models)-1 {
+				w.mCur++
+			}
+		case "shift+tab":
+			w.step = welcomeKey
+		case "enter":
+			// Enter always moves on: with a fetched list it picks the
+			// cursor's model; while fetching or after a failed fetch it
+			// just continues (the ready card points at /settings).
+			if !w.fetching && len(w.models) > 0 && w.mCur < len(w.models) {
+				m.cfg.SetModel(w.models[w.mCur])
+				if err := m.cfg.Save(); err != nil {
+					m.lastErr = err.Error()
+				}
+			}
+			w.step = welcomeReady
+		}
+
 	case welcomeReady:
 		if msg.String() == "enter" {
 			m.welcome = nil
@@ -238,9 +272,12 @@ func (m *Model) commitWelcomeCustom() tea.Cmd {
 	return nil
 }
 
-// commitWelcomeKey saves the pasted key and moves to the ready card.
-// An empty key is not an error: the walkthrough still advances, and the
-// pre-flight check points at /settings if a turn is attempted.
+// commitWelcomeKey saves the pasted key and moves on. An empty key is
+// not an error: the walkthrough still advances, and the pre-flight check
+// points at /settings if a turn is attempted. When the provider has no
+// model yet (khateway, customs — only the endpoint knows its models),
+// the next step fetches the endpoint's list so the user picks one right
+// here instead of detouring through /settings.
 func (m *Model) commitWelcomeKey() tea.Cmd {
 	w := m.welcome
 	key := strings.TrimSpace(w.input.Value())
@@ -252,8 +289,13 @@ func (m *Model) commitWelcomeKey() tea.Cmd {
 		}
 		m.rebuildProvider()
 	}
-	w.step = welcomeReady
-	return nil
+	if m.cfg.Model() != "" {
+		w.step = welcomeReady
+		return nil
+	}
+	w.step = welcomeModel
+	w.models, w.mCur, w.fetching, w.fetchErr = nil, 0, true, ""
+	return m.fetchModelsCmd()
 }
 
 // indexOf returns i's position in xs, or -1.
@@ -276,7 +318,7 @@ func (m *Model) welcomeView() string {
 			"a coding agent for your terminal.",
 			"",
 			"  " + pickSel.Render("·") + " reads, edits, and runs code here — always with your approval",
-			"  " + pickSel.Render("·") + " answers stream from Anthropic, OpenAI, or your own endpoints",
+			"  " + pickSel.Render("·") + " answers stream from Anthropic, OpenAI, khateway, or your own endpoints",
 			"  " + pickSel.Render("·") + " every session is saved; resume with khode --resume",
 			"",
 			"setup takes a minute: pick a provider, paste a key.",
@@ -339,6 +381,39 @@ func (m *Model) welcomeView() string {
 			"",
 			dimStyle.Render("  stored in ~/.khode/auth.json · owner-only · never displayed"),
 		}, "\n")
+	case welcomeModel:
+		title = "◆ pick a model"
+		switch {
+		case w.fetching:
+			body = "  fetching the " + m.cfg.Provider + " model list…"
+		case w.fetchErr != "":
+			body = strings.Join([]string{
+				"  couldn't reach " + m.cfg.Provider + ":",
+				"  " + dimStyle.Render(w.fetchErr),
+				"",
+				dimStyle.Render("  enter to continue — pick a model later with /settings → model"),
+			}, "\n")
+		case len(w.models) == 0:
+			body = dimStyle.Render("  the endpoint listed no models · enter to continue, /settings → model adds one")
+		default:
+			const windowH = 10
+			start := 0
+			if len(w.models) > windowH {
+				start = min(max(0, w.mCur-windowH/2), len(w.models)-windowH)
+			}
+			var rows []string
+			for i := start; i < min(len(w.models), start+windowH); i++ {
+				cur := "  "
+				if i == w.mCur {
+					cur = "❯ "
+				}
+				rows = append(rows, cur+w.models[i])
+			}
+			body = strings.Join(rows, "\n")
+			if len(w.models) > windowH {
+				body += "\n\n" + dimStyle.Render(fmt.Sprintf("  model %d of %d · ↑/↓ to scroll", w.mCur+1, len(w.models)))
+			}
+		}
 	case welcomeReady:
 		title = "◆ you're set"
 		rows := []string{
@@ -347,6 +422,9 @@ func (m *Model) welcomeView() string {
 			"  " + userStyle.Render("summarize what this repo does"),
 			"  " + userStyle.Render("find and fix the failing test"),
 			"",
+		}
+		if mo := m.cfg.Model(); mo != "" {
+			rows = append(rows, "  model: "+statusStyle.Render(mo), "")
 		}
 		if m.cfg.Model() == "" {
 			rows = append(rows,
@@ -369,6 +447,15 @@ func (m *Model) welcomeView() string {
 		footer = keyHint("tab", "next field") + dimStyle.Render("  ·  ") + keyHint("←/→", "protocol") + dimStyle.Render("  ·  ") + keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back")
 	case welcomeKey:
 		footer = keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+	case welcomeModel:
+		switch {
+		case w.fetching:
+			footer = dimStyle.Render("fetching…") + dimStyle.Render("  ·  ") + keyHint("enter", "skip for now") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		case w.fetchErr != "" || len(w.models) == 0:
+			footer = keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		default:
+			footer = keyHint("↑/↓", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "use model") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		}
 	case welcomeReady:
 		footer = keyHint("enter", "start chatting")
 	}

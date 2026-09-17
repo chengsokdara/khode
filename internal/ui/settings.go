@@ -1374,32 +1374,50 @@ func (m *Model) fetchModelsCmd() tea.Cmd {
 	}
 }
 
-// applyFetchedModels stores a finished fetch into the open picker.
-// Stale results — overlay closed or provider switched meanwhile — are
-// dropped on the floor.
+// applyFetchedModels stores a finished fetch into whichever consumer is
+// open: the settings model picker, or the walkthrough's model step.
+// Stale results — neither consumer open, or the provider switched
+// meanwhile — are dropped on the floor.
 func (m *Model) applyFetchedModels(msg modelsFetchedMsg) {
-	s := m.settings
-	if s == nil || s.models == nil || s.view != viewModels || s.models.provider != msg.provider {
+	if s := m.settings; s != nil && s.models != nil && s.view == viewModels && s.models.provider == msg.provider {
+		p := s.models
+		p.fetching = false
+		if msg.err != nil {
+			p.status = clip("fetch failed: "+msg.err.Error(), 56) +
+				dimStyle.Render("  · n add manually · f retry")
+			return
+		}
+		m.cfg.SetModelChoices(msg.provider, msg.models)
+		if err := m.cfg.Save(); err != nil {
+			m.lastErr = err.Error()
+		}
+		p.list = msg.models
+		p.cursor = p.index(activeModel(m.cfg))
+		if len(p.list) == 0 {
+			p.status = "endpoint listed no models · n add manually"
+		} else {
+			p.status = fmt.Sprintf("fetched %d models · enter to use one", len(p.list))
+		}
 		return
 	}
-	p := s.models
-	p.fetching = false
+
+	w := m.welcome
+	if w == nil || w.step != welcomeModel || msg.provider != m.cfg.Provider {
+		return
+	}
+	w.fetching = false
 	if msg.err != nil {
-		p.status = clip("fetch failed: "+msg.err.Error(), 56) +
-			dimStyle.Render("  · n add manually · f retry")
+		w.fetchErr = clip(msg.err.Error(), 56)
 		return
 	}
+	// Cache the list even before a pick: Model() falls back to the first
+	// cached choice, and /settings → model reopens it without a re-fetch.
 	m.cfg.SetModelChoices(msg.provider, msg.models)
 	if err := m.cfg.Save(); err != nil {
 		m.lastErr = err.Error()
 	}
-	p.list = msg.models
-	p.cursor = p.index(activeModel(m.cfg))
-	if len(p.list) == 0 {
-		p.status = "endpoint listed no models · n add manually"
-	} else {
-		p.status = fmt.Sprintf("fetched %d models · enter to use one", len(p.list))
-	}
+	w.models = msg.models
+	w.mCur = 0
 }
 
 // modelPickerView renders the list (sliding window when long) with the
