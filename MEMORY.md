@@ -139,6 +139,8 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Fetched model lists cache in `config.model_choices` (capped 500) and persist | the list survives restarts, doubles as the manual-entry store, and its first entry is the fallback model |
 | 2026-09-17 | The walkthrough's provider step includes configured customs plus a 'custom…' inline add form | key-less Ollama users were walled out of onboarding by a two-provider cycle; the form activates the provider and the key step becomes skippable |
 | 2026-09-17 | Walkthrough trigger = no key AND no custom providers AND no model choices | any setup evidence means "not first run", or a keyless Ollama user would see the walkthrough every launch |
+| 2026-09-17 | Provider names keep the casing they were saved with; provider-keyed lookups (custom providers, models, choices, auth keys) fall back to case-insensitive matching via `config.providerKey`, and Load snaps the active name to the stored custom-provider key | Load used to lowercase the provider field, splitting "KiosAPI" from its map keys — the name resurfaced as the unknown protocol "kiosapi" and khode died at startup |
+| 2026-09-17 | An unknown protocol at startup warns on stderr and falls back to the anthropic client instead of `fatal` | one broken config entry must not brick the app (same principle as a failing MCP server); /settings → provider is where the entry gets fixed |
 
 ## Gotchas & lessons learned
 
@@ -252,6 +254,12 @@ If you are starting a session, or recovering after an interrupt:
 - `t.Setenv("VAR", "")` sets the variable to empty (not unset);
   `os.Getenv` returns `""`, which is exactly what the llm.Resolve
   precedence check treats as "no env override" — tests rely on this.
+- **bubbles v1.0.0 textarea paints the focused cursor line with a hard
+  background** (`Background(AdaptiveColor{Light: "255", Dark: "0"})`,
+  emitted as `\x1b[40m` on dark themes) — on any dark terminal theme
+  the whole inside of the chat input box renders as a black strip.
+  Override `ta.FocusedStyle.CursorLine` / `ta.BlurredStyle.CursorLine`
+  with `lipgloss.NewStyle()` right after `textarea.New()`.
 
 ## Session log (append one entry per session)
 
@@ -268,3 +276,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Phase 7: auth.json + llm factory + registry mutex (b46b15f), /settings overlay + keyless startup (2351355), docs | b46b15f 2351355 |
 | 2026-09-17 | Phase 7 follow-up: first-run walkthrough, highlighted overlay exits, status-line context meter | 3265b34 |
 | 2026-09-17 | Phase 7 follow-up: custom providers + model fetching (002796f), docs | 002796f |
+| 2026-09-17 | Fixed custom-provider startup crash (name-casing split from map keys), bad-protocol startup fallback, chat input's black cursor-line strip; provider-name collision guard; verified the user's custom provider end-to-end (model list + streaming turn) | 557a92a d4426e0 |

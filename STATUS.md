@@ -79,11 +79,18 @@ HTTP per protocol, off the UI goroutine), caches it in
 can't list; customs never inherit a built-in default model — an unset
 model blocks the turn with a pointer to the picker. The status line
 shows the context meter "ctx NN%" (warning at the 80% auto-compact
-trigger). Keys live in `~/.khode/auth.json` (0600, atomic rename) with
-env vars keeping precedence. MCP changes apply live via `applyMCPCmd`;
-hook edits apply next turn. The registry has an RWMutex (agent loop
-reads it while the overlay mutates it); `Model.partial` is a pointer
-`strings.Builder` (see Gotchas).
+trigger). Provider names keep the casing they were saved with —
+custom-provider, models, model-choice, and auth-key lookups fall back
+to case-insensitive matching, and Load snaps the active name to the
+stored custom-provider key; a protocol that still doesn't resolve
+warns at startup and falls back to the anthropic client instead of
+exiting. The chat input drops bubbles' hard black cursor-line
+background, which rendered as a black strip inside the input box on
+dark terminal themes. Keys live in `~/.khode/auth.json` (0600, atomic
+rename) with env vars keeping precedence. MCP changes apply live via
+`applyMCPCmd`; hook edits apply next turn. The registry has an RWMutex
+(agent loop reads it while the overlay mutates it); `Model.partial` is
+a pointer `strings.Builder` (see Gotchas).
 
 ## Next
 
@@ -124,3 +131,4 @@ Backlog (no committed order):
 | 2026-09-17 | Phase 7: first-run walkthrough, highlighted overlay exits, status-line context meter | 3265b34 |
 | 2026-09-17 | Phase 7: custom providers (any OpenAI/Anthropic-protocol endpoint), model-list fetching with manual fallback | 002796f |
 | 2026-09-17 | Phase 7: custom providers in the first-run walkthrough (inline add form) | 6a25702 |
+| 2026-09-17 | Fix: provider names keep their casing (case-insensitive lookups), bad protocol warns + falls back at startup, chat input's black cursor-line strip removed | 557a92a d4426e0 |
