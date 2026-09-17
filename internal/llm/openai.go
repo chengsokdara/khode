@@ -3,9 +3,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/shared"
@@ -15,12 +17,18 @@ import (
 // It reads OPENAI_API_KEY from the environment.
 type OpenAI struct {
 	client *openai.Client
+	// retries is the number of repeats after a failed attempt (transient
+	// failures, no content emitted yet); retryBase seeds its backoff.
+	// Defaults come from DefaultMaxRetries / baseRetryDelay; tests shrink
+	// them.
+	retries   int
+	retryBase time.Duration
 }
 
 // NewOpenAI builds an OpenAI provider with default environment auth.
 func NewOpenAI() *OpenAI {
 	client := openai.NewClient()
-	return &OpenAI{client: &client}
+	return &OpenAI{client: &client, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
 }
 
 func (o *OpenAI) Name() string { return "openai" }
@@ -101,68 +109,115 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 	go func() {
 		defer close(ch)
 
-		stream := o.client.Chat.Completions.NewStreaming(ctx, params)
-		defer stream.Close()
-
-		// The usage totals arrive on a final chunk with empty Choices, so
-		// they are accumulated across chunks and emitted once at the end.
-		// Tool calls arrive as fragments keyed by index; each completed
-		// call becomes one ToolCallEvent when the stream ends.
-		type callBuild struct {
-			id, name string
-			args     strings.Builder
-		}
-		var order []int64
-		calls := map[int64]*callBuild{}
-
-		usage := UsageEvent{}
-		for stream.Next() {
-			chunk := stream.Current()
-			for _, choice := range chunk.Choices {
-				if choice.Delta.Content != "" {
-					ch <- TextDeltaEvent{Text: choice.Delta.Content}
+		// Transient failures are retried only while nothing has been
+		// forwarded — after the first content event a retry would
+		// duplicate output, so those errors surface unchanged.
+		emitted := false
+		for attempt := 0; ; attempt++ {
+			usage, err := o.streamAttempt(ctx, params, ch, &emitted)
+			if err == nil {
+				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+					ch <- usage
 				}
-				for _, tc := range choice.Delta.ToolCalls {
-					b := calls[tc.Index]
-					if b == nil {
-						b = &callBuild{}
-						calls[tc.Index] = b
-						order = append(order, tc.Index)
-					}
-					if tc.ID != "" {
-						b.id = tc.ID
-					}
-					if tc.Function.Name != "" {
-						b.name = tc.Function.Name
-					}
-					b.args.WriteString(tc.Function.Arguments)
+				ch <- DoneEvent{}
+				return
+			}
+			if !emitted && attempt < o.retries && openaiRetryable(err) {
+				if !backoffSleep(ctx, retryDelay(attempt, retryAfterOfOpenAI(err), o.retryBase)) {
+					ch <- ErrorEvent{Err: ctx.Err()}
+					return
 				}
+				continue
 			}
-			if chunk.Usage.PromptTokens > 0 {
-				usage.InputTokens = chunk.Usage.PromptTokens
-			}
-			if chunk.Usage.CompletionTokens > 0 {
-				usage.OutputTokens = chunk.Usage.CompletionTokens
-			}
-		}
-		if err := stream.Err(); err != nil {
 			ch <- ErrorEvent{Err: err}
 			return
 		}
-		sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
-		for _, idx := range order {
-			b := calls[idx]
-			input := []byte(b.args.String())
-			if len(input) == 0 {
-				input = json.RawMessage("{}")
-			}
-			ch <- ToolCallEvent{ToolCall{ID: b.id, Name: b.name, Input: input}}
-		}
-		if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-			ch <- usage
-		}
-		ch <- DoneEvent{}
 	}()
 
 	return ch, nil
+}
+
+// streamAttempt runs one streaming attempt, forwarding content events to
+// ch as they arrive (which marks *emitted). It returns the accumulated
+// usage on a clean stream end, or the stream error.
+func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletionNewParams, ch chan<- Event, emitted *bool) (UsageEvent, error) {
+	stream := o.client.Chat.Completions.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	// The usage totals arrive on a final chunk with empty Choices, so
+	// they are accumulated across chunks and emitted once at the end.
+	// Tool calls arrive as fragments keyed by index; each completed
+	// call becomes one ToolCallEvent when the stream ends.
+	type callBuild struct {
+		id, name string
+		args     strings.Builder
+	}
+	var order []int64
+	calls := map[int64]*callBuild{}
+
+	usage := UsageEvent{}
+	for stream.Next() {
+		chunk := stream.Current()
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content != "" {
+				*emitted = true
+				ch <- TextDeltaEvent{Text: choice.Delta.Content}
+			}
+			for _, tc := range choice.Delta.ToolCalls {
+				b := calls[tc.Index]
+				if b == nil {
+					b = &callBuild{}
+					calls[tc.Index] = b
+					order = append(order, tc.Index)
+				}
+				if tc.ID != "" {
+					b.id = tc.ID
+				}
+				if tc.Function.Name != "" {
+					b.name = tc.Function.Name
+				}
+				b.args.WriteString(tc.Function.Arguments)
+			}
+		}
+		if chunk.Usage.PromptTokens > 0 {
+			usage.InputTokens = chunk.Usage.PromptTokens
+		}
+		if chunk.Usage.CompletionTokens > 0 {
+			usage.OutputTokens = chunk.Usage.CompletionTokens
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return UsageEvent{}, err
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	for _, idx := range order {
+		b := calls[idx]
+		input := []byte(b.args.String())
+		if len(input) == 0 {
+			input = json.RawMessage("{}")
+		}
+		*emitted = true
+		ch <- ToolCallEvent{ToolCall{ID: b.id, Name: b.name, Input: input}}
+	}
+	return usage, nil
+}
+
+// openaiRetryable classifies stream errors: API errors by status code,
+// transport-shaped errors by network heuristics.
+func openaiRetryable(err error) bool {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		return retryableStatus(apiErr.StatusCode)
+	}
+	return retryableNet(err)
+}
+
+// retryAfterOfOpenAI returns the failed response's Retry-After header,
+// if any.
+func retryAfterOfOpenAI(err error) string {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.Response != nil {
+		return apiErr.Response.Header.Get("Retry-After")
+	}
+	return ""
 }
