@@ -33,11 +33,18 @@ is (`ctx NN%`, warning-colored near the auto-compact point).
 Everything is configurable from inside the TUI with `/settings` (alias
 `/config`) — no hand-editing of JSON:
 
-- **provider** — `←`/`→` switches between anthropic and openai live
+- **provider** — `←`/`→` switches; `enter` opens the provider manager,
+  where `n` adds a custom provider (name, protocol, base URL) for any
+  OpenAI-compatible or Anthropic-protocol endpoint — Ollama, LM Studio,
+  OpenRouter, proxies. New providers activate immediately and read
+  `NAME_API_KEY`-style env vars if set.
 - **api key** — masked editor; stored per provider in `auth.json`
 - **base url** — point a provider at a proxy or OpenAI-compatible
   endpoint
-- **model** and **max tokens**
+- **model** — opens a picker that fetches the provider's model list
+  from its endpoint (`f` re-fetches); if the endpoint can't list
+  models, `n` adds one manually
+- **max tokens**
 - **mode** — plan / ask / accept-edits / auto (same as `/mode`)
 - **mcp servers** — add, edit, remove; changes apply live
 - **hooks** — `pre_tool` / `post_tool` shell hooks; apply next turn
@@ -45,5 +52,6 @@ Everything is configurable from inside the TUI with `/settings` (alias
 `--provider` and `--model` override the config for one session only.
 Other commands: `/new [name]` (optionally named sessions), `/sessions`
 (picker), `/model <name>`, `/compact`, `/mcp`, `/tools`, `/help`. The
-status line shows a running cost estimate from a built-in per-model
-price table; models it doesn't know display `$–`.
+status line shows how full the model's context window is (`ctx NN%`,
+warning near auto-compact) and a running cost estimate from a built-in
+per-model price table; models it doesn't know display `$–`.

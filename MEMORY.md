@@ -42,7 +42,16 @@ If you are starting a session, or recovering after an interrupt:
   switching goes through `switchProvider`, which rebuilds `m.provider`
   and re-registers the task tool (`registerTaskTool`) because
   `SubagentConfig` captured the provider by value; in-flight turns keep
-  the old client. MCP changes apply live: `applyMCPCmd` runs off the UI
+  the old client. Custom providers (`config.CustomProviders`, managed
+  in the provider list on the provider row) speak a built-in protocol
+  under their own name via `llm.NewProtocol`; `config.Credentials`
+  resolves key + base URL (env `<NAME>_API_KEY`/`_BASE_URL` beat stored
+  values). The model row opens a picker (`modelPicker`) that fetches
+  the endpoint's list with `llm.FetchModels` (off the UI goroutine,
+  result via `modelsFetchedMsg`), caches it in `config.ModelChoices`,
+  and offers manual add (n)/remove (d); customs never inherit a
+  built-in default model, and an empty model blocks turns at the
+  pre-flight check. MCP changes apply live: `applyMCPCmd` runs off the UI
   goroutine from `maps.Clone` snapshots, closes removed servers
   (`tools.RemoveMCP`), starts new ones (`mcp.Start` + `tools.AddMCP`),
   and force-restarts edited ones (command/env/risk are fixed at
@@ -122,6 +131,12 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | `switchProvider` is shared by /settings and the walkthrough; `saveSettings` flashes whichever overlay is open | both flows must behave identically and neither should nil-deref the other's overlay |
 | 2026-09-17 | Context meter = last request's input + its reply, over `llm.ContextWindow`; warning at `ctxWarnFrac = 0.8` (mirrors compact.go) | input tokens of the last call ARE the transcript size the provider saw; the exact next-turn count is unknowable client-side, this is the honest approximation |
 | 2026-09-17 | `ctxUsage` returns (pct, warn, ok) separately from `ctxLabel`'s styling | lipgloss renders plain text without a TTY, so tests must assert the decision, not the ANSI |
+| 2026-09-17 | Custom providers reuse the built-in wire protocols (`llm.NewProtocol(kind, name, …)`); only name resolution moved to config | an OpenAI-compatible endpoint IS an OpenAI client — protocol support should not be duplicated per provider |
+| 2026-09-17 | Credential resolution lives in `config.Credentials`, not llm | it needs Auth + CustomProviders + env names together; llm stays SDK/config-free and keeps only constructors |
+| 2026-09-17 | Custom provider env overrides derive from the name (`GROQ_API_KEY`), uppercased with non-alphanumerics flattened | consistent rule beats a config field per provider; built-ins keep their canonical vars |
+| 2026-09-17 | Customs never inherit a built-in default model; `Model()` returns "" and the pre-flight blocks | requesting claude-sonnet from an Ollama box is worse than a clear "set a model" message |
+| 2026-09-17 | Model picker auto-fetches only for custom providers; built-ins with no cached choices keep the free-text editor | typing a model name must stay the zero-setup path; auto-fetching api.anthropic.com on every settings visit is surprise network I/O |
+| 2026-09-17 | Fetched model lists cache in `config.model_choices` (capped 500) and persist | the list survives restarts, doubles as the manual-entry store, and its first entry is the fallback model |
 
 ## Gotchas & lessons learned
 
@@ -250,3 +265,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Phase 6: MCP client (1af8588), subagents (0d21ba2), plan workflow (94d1049), hooks (698ffba), docs | 698ffba |
 | 2026-09-17 | Phase 7: auth.json + llm factory + registry mutex (b46b15f), /settings overlay + keyless startup (2351355), docs | b46b15f 2351355 |
 | 2026-09-17 | Phase 7 follow-up: first-run walkthrough, highlighted overlay exits, status-line context meter | 3265b34 |
+| 2026-09-17 | Phase 7 follow-up: custom providers + model fetching (002796f), docs | 002796f |

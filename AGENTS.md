@@ -27,13 +27,15 @@ edit, and run code in the user's project behind a permission system.
 ```
 cmd/khode/           entry point: flags, config, session setup, tea.Program
 internal/config/     user-level state
-  config.go            ~/.khode/config.json load/save (+ base_urls)
+  config.go            ~/.khode/config.json load/save (+ base_urls, custom_providers)
   auth.go              ~/.khode/auth.json API-key store (0600, atomic)
+  provider.go          custom providers, credential resolution (env > stored), model choices
 internal/llm/        provider-agnostic contract
   provider.go          Message, Request, Event, Provider interface
   anthropic.go         Anthropic SDK → Event channel translation
   openai.go            OpenAI SDK → Event channel translation
-  factory.go           llm.New(name, key, url), env-name helpers, env-over-stored Resolve
+  factory.go           llm.New/NewProtocol (protocol + display name), env-name helpers gone to config
+  models.go            FetchModels: model-list HTTP APIs per protocol
   retry.go             shared retry policy (transient failures, backoff)
   context.go           per-model context-window table
   pricing.go           per-model price table
