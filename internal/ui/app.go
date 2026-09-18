@@ -97,7 +97,8 @@ type Model struct {
 
 	// mouse reports whether mouse capture is on (wheel scrolling). It
 	// defaults to off so the terminal handles text selection and
-	// copy-on-select natively; alt+m toggles it.
+	// copy-on-select natively; ctrl+o (alt+m where alt is meta) toggles
+	// it.
 	mouse bool
 
 	// ctxIn/ctxOut are the most recent request's usage: ctxIn is the
@@ -399,7 +400,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
-		case msg.String() == "alt+m":
+		// Mouse capture: ctrl+o is the primary binding because macOS
+		// terminals compose characters with option by default (option+m
+		// types µ), so alt+letter keys never arrive there; alt+m stays
+		// as the alias for terminals where alt is a meta key.
+		case msg.String() == "alt+m" || msg.Type == tea.KeyCtrlO:
 			return m, m.toggleMouse()
 		}
 		var cmd tea.Cmd
@@ -476,7 +481,7 @@ func (m Model) helpLine() string {
 		{"enter", "send"},
 		{"alt+enter", "newline"},
 		{"pgup/pgdn", "scroll"},
-		{"alt+m", "wheel scroll"},
+		{"ctrl+o", "wheel scroll"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
 	}
@@ -659,10 +664,10 @@ func (m *Model) toggleMouse() tea.Cmd {
 	var cmd tea.Cmd
 	if m.mouse {
 		cmd = tea.EnableMouseCellMotion
-		note = "mouse capture on · wheel scrolls the chat · alt+m to release for text selection"
+		note = "mouse capture on · wheel scrolls the chat · ctrl+o to release for text selection"
 	} else {
 		cmd = tea.DisableMouse
-		note = "mouse capture off · drag to select and copy · alt+m to re-enable wheel scrolling"
+		note = "mouse capture off · drag to select and copy · ctrl+o to re-enable wheel scrolling"
 	}
 	m.messages = append(m.messages, uiMessage{role: "system", raw: note})
 	m.renderAll()

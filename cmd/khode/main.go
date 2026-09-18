@@ -191,8 +191,9 @@ func main() {
 	}
 
 	// Mouse capture starts off: while the app reports mouse events the
-	// terminal cannot select text natively, which kills drag-copy. alt+m
-	// turns capture on for wheel scrolling; pgup/pgdn always scroll.
+	// terminal cannot select text natively, which kills drag-copy. ctrl+o
+	// (alt+m on terminals where alt is meta) turns capture on for wheel
+	// scrolling; pgup/pgdn always scroll.
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fatal(err)

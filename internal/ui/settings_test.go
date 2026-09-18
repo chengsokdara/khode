@@ -33,6 +33,8 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "ctrl+o":
+		return tea.KeyMsg{Type: tea.KeyCtrlO}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }

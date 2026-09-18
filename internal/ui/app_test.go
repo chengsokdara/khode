@@ -35,6 +35,32 @@ func newTestModel(t *testing.T) Model {
 		tools.Default(t.TempDir()), nil, t.TempDir())
 }
 
+func TestMouseToggleKeys(t *testing.T) {
+	m := newTestModel(t)
+	if m.mouse {
+		t.Fatal("mouse capture should start off")
+	}
+
+	// ctrl+o is the primary binding: it arrives on every terminal,
+	// including macOS ones where option composes µ instead of an alt+m
+	// key event.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = next.(Model)
+	if !m.mouse {
+		t.Error("ctrl+o did not enable mouse capture")
+	}
+	if note := m.messages[len(m.messages)-1].raw; !strings.Contains(note, "mouse capture on") {
+		t.Errorf("toggle note = %q", note)
+	}
+
+	// alt+m (ESC+m on terminals where alt is meta) stays as an alias.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m"), Alt: true})
+	m = next.(Model)
+	if m.mouse {
+		t.Error("alt+m did not disable mouse capture")
+	}
+}
+
 // pumpModel feeds scripted events through the real Update loop the same
 // way waitForEvents delivers them, until the turn finishes.
 func pumpModel(t *testing.T, m Model, evs []llm.Event) Model {
