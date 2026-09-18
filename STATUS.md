@@ -148,6 +148,24 @@ commit path refuses writes as defense in depth. The api-key row stays
 paste-able as the optional override for enforcement-mode gateways; the
 model row stays fully usable (picking a model is using the provider).
 
+**UI polish — the aurora design system (2026-09-18):** every view now
+draws from `internal/ui/styles.go`: cyan (`#2DD4BF`) is khode's own
+activity (borders, tools, spinner, keycaps), green (`#4ADE80`) is good
+(ready, saved, additions), dim teal-gray carries secondary text, and
+red/amber are reserved for errors and context pressure. The chat header
+shows a green→cyan gradient wordmark, provider/model, and a
+session + permission-mode chip over a quiet rule; the status line
+counts the streaming turn's elapsed time and renders a `▰▱` context
+meter ahead of the ctx label; streaming replies trail a cyan block
+cursor and the input border tints cyan while a turn is live. All four
+overlays (sessions picker, permission/plan dialogs, settings,
+walkthrough) share one dialog grammar: cyan rounded box, ◆ title +
+dim subtitle, keycap footer chips, styled list cursors, flash-colored
+✓/✗ notes; the walkthrough gains step-progress dots and a spinner on
+its model-fetch state. Frames can be eyeballed off a tty with
+`DUMP_DIR=/tmp/x go test ./internal/ui -run TestDumpViews` (writes raw
++ ANSI-stripped views; skipped when DUMP_DIR is unset).
+
 ## Next
 
 Backlog (no committed order):
@@ -193,3 +211,6 @@ Backlog (no committed order):
 | 2026-09-17 | Walkthrough model step: auto-fetch + pick for khateway/custom providers (no model yet) between key and ready; fetch-failure degrades to /settings pointer; `--debug` flag + `internal/debug` gated logging + README Development section | 945836c |
 | 2026-09-17 | khateway keyless-native: `config.KeyOptional` exempts it from pre-flight + walkthrough key step; missing key becomes the `anonymous` placeholder (no SDK env fallback, no client-side refusal); gateway side treats auth as optional | 0ec4212 |
 | 2026-09-17 | khateway select-only: `config.ManagedEndpoint` locks the endpoint — base-url row read-only (shows effective URL, enter explains `KHATEWAY_BASE_URL`), commit path refuses, provider list enter=select / d=refused; model + api-key rows stay usable | 4f7962a |
+| 2026-09-18 | UI polish: aurora design system in styles.go (green/cyan palette, keycap chips, gradient wordmark, ▰▱ meter) + restyled chat chrome (mode chip header, live elapsed timer, streaming cursor, two-tone tool calls) | eddae69 |
+| 2026-09-18 | UI polish: overlays share the dialog language (picker/perm/settings/walkthrough: ◆ titles, keycap footers, styled cursors, flash notes, step dots, fetch spinner) | ecdf9bd |
+| 2026-09-18 | UI: view-dump harness (`TestDumpViews`, DUMP_DIR) for inspecting frames off a tty; go mod tidy promotes termenv/openai-go to direct (no version changes) | 1645c5c |

@@ -152,6 +152,10 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | khateway is keyless-native: `config.KeyOptional` exempts it from the pre-flight key check (submit + /compact) and the walkthrough skips its key step; with no key configured, requests carry the `anonymous` placeholder credential set at client construction | the user wants choose-and-go with zero setup, and the gateway fronts upstream auth itself; `KHATEWAY_API_KEY` / a stored key stay as overrides for gateways that enforce client keys — the gateway side is expected to treat auth as optional |
 | 2026-09-17 | The keyless placeholder lives in `llm.NewProtocol`'s khateway branch, not the UI | both SDKs need a non-empty credential: anthropic-sdk-go refuses to build ANY request client-side (`NoCredentialsError`) without one — even against a keyless custom base URL — and openai-go silently sends `OPENAI_API_KEY` as the bearer, leaking an unrelated key to the gateway |
 | 2026-09-17 | khateway is select-only: `config.ManagedEndpoint` locks its endpoint — the base-url row is read-only for it (displays env override → stored → built-in default), enter on the row explains `KHATEWAY_BASE_URL` instead of opening the editor, `commitEditor` refuses as defense in depth, and the provider list only ever selects built-ins (d already refused) | khateway is khode's own native integration, not a user-defined endpoint; repointing it at an arbitrary origin from the TUI is a misuse the UI must not offer — environment (`KHATEWAY_BASE_URL`) is the supported way to run a gateway elsewhere |
+| 2026-09-18 | One design system in `styles.go` ("aurora"): cyan = khode's own activity, green = good, dim teal-gray = secondary, red/amber only for error/context pressure; every view draws colors from there | the request asked for green+cyan, modern, and "everything consistent together" — semantics fixed per color keep the palette readable, not decorative |
+| 2026-09-18 | Footer key names render as keycap chips (`keyHint`), overlay titles through `dialogTitle`, save notes through `flash`; the header wordmark is the only gradient (`logo()`) | keys must be findable without shouting, and reserving the gradient for the wordmark keeps it a signature instead of wallpaper |
+| 2026-09-18 | The status line's elapsed timer has no dedicated ticker — `m.turnStart` is read in `statusLine`, and the always-running spinner tick (Init → TickMsg chain) re-renders View ~12×/s | bubbletea re-renders the whole View on every msg, so the free spinner clock animates the timer; no new timer machinery to start/stop per turn |
+| 2026-09-18 | View-frame verification: `TestDumpViews` renders every surface into `DUMP_DIR` (raw + ANSI-stripped); `script(1)`/`expect` pty capture produces zero child output even for a minimal bubbletea app in this sandbox | the existing wire-level evidence can't show layout; rendered-frame dumps exercise the real View code and are skipped without the env var |
 
 ## Gotchas & lessons learned
 
@@ -289,6 +293,20 @@ If you are starting a session, or recovering after an interrupt:
   bubbletea helper that "seals the old block" on a kind switch must fall
   through to appending the new block, or the caller's `messages[idx].raw`
   write lands back on the sealed block.
+- **`fmt.Sscanf` with `%02x` cannot scan into `*float64`** — the scan
+  errors and a helper that degrades on parse failure (e.g. the wordmark
+  `gradient`) returns its input UNSTYLED, silently. Scan into ints, then
+  convert. The dump harness pins gradient output so this can't regress.
+- **lipgloss rounds hex colors through colorful when rendering**
+  (`#2DD4BF` → SGR `44;211;191`), and `go test` output strips color
+  entirely unless `lipgloss.SetColorProfile(termenv.TrueColor)` is
+  called — so never assert exact RGB channels in output; assert that
+  `38;2;` escapes exist (with the profile forced) or check the
+  ANSI-stripped layout.
+- In `go test`-land, any helper that calls `m.Update(tea.WindowSizeMsg{…})`
+  WITHOUT capturing the returned model (`m = next.(Model)`) leaves
+  `m.width` at 0 and `View()` returns "starting…" — the same value-
+  receiver trap as the gotcha above, one level up.
 
 ## Session log (append one entry per session)
 
@@ -311,3 +329,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | Walkthrough model step for khateway/customs (auto-fetch + pick on the spot, failure → /settings pointer); `--debug` flag with `internal/debug` gated file logging; README Development section. Watch for the shared-worktree parallel session (khateway WIP in cmd/khode-e2e was mid-write and red during this session — left alone) | 945836c |
 | 2026-09-17 | khateway keyless-native (KeyOptional pre-flight exemption, walkthrough key-step skip, `anonymous` placeholder credential, settings "not required" row). Khateway-side follow-up prompt handed to the user: gateway must treat client auth as optional and accept/ignore the `anonymous` bearer + x-api-key values on /v1/chat/completions, /v1/messages, and /v1/models | 0ec4212 |
 | 2026-09-17 | khateway select-only (ManagedEndpoint: base-url row read-only with effective-endpoint display, activate/commit guards, provider list unchanged since built-ins were already select-only/undeletable; model + api-key rows intentionally left usable — picking a model and an optional enforcement key are "use", not provider config) | 4f7962a |
+| 2026-09-18 | UI polish per user goal (unique/green+cyan/modern/consistent/animation): aurora design system + chat chrome (eddae69), shared overlay dialog language (ecdf9bd), view-dump harness + tidy (1645c5c). Verified via rendered-frame dumps + full green gate (build/vet/gofmt/tests); sandbox pty capture of bubbletea produces no output, so frame dumps are the layout-evidence path | eddae69 ecdf9bd 1645c5c |
