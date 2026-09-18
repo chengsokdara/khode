@@ -178,9 +178,10 @@ If you are starting a session, or recovering after an interrupt:
 - macOS terminals compose characters with option by default — option+m
   types µ and no alt key event is generated — so alt+letter bindings
   never fire on default Terminal.app/Ghostty/kitty/iTerm2 setups. Any
-  primary binding must be a ctrl key; keep alt variants as aliases only
-  (mouse capture: ctrl+o primary, alt+m alias). alt+enter survives
-  because option+return has no composed character.
+  primary binding must be a ctrl key. alt+enter survives because
+  option+return has no composed character. (The mouse-capture toggle
+  this rule came from was removed outright on 2026-09-18 — khode never
+  captures the mouse now, matching Claude Code.)
 - expect(1) CAN drive the real TUI after all: the "zero child output"
   noted on 2026-09-18 was bubbletea never receiving its
   `WindowSizeMsg` — expect's pty has no size, so the app paints
@@ -354,3 +355,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-18 | Slash-command autocomplete popup: `internal/ui/complete.go` (slashCommands table, cmdPopup filter/keys/view) wired into app.go (key guard above the root switch, syncPopup after textarea updates, submit/esc/tab/enter paths, relayout carve-out); /help now renders from the table; 10 unit tests + popup dump frames + expect-pty e2e (typed /h, enter ran help). Gotcha recorded: expect works once the spawned pty is given a size | c5ebf4e |
 | 2026-09-18 | Interactive /tools panel per user ask ("like Claude Code"): registry disabled-set + `Definitions` filter + execCall rejection (loop test), overlay in `internal/ui/tools.go` in the dialog language (risk badges, sliding window, ✓/✗ + strikethrough for off), dump frames for visual check; plus input-key polish (alt+m "wheel scroll" hint, alt+enter constraint comment). Gotchas: tool descriptions can carry newlines → collapse whitespace before `clip` or rows wrap; shift+enter unrepresentable in bubbletea v1 (see Decisions) | 4d87a87 63442c7 |
 | 2026-09-18 | User reported alt+m typing µ instead of toggling — default-macOS option composition kills alt+letter bindings. ctrl+o is now the primary mouse-capture key (free in bubbles textarea, no XON/XOFF baggage), alt+m stays as alias; footer, toggle notes, main.go comment, and a key-level test updated. Gotcha recorded: never make alt+letter a primary binding | 44193ac |
+| 2026-09-18 | User asked why capture exists at all + noted the terminal scrollbar scrolls past the TUI: alt screen suspends scrollback, so the scrollbar has nothing real to scroll. Dropped mouse capture entirely (Claude Code parity — it never grabs the mouse): toggle/MouseMsg forward/field/tests gone, selection native from launch, pgup/pgdn scroll. True native-scrollbar history = inline transcript rendering (`tea.Println` into scrollback over an inline program, overlays shrink into the live region) — parked as backlog item 1, needs its own plan | bef8b9b |

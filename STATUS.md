@@ -105,11 +105,10 @@ Removing an MCP server purges its tools' toggles, so re-adding starts
 fully enabled. The alt+enter newline binding stays the only modifier
 enter: bubbletea v1 has no kitty-protocol key parsing, so shift+enter
 is unrepresentable (kitty-protocol terminals can remap shift+enter to
-send ESC+CR in terminal config). Mouse capture is toggled with ctrl+o:
-alt+m never fired on default macOS terminals, where option composes
-characters (option+m types µ) instead of sending alt keys — alt+m
-remains an alias for option-as-meta terminals, and the footer hint
-reads "ctrl+o wheel scroll".
+send ESC+CR in terminal config). Mouse capture is gone entirely (like
+Claude Code, the mouse is never grabbed): selection/copy are native
+from launch and pgup/pgdn scroll the chat — the ctrl+o stopgap lasted
+one day before the toggle was dropped as redundant.
 
 **Slash-command completion (2026-09-18):** typing `/` in the chat
 input floats a completion popup just above it — input-box width, a
@@ -134,10 +133,10 @@ face, otherwise openai face; both serve `/models` listings); the model
 row opens the auto-fetch picker; khateway never inherits a vendor
 default model. Env: `KHATEWAY_API_KEY` / `KHATEWAY_BASE_URL`.
 
-**Selectable text + thinking (2026-09-17):** mouse capture is off at
-startup, so drag-select and the terminal's copy-on-select work natively
-(anyway: shift+drag selects even under capture). alt+m toggles capture
-for wheel scrolling, and pgup/pgdn always scroll the chat. Model
+**Selectable text + thinking (2026-09-17):** khode never captures the
+mouse — drag-select and the terminal's copy-on-select work natively
+from launch, and pgup/pgdn scroll the chat (the capture toggle went
+away on 2026-09-18; see changelog). Model
 reasoning is now separated from the answer: `llm.ThinkingDeltaEvent`
 carries it (Anthropic thinking blocks; DeepSeek-style
 `reasoning_content` read from the delta's raw JSON; inline
@@ -204,10 +203,16 @@ its model-fetch state. Frames can be eyeballed off a tty with
 
 Backlog (no committed order):
 
-1. Stream subagent activity into the TUI instead of hiding it.
-2. MCP: re-list tools on `tools/list_changed`; resources/prompts.
-3. Hooks: feed post_tool output to the model as feedback.
-4. OpenAI tool-call unit parity for MCP edge cases as they surface.
+1. Inline (Claude-Code-style) transcript rendering: completed turns
+   print into the terminal's real scrollback (`tea.Println` over an
+   inline program) so native scrollbar/wheel/selection cover history,
+   with only the live turn + input in the redrawn region; overlays
+   shrink into that live region. Big rendering rework — needs its own
+   plan.
+2. Stream subagent activity into the TUI instead of hiding it.
+3. MCP: re-list tools on `tools/list_changed`; resources/prompts.
+4. Hooks: feed post_tool output to the model as feedback.
+5. OpenAI tool-call unit parity for MCP edge cases as they surface.
 
 ## Changelog
 
@@ -253,3 +258,4 @@ Backlog (no committed order):
 | 2026-09-18 | Interactive `/tools` panel: session-scoped enable/disable on the registry (`Definitions` filters, execCall rejects with a recoverable error, RemoveMCP purges toggles), overlay in the dialog language with risk badges + scroll window, registry/loop/ui tests + dump frames | 4d87a87 |
 | 2026-09-18 | Input keys: alt+m footer hint says "wheel scroll"; alt+enter-only newline constraint documented in code (bubbletea v1 can't parse kitty-protocol keys → shift+enter unrepresentable) | 63442c7 |
 | 2026-09-18 | Fix: mouse capture toggles with ctrl+o — alt+m never fired on default macOS (option composes µ, no alt key event); alt+m kept as meta-terminal alias, footer/notes/comment updated, toggle test | 44193ac |
+| 2026-09-18 | Mouse capture removed entirely (Claude Code parity: never grab the mouse) — footer hint, toggle, MouseMsg forward, and tests dropped; pgup/pgdn scroll, selection/copy native; inline-scrollback rendering added to the backlog | bef8b9b |
