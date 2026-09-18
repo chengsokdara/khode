@@ -214,3 +214,4 @@ Backlog (no committed order):
 | 2026-09-18 | UI polish: aurora design system in styles.go (green/cyan palette, keycap chips, gradient wordmark, ▰▱ meter) + restyled chat chrome (mode chip header, live elapsed timer, streaming cursor, two-tone tool calls) | eddae69 |
 | 2026-09-18 | UI polish: overlays share the dialog language (picker/perm/settings/walkthrough: ◆ titles, keycap footers, styled cursors, flash notes, step dots, fetch spinner) | ecdf9bd |
 | 2026-09-18 | UI: view-dump harness (`TestDumpViews`, DUMP_DIR) for inspecting frames off a tty; go mod tidy promotes termenv/openai-go to direct (no version changes) | 1645c5c |
+| 2026-09-18 | Fix: startup banner no longer repeats the header (version/provider/model/session/mode live there now) — it only points at /help and /settings | 3dfba3b |
