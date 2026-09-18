@@ -105,8 +105,11 @@ Removing an MCP server purges its tools' toggles, so re-adding starts
 fully enabled. The alt+enter newline binding stays the only modifier
 enter: bubbletea v1 has no kitty-protocol key parsing, so shift+enter
 is unrepresentable (kitty-protocol terminals can remap shift+enter to
-send ESC+CR in terminal config); the alt+m footer hint now reads
-"wheel scroll" instead of the cryptic "mouse".
+send ESC+CR in terminal config). Mouse capture is toggled with ctrl+o:
+alt+m never fired on default macOS terminals, where option composes
+characters (option+m types µ) instead of sending alt keys — alt+m
+remains an alias for option-as-meta terminals, and the footer hint
+reads "ctrl+o wheel scroll".
 
 **Slash-command completion (2026-09-18):** typing `/` in the chat
 input floats a completion popup just above it — input-box width, a
@@ -249,3 +252,4 @@ Backlog (no committed order):
 | 2026-09-18 | Slash-command autocomplete popup above the input (prefix filter with exact-match-first, wraparound nav, tab fills, enter runs argument-free commands, relayout carve-out); `slashCommands` table now feeds both the popup and `/help`; popup dump frames; real-pty e2e via expect with a sized pty | c5ebf4e |
 | 2026-09-18 | Interactive `/tools` panel: session-scoped enable/disable on the registry (`Definitions` filters, execCall rejects with a recoverable error, RemoveMCP purges toggles), overlay in the dialog language with risk badges + scroll window, registry/loop/ui tests + dump frames | 4d87a87 |
 | 2026-09-18 | Input keys: alt+m footer hint says "wheel scroll"; alt+enter-only newline constraint documented in code (bubbletea v1 can't parse kitty-protocol keys → shift+enter unrepresentable) | 63442c7 |
+| 2026-09-18 | Fix: mouse capture toggles with ctrl+o — alt+m never fired on default macOS (option composes µ, no alt key event); alt+m kept as meta-terminal alias, footer/notes/comment updated, toggle test | 44193ac |
