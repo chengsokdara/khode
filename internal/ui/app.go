@@ -95,12 +95,6 @@ type Model struct {
 	partial      *strings.Builder
 	partialThink *strings.Builder
 
-	// mouse reports whether mouse capture is on (wheel scrolling). It
-	// defaults to off so the terminal handles text selection and
-	// copy-on-select natively; ctrl+o (alt+m where alt is meta) toggles
-	// it.
-	mouse bool
-
 	// ctxIn/ctxOut are the most recent request's usage: ctxIn is the
 	// transcript size the provider saw, so the status line can render
 	// how full the model's context window is.
@@ -309,11 +303,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderAll()
 		return m, nil
 
-	case tea.MouseMsg:
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
-
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -395,17 +384,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.submit()
 		case msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown:
-			// Keyboard scrolling works regardless of the mouse mode, so
-			// text selection never costs the ability to scroll.
+			// In alt screen the terminal's own scrollback is suspended,
+			// so these are the only way back through the chat.
 			var cmd tea.Cmd
 			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
-		// Mouse capture: ctrl+o is the primary binding because macOS
-		// terminals compose characters with option by default (option+m
-		// types µ), so alt+letter keys never arrive there; alt+m stays
-		// as the alias for terminals where alt is a meta key.
-		case msg.String() == "alt+m" || msg.Type == tea.KeyCtrlO:
-			return m, m.toggleMouse()
 		}
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
@@ -481,7 +464,6 @@ func (m Model) helpLine() string {
 		{"enter", "send"},
 		{"alt+enter", "newline"},
 		{"pgup/pgdn", "scroll"},
-		{"ctrl+o", "wheel scroll"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
 	}
@@ -652,26 +634,6 @@ func (m *Model) stopStream() {
 	if m.cancel != nil {
 		m.cancel()
 	}
-}
-
-// toggleMouse switches between mouse capture (wheel scrolling) and free
-// text selection. While captured, the terminal hands every drag to the
-// app, so native selection — and the terminal's copy-on-select — is
-// impossible; released, selection and copy work but the wheel does not.
-func (m *Model) toggleMouse() tea.Cmd {
-	m.mouse = !m.mouse
-	var note string
-	var cmd tea.Cmd
-	if m.mouse {
-		cmd = tea.EnableMouseCellMotion
-		note = "mouse capture on · wheel scrolls the chat · ctrl+o to release for text selection"
-	} else {
-		cmd = tea.DisableMouse
-		note = "mouse capture off · drag to select and copy · ctrl+o to re-enable wheel scrolling"
-	}
-	m.messages = append(m.messages, uiMessage{role: "system", raw: note})
-	m.renderAll()
-	return cmd
 }
 
 // --- input handling ----------------------------------------------------------

@@ -190,10 +190,10 @@ func main() {
 		m.OpenWelcome()
 	}
 
-	// Mouse capture starts off: while the app reports mouse events the
-	// terminal cannot select text natively, which kills drag-copy. ctrl+o
-	// (alt+m on terminals where alt is meta) turns capture on for wheel
-	// scrolling; pgup/pgdn always scroll.
+	// Alt screen: the app owns the whole window and the terminal's
+	// scrollback is suspended, so pgup/pgdn scroll the chat and the
+	// mouse stays with the terminal (native select/copy). The mouse is
+	// never captured.
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fatal(err)
