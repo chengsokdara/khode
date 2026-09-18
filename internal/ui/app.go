@@ -213,11 +213,13 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	return m
 }
 
+// banner seeds the one notice a fresh chat starts with. The header
+// already carries version, provider/model, session, and mode, so the
+// banner only points at the commands that aren't visible anywhere.
 func (m *Model) banner() {
 	m.messages = append(m.messages, uiMessage{
 		role: "system",
-		raw: fmt.Sprintf("khode v%s · %s/%s · session %s · %s mode · /help commands · /settings config",
-			Version, m.provider.Name(), m.modelLabel(), m.session.Name(), m.mode()),
+		raw:  "/help commands · /settings config",
 	})
 }
 
