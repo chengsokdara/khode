@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"khode/internal/agent"
 	"khode/internal/config"
@@ -115,6 +116,11 @@ type Model struct {
 	cost      float64
 	hasCost   bool // price known for the models used so far
 
+	// turnStart marks when the in-flight turn began (the status line
+	// counts it up live); lastTurn is how long the previous one took.
+	turnStart time.Time
+	lastTurn  time.Duration
+
 	lastErr string
 }
 
@@ -123,7 +129,7 @@ type Model struct {
 func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Session, reg *tools.Registry, mcpClients map[string]*mcp.Client, workdir string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask khode to do something…"
-	ta.Prompt = " "
+	ta.Prompt = "❯ "
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.MaxHeight = maxInputHeight
@@ -132,6 +138,15 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	// dark terminal themes; drop it so the line keeps the theme's colors.
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	promptStyle := lipgloss.NewStyle().Foreground(colGreen)
+	ta.FocusedStyle.Prompt = promptStyle
+	ta.BlurredStyle.Prompt = promptStyle
+	phStyle := lipgloss.NewStyle().Foreground(colDim)
+	ta.FocusedStyle.Placeholder = phStyle
+	ta.BlurredStyle.Placeholder = phStyle
+
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	sp.Style = lipgloss.NewStyle().Foreground(colCyan)
 	ta.KeyMap.InsertNewline = key.NewBinding(
 		key.WithKeys("alt+enter"),
 		key.WithHelp("alt+enter", "newline"),
@@ -139,8 +154,6 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	ta.Focus()
 	ta.SetWidth(60)
 	ta.SetHeight(minInputHeight)
-
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	m := Model{
 		cfg:          cfg,
@@ -280,7 +293,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.textarea.SetWidth(max(10, m.width-6))
+		m.textarea.SetWidth(max(10, m.width-4))
 		m.relayout()
 		m.invalidateRendered()
 		m.renderAll()
@@ -394,17 +407,14 @@ func (m Model) View() string {
 		return m.pickerView()
 	}
 
-	header := lipgloss.NewStyle().Width(m.width).Render(
-		titleStyle.Render("◆ khode") +
-			dimStyle.Render(fmt.Sprintf(" v%s · %s/%s · %s · %s mode",
-				Version, m.provider.Name(), m.modelLabel(), m.session.Name(), m.mode())),
-	)
-
+	header := m.header()
 	status := m.statusLine()
-	inputBox := inputBorder.Render(m.textarea.View())
-	help := dimStyle.Width(m.width).Render(
-		"enter send · alt+enter newline · pgup/pgdn scroll · alt+m mouse · esc stop stream · ctrl+c quit",
-	)
+	border := inputBorder
+	if m.streaming {
+		border = inputBorderLive // the frame answers the stream in kind
+	}
+	inputBox := border.Render(m.textarea.View())
+	help := m.helpLine()
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
@@ -413,6 +423,44 @@ func (m Model) View() string {
 		inputBox,
 		help,
 	)
+}
+
+// header renders the chrome above the chat: the gradient wordmark and
+// provider/model on the left, the session and a permission-mode chip on
+// the right, over a quiet rule. The right side yields when the
+// terminal is too narrow for both.
+func (m Model) header() string {
+	left := logo() +
+		dimStyle.Render(fmt.Sprintf("  v%s · %s/%s", Version, m.provider.Name(), m.modelLabel()))
+	right := dimStyle.Render(clip(m.session.Name(), 24)) + " " + modeChip.Render(string(m.mode()))
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 2 {
+		right = ""
+		gap = m.width - lipgloss.Width(left)
+		if gap < 0 {
+			gap = 0
+		}
+	}
+	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, m.width)))
+	return left + strings.Repeat(" ", gap) + right + "\n" + rule
+}
+
+// helpLine renders the bottom key reference: key names faint cyan,
+// verbs dim.
+func (m Model) helpLine() string {
+	hints := []struct{ k, v string }{
+		{"enter", "send"},
+		{"alt+enter", "newline"},
+		{"pgup/pgdn", "scroll"},
+		{"alt+m", "mouse"},
+		{"esc", "stop stream"},
+		{"ctrl+c", "quit"},
+	}
+	parts := make([]string, 0, len(hints))
+	for _, h := range hints {
+		parts = append(parts, helpKey.Render(h.k)+dimStyle.Render(" "+h.v))
+	}
+	return dimStyle.Width(m.width).Render(strings.Join(parts, dimStyle.Render(" · ")))
 }
 
 // --- streaming -------------------------------------------------------------
@@ -550,6 +598,10 @@ func (m *Model) finishStream() tea.Cmd {
 		m.cancel()
 		m.cancel = nil
 	}
+	if !m.turnStart.IsZero() {
+		m.lastTurn = time.Since(m.turnStart)
+		m.turnStart = time.Time{}
+	}
 	if m.perm != nil {
 		// Defensive: a dialog outliving its turn is declined, never
 		// left dangling.
@@ -660,6 +712,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 	m.events = ch
 	m.streaming = true
 	m.lastErr = ""
+	m.turnStart = time.Now()
 	m.partial.Reset()
 	m.partialThink.Reset()
 	return tea.Batch(m.pump(), m.spinner.Tick)
@@ -889,29 +942,36 @@ func (m *Model) ctxUsage() (pct int, warn bool, ok bool) {
 		float64(used) >= ctxWarnFrac*float64(window), true
 }
 
-// ctxLabel renders the status-line context segment; warning-colored
-// once compaction is near.
+// ctxLabel renders the status-line context segment: a fullness bar
+// ahead of the "ctx NN%" label, warning-colored once compaction is
+// near.
 func (m *Model) ctxLabel() string {
 	pct, warn, ok := m.ctxUsage()
 	if !ok {
 		return ""
 	}
 	label := fmt.Sprintf("ctx %d%%", pct)
+	bar := meter(float64(pct)/100, 8, warn) + " "
 	if warn {
-		return delStyle.Render(label)
+		return bar + warnStyle.Render(label)
 	}
-	return dimStyle.Render(label)
+	return bar + dimStyle.Render(label)
 }
 
 func (m *Model) statusLine() string {
 	var state string
 	switch {
 	case m.streaming:
-		state = m.spinner.View() + statusStyle.Render(" working… (esc to stop)")
+		elapsed := time.Since(m.turnStart).Truncate(time.Second)
+		state = m.spinner.View() + statusStyle.Render("working") +
+			dimStyle.Render(" · "+elapsed.String()+" · esc to stop")
 	case m.lastErr != "":
-		state = errorStyle.Render("✗ " + m.lastErr)
+		state = errorStyle.Render("✗ " + clip(m.lastErr, max(20, m.width/2)))
 	default:
 		state = okStyle.Render("● ready")
+		if m.lastTurn > 0 {
+			state += dimStyle.Render(" · last turn " + m.lastTurn.Truncate(time.Second).String())
+		}
 	}
 	segs := []string{
 		dimStyle.Render(fmt.Sprintf("in %s · out %s",
@@ -940,7 +1000,7 @@ func (m *Model) block(i int, width int) string {
 	var out string
 	switch {
 	case msg.kind == kindToolCall:
-		out = toolStyle.Width(width).Render("⏺ " + msg.raw)
+		out = toolCallBlock(msg.raw, width)
 	case msg.kind == kindThinking:
 		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
 	case msg.kind == kindToolResult:
@@ -957,10 +1017,10 @@ func (m *Model) block(i int, width int) string {
 		}
 		out = style.Width(width).Render(prefix + body)
 	case msg.role == llm.RoleUser:
-		out = userStyle.Width(width).Render("❯ " + msg.raw)
+		out = userMark.Render("❯ ") + lipgloss.NewStyle().Width(width).Render(msg.raw)
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
-			out = dimStyle.Width(width).Render(msg.raw)
+			out = dimStyle.Width(width).Render(msg.raw) + streamCursor.Render("▌")
 		} else {
 			out = renderMarkdown(msg.raw, width)
 		}
@@ -995,7 +1055,7 @@ func (m *Model) invalidateRendered() {
 // relayout recomputes the viewport size from the current window and input.
 func (m *Model) relayout() {
 	inputH := m.textarea.Height() + 2 // rounded border
-	vh := m.height - inputH - 3       // header + status + help
+	vh := m.height - inputH - 4       // header line + rule + status + help
 	if vh < 3 {
 		vh = 3
 	}
@@ -1057,6 +1117,24 @@ func formatToolCall(c llm.ToolCall) string {
 		line += " " + args
 	}
 	return truncate(line, 120)
+}
+
+// toolCallBlock renders a tool call two-tone: the ⏺ marker and tool
+// name in cyan, the arguments dim behind them.
+func toolCallBlock(raw string, width int) string {
+	name, args := raw, ""
+	if i := strings.IndexByte(raw, ' '); i >= 0 {
+		name, args = raw[:i], raw[i+1:]
+	}
+	out := toolStyle.Render("⏺ " + name)
+	if args == "" {
+		return out
+	}
+	room := width - 4 - lipgloss.Width(name)
+	if room < 8 {
+		room = 8
+	}
+	return out + dimStyle.Render(" "+clip(args, room))
 }
 
 // summarizeToolResult renders a tool result preview: the first lines with
