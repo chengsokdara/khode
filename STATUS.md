@@ -92,6 +92,22 @@ rename) with env vars keeping precedence. MCP changes apply live via
 (agent loop reads it while the overlay mutates it); `Model.partial` is
 a pointer `strings.Builder` (see Gotchas).
 
+**Interactive /tools (2026-09-18):** `/tools` opens the tool panel — a
+picker-style overlay in the dialog language listing every registered
+tool (built-in, task/plan, and `mcp__server__tool`) with a risk badge
+(read dim / write amber / exec red) and a one-line description, in a
+sliding scroll window. enter or space toggles the tool under the
+cursor; toggles are session-scoped state on the registry (`disabled`
+set — nothing touches config.json): `Definitions()` stops advertising
+disabled tools so the model can't see them, and the agent loop rejects
+calls to them with an error result the model can recover from.
+Removing an MCP server purges its tools' toggles, so re-adding starts
+fully enabled. The alt+enter newline binding stays the only modifier
+enter: bubbletea v1 has no kitty-protocol key parsing, so shift+enter
+is unrepresentable (kitty-protocol terminals can remap shift+enter to
+send ESC+CR in terminal config); the alt+m footer hint now reads
+"wheel scroll" instead of the cryptic "mouse".
+
 **Slash-command completion (2026-09-18):** typing `/` in the chat
 input floats a completion popup just above it — input-box width, a
 left-aligned command column with one-line descriptions, a key
@@ -231,3 +247,5 @@ Backlog (no committed order):
 | 2026-09-18 | UI: view-dump harness (`TestDumpViews`, DUMP_DIR) for inspecting frames off a tty; go mod tidy promotes termenv/openai-go to direct (no version changes) | 1645c5c |
 | 2026-09-18 | Fix: startup banner no longer repeats the header (version/provider/model/session/mode live there now) — it only points at /help and /settings | 3dfba3b |
 | 2026-09-18 | Slash-command autocomplete popup above the input (prefix filter with exact-match-first, wraparound nav, tab fills, enter runs argument-free commands, relayout carve-out); `slashCommands` table now feeds both the popup and `/help`; popup dump frames; real-pty e2e via expect with a sized pty | c5ebf4e |
+| 2026-09-18 | Interactive `/tools` panel: session-scoped enable/disable on the registry (`Definitions` filters, execCall rejects with a recoverable error, RemoveMCP purges toggles), overlay in the dialog language with risk badges + scroll window, registry/loop/ui tests + dump frames | 4d87a87 |
+| 2026-09-18 | Input keys: alt+m footer hint says "wheel scroll"; alt+enter-only newline constraint documented in code (bubbletea v1 can't parse kitty-protocol keys → shift+enter unrepresentable) | 63442c7 |
