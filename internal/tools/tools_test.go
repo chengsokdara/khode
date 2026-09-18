@@ -84,6 +84,38 @@ func TestRegistryRisk(t *testing.T) {
 	}
 }
 
+func TestRegistryEnabled(t *testing.T) {
+	reg := Default(writeTree(t))
+
+	if !reg.Enabled("bash") {
+		t.Fatal("bash should start enabled")
+	}
+
+	reg.SetEnabled("bash", false)
+	if reg.Enabled("bash") {
+		t.Error("bash still enabled after SetEnabled(false)")
+	}
+	if _, ok := reg.Get("bash"); !ok {
+		t.Error("disabled tool vanished from the registry")
+	}
+	for _, def := range reg.Definitions() {
+		if def.Name == "bash" {
+			t.Error("disabled tool still advertised in Definitions")
+		}
+	}
+	if got := len(reg.Names()); got != 7 {
+		t.Errorf("Names() = %d entries, want 7 (disabling hides, not removes)", got)
+	}
+
+	reg.SetEnabled("bash", true)
+	if !reg.Enabled("bash") {
+		t.Error("bash not re-enabled")
+	}
+	if defs := reg.Definitions(); len(defs) != 7 {
+		t.Errorf("Definitions() = %d, want 7 after re-enable", len(defs))
+	}
+}
+
 func TestReadWholeFile(t *testing.T) {
 	root := writeTree(t)
 	r := &Read{Root: root}

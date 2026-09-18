@@ -191,6 +191,32 @@ func TestRunnerUnknownToolIsErrorResult(t *testing.T) {
 	}
 }
 
+func TestRunnerDisabledToolIsErrorResult(t *testing.T) {
+	p := &fakeProvider{responses: [][]llm.Event{
+		{llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "echo", Input: json.RawMessage(`{}`)}}},
+		{llm.TextDeltaEvent{Text: "ok"}},
+	}}
+	tl := &fakeTool{}
+	r, _ := newTestRunner(t, p, tl)
+	r.Tools.SetEnabled("echo", false)
+
+	evs := drain(t, r.Run(t.Context(), "go"))
+	for _, ev := range evs {
+		if res, ok := ev.(llm.ToolResultEvent); ok {
+			if !res.IsError {
+				t.Error("disabled tool call did not produce an error result")
+			}
+			if !strings.Contains(res.Output, "disabled") {
+				t.Errorf("error output = %q", res.Output)
+			}
+		}
+	}
+	// The disabled tool is never advertised to the provider either.
+	if got := p.requests[0].Tools; len(got) != 0 {
+		t.Errorf("disabled tool advertised: %+v", got)
+	}
+}
+
 func TestRunnerToolErrorFeedsBack(t *testing.T) {
 	p := &fakeProvider{responses: [][]llm.Event{
 		{llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "echo", Input: json.RawMessage(`bad`)}}},

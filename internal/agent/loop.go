@@ -199,6 +199,9 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown tool %q", c.Name)
 	}
+	if !r.Tools.Enabled(c.Name) {
+		return "", fmt.Errorf("tool %q is disabled — the user turned it off in /tools", c.Name)
+	}
 
 	mode := r.Mode
 	if mode == "" {

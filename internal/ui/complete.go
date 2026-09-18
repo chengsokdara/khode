@@ -28,7 +28,7 @@ var slashCommands = []slashCommand{
 	{"model", "<name>", "switch model (persisted)"},
 	{"mode", "[name]", "permission mode: plan · ask · accept-edits · auto"},
 	{"compact", "", "summarize older turns to shrink the context"},
-	{"tools", "", "list tools the model can call"},
+	{"tools", "", "browse and toggle tools the model can call"},
 	{"mcp", "", "MCP server status"},
 	{"exit", "", "leave khode"},
 	{"quit", "", "alias of /exit"},

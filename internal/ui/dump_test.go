@@ -95,6 +95,14 @@ func TestDumpViews(t *testing.T) {
 	})
 	write("picker.txt", km.View())
 
+	// --- tools panel ---
+	tm := resize(newTestModel(t))
+	tm.openTools()
+	write("tools.txt", tm.View())
+	tm = pressKeys(tm, "down", "down", "down", "down", "down") // bash
+	tm = pressKeys(tm, "enter")                                // toggle off
+	write("tools-off.txt", tm.View())
+
 	// --- slash-command completion popup ---
 	cp := resize(newTestModel(t))
 	cp = pressKeys(cp, "/")

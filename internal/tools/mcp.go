@@ -78,8 +78,10 @@ func AddMCP(r *Registry, server string, src ToolSource, riskOverride string) err
 }
 
 // RemoveMCP drops every tool of one MCP server (mcp__<server>__*),
-// undoing AddMCP when a server is deleted from the settings UI. A server
-// with no registered tools is not an error.
+// undoing AddMCP when a server is deleted from the settings UI. Their
+// session disable-toggles go with them, so re-adding the server starts
+// with everything enabled. A server with no registered tools is not an
+// error.
 func RemoveMCP(r *Registry, server string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -87,6 +89,7 @@ func RemoveMCP(r *Registry, server string) {
 	for name := range r.byName {
 		if strings.HasPrefix(name, prefix) {
 			delete(r.byName, name)
+			delete(r.disabled, name)
 		}
 	}
 }

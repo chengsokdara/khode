@@ -78,10 +78,11 @@ type Model struct {
 
 	messages []uiMessage
 
-	picker   *picker   // session chooser overlay; nil when closed
-	settings *settings // configuration overlay; nil when closed
-	welcome  *welcome  // first-run walkthrough; nil when closed
-	popup    *cmdPopup // slash-command completion above the input; nil when hidden
+	picker     *picker     // session chooser overlay; nil when closed
+	settings   *settings   // configuration overlay; nil when closed
+	toolsPanel *toolsPanel // /tools overlay; nil when closed
+	welcome    *welcome    // first-run walkthrough; nil when closed
+	popup      *cmdPopup   // slash-command completion above the input; nil when hidden
 
 	streaming bool
 	cancel    context.CancelFunc
@@ -360,6 +361,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings != nil {
 			return m, m.settingsKey(msg)
 		}
+		if m.toolsPanel != nil {
+			return m, m.toolsKey(msg)
+		}
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
@@ -413,6 +417,9 @@ func (m Model) View() string {
 	}
 	if m.settings != nil {
 		return m.settingsView()
+	}
+	if m.toolsPanel != nil {
+		return m.toolsView()
 	}
 	if m.picker != nil {
 		return m.pickerView()
@@ -833,17 +840,7 @@ func (m *Model) command(input string) tea.Cmd {
 		m.setMode(want)
 
 	case "/tools":
-		names := m.tools.Names()
-		if len(names) == 0 {
-			m.messages = append(m.messages, uiMessage{role: "system", raw: "no tools registered"})
-			break
-		}
-		var lines []string
-		for _, n := range names {
-			t, _ := m.tools.Get(n)
-			lines = append(lines, fmt.Sprintf("%-6s %s", n, t.Description()))
-		}
-		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join(lines, "\n")})
+		m.openTools()
 
 	case "/mcp":
 		m.messages = append(m.messages, uiMessage{role: "system", raw: m.mcpStatus()})

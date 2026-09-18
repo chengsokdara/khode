@@ -46,6 +46,9 @@ type RiskClassifier interface {
 type Registry struct {
 	mu     sync.RWMutex
 	byName map[string]Tool
+	// disabled names are toggled off for this session: left out of
+	// Definitions and rejected by the agent loop. Not persisted.
+	disabled map[string]bool
 }
 
 // NewRegistry returns an empty registry.
@@ -86,14 +89,40 @@ func (r *Registry) RiskOf(name string) perm.Risk {
 	return perm.RiskRead
 }
 
+// SetEnabled turns a tool on or off for this session. Disabled tools
+// are hidden from the model (Definitions) and rejected on execution.
+func (r *Registry) SetEnabled(name string, on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.disabled == nil {
+		r.disabled = map[string]bool{}
+	}
+	if on {
+		delete(r.disabled, name)
+		return
+	}
+	r.disabled[name] = true
+}
+
+// Enabled reports whether a tool is currently callable.
+func (r *Registry) Enabled(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return !r.disabled[name]
+}
+
 // Definitions returns every registered tool as a provider-agnostic
-// ToolDef, in name order so prompts and caches stay stable.
+// ToolDef, in name order so prompts and caches stay stable. Disabled
+// tools are left out, so the model can neither see nor call them.
 func (r *Registry) Definitions() []llm.ToolDef {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	names := r.namesLocked()
 	defs := make([]llm.ToolDef, 0, len(names))
 	for _, n := range names {
+		if r.disabled[n] {
+			continue
+		}
 		t := r.byName[n]
 		defs = append(defs, llm.ToolDef{
 			Name:        t.Name(),

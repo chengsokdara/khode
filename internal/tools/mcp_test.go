@@ -88,6 +88,28 @@ func TestAddMCPRiskOverride(t *testing.T) {
 	}
 }
 
+func TestRemoveMCPPurgesDisabledToggles(t *testing.T) {
+	src := &fakeSource{tools: []mcp.Tool{{Name: "search"}}}
+	reg := NewRegistry()
+	if err := AddMCP(reg, "docs", src, ""); err != nil {
+		t.Fatal(err)
+	}
+	reg.SetEnabled("mcp__docs__search", false)
+
+	RemoveMCP(reg, "docs")
+	if names := reg.Names(); len(names) != 0 {
+		t.Fatalf("names after removal = %v", names)
+	}
+
+	// Re-adding the server starts with everything enabled.
+	if err := AddMCP(reg, "docs", src, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.Enabled("mcp__docs__search") {
+		t.Error("re-added tool kept its old disabled toggle")
+	}
+}
+
 func TestMCPToolExec(t *testing.T) {
 	src := &fakeSource{tools: []mcp.Tool{{Name: "search"}}, text: "found it"}
 	tool := &MCPTool{Source: src, Server: "docs", Tool: src.tools[0], risk: perm.RiskExec}
