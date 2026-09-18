@@ -95,6 +95,15 @@ func TestDumpViews(t *testing.T) {
 	})
 	write("picker.txt", km.View())
 
+	// --- slash-command completion popup ---
+	cp := resize(newTestModel(t))
+	cp = pressKeys(cp, "/")
+	write("popup.txt", cp.View())
+	cp = pressKeys(cp, "m", "o")
+	write("popup-filtered.txt", cp.View())
+	cp = pressKeys(cp, "down")
+	write("popup-filtered-cursor.txt", cp.View())
+
 	// --- permission dialog ---
 	dm := resize(newTestModel(t))
 	req := agent.Request{

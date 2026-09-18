@@ -156,6 +156,8 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-18 | Footer key names render as keycap chips (`keyHint`), overlay titles through `dialogTitle`, save notes through `flash`; the header wordmark is the only gradient (`logo()`) | keys must be findable without shouting, and reserving the gradient for the wordmark keeps it a signature instead of wallpaper |
 | 2026-09-18 | The status line's elapsed timer has no dedicated ticker — `m.turnStart` is read in `statusLine`, and the always-running spinner tick (Init → TickMsg chain) re-renders View ~12×/s | bubbletea re-renders the whole View on every msg, so the free spinner clock animates the timer; no new timer machinery to start/stop per turn |
 | 2026-09-18 | View-frame verification: `TestDumpViews` renders every surface into `DUMP_DIR` (raw + ANSI-stripped); `script(1)`/`expect` pty capture produces zero child output even for a minimal bubbletea app in this sandbox | the existing wire-level evidence can't show layout; rendered-frame dumps exercise the real View code and are skipped without the env var |
+| 2026-09-18 | Slash completion runs off one `slashCommands` table in `internal/ui/complete.go`: the popup prefix-filters it (exact match promoted to front) and `/help` renders it; aliases are ordinary rows | two lists had already drifted (`/config` worked but help never mentioned it); a table with a `desc` per entry makes a new command a one-line change that surfaces everywhere |
+| 2026-09-18 | Popup keys sit between the overlay guards and the root key switch in `Update`: it consumes ↑/↓/ctrl+p/ctrl+n/tab/enter/esc, everything else falls through to the textarea whose update re-filters via `syncPopup`; enter on an argument-free command fills AND submits at once, fill-only while streaming | letters must reach the textarea because the user is typing the query; run-on-enter is the Claude-Code-style "easy" behavior, and the streaming exception preserves the rule that nothing submits mid-stream |
 
 ## Gotchas & lessons learned
 
@@ -168,6 +170,13 @@ If you are starting a session, or recovering after an interrupt:
   `glamour.NewTermRenderer(...)` with the same option names.
 - **bubbles v1.0.0 / bubbletea v1.3.10**: textarea `MaxHeight` exists;
   `KeyMsg.Alt` distinguishes plain Enter (send) from alt+enter (newline).
+- expect(1) CAN drive the real TUI after all: the "zero child output"
+  noted on 2026-09-18 was bubbletea never receiving its
+  `WindowSizeMsg` — expect's pty has no size, so the app paints
+  "starting…" forever. Fix: `stty rows 30 columns 100 <
+  $spawn_out(slave,name)` right after `spawn` (any resize → SIGWINCH
+  also works). Anchor sends on frame text ("welcome to khode" → esc →
+  "ready") rather than sleeps; verifed end-to-end for the slash popup.
 - glamour renders final markdown only after streaming completes; during
   streaming we show wrapped plain text (perf).
 - `viewport` does not wrap lines — every block is wrapped explicitly with
@@ -331,3 +340,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | khateway select-only (ManagedEndpoint: base-url row read-only with effective-endpoint display, activate/commit guards, provider list unchanged since built-ins were already select-only/undeletable; model + api-key rows intentionally left usable — picking a model and an optional enforcement key are "use", not provider config) | 4f7962a |
 | 2026-09-18 | UI polish per user goal (unique/green+cyan/modern/consistent/animation): aurora design system + chat chrome (eddae69), shared overlay dialog language (ecdf9bd), view-dump harness + tidy (1645c5c). Verified via rendered-frame dumps + full green gate (build/vet/gofmt/tests); sandbox pty capture of bubbletea produces no output, so frame dumps are the layout-evidence path | eddae69 ecdf9bd 1645c5c |
 | 2026-09-18 | Fixed duplicate top text: the startup banner still carried version/provider/model/session/mode after the aurora header began showing the same things; banner is now hints-only (`/help commands · /settings config`). Gotcha: `TestDumpViews` fails with bare "no truecolor escapes / missing rule" assertions when DUMP_DIR points at a nonexistent dir — `os.WriteFile` errors are ignored, so create the dir first | 3dfba3b |
+| 2026-09-18 | Slash-command autocomplete popup: `internal/ui/complete.go` (slashCommands table, cmdPopup filter/keys/view) wired into app.go (key guard above the root switch, syncPopup after textarea updates, submit/esc/tab/enter paths, relayout carve-out); /help now renders from the table; 10 unit tests + popup dump frames + expect-pty e2e (typed /h, enter ran help). Gotcha recorded: expect works once the spawned pty is given a size | HASH |

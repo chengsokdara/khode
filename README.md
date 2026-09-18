@@ -59,10 +59,13 @@ Everything is configurable from inside the TUI with `/settings` (alias
 
 `--provider` and `--model` override the config for one session only.
 Other commands: `/new [name]` (optionally named sessions), `/sessions`
-(picker), `/model <name>`, `/compact`, `/mcp`, `/tools`, `/help`. The
-status line shows how full the model's context window is (`ctx NN%`,
-warning near auto-compact) and a running cost estimate from a built-in
-per-model price table; models it doesn't know display `$–`.
+(picker), `/model <name>`, `/compact`, `/mcp`, `/tools`, `/help`.
+Typing `/` opens a completion popup above the input that filters the
+command list as you type — ↑/↓ picks, enter runs, tab just fills, esc
+dismisses. The status line shows how full the model's context window
+is (`ctx NN%`, warning near auto-compact) and a running cost estimate
+from a built-in per-model price table; models it doesn't know display
+`$–`.
 
 ## Development
 

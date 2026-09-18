@@ -92,6 +92,21 @@ rename) with env vars keeping precedence. MCP changes apply live via
 (agent loop reads it while the overlay mutates it); `Model.partial` is
 a pointer `strings.Builder` (see Gotchas).
 
+**Slash-command completion (2026-09-18):** typing `/` in the chat
+input floats a completion popup just above it — input-box width, a
+left-aligned command column with one-line descriptions, a key
+cheatsheet footer, and up to 8 rows with a scroll window around the
+cursor. It filters by case-insensitive prefix as you type (an exact
+match jumps to the front), ↑/↓ moves with wraparound, tab fills
+`/name `, enter fills too and runs the command at once when it takes
+no arguments (fill-only while a turn is streaming), and esc dismisses
+while keeping the typed text. The `slashCommands` table in
+`internal/ui/complete.go` is the single source of truth — `/help`
+renders from the same list, so the aliases (`/config`, `/quit`) are
+finally documented and popup/help can't drift. Opening the popup
+carves its rows out of the chat viewport; frames are in the dump
+harness (`popup*.txt`).
+
 **khateway built-in (2026-09-17):** khode talks to a self-hosted
 Khateway router as a third built-in provider — one base URL + one
 client key (`khat-…`) unlock every model the gateway admin configured.
@@ -215,3 +230,4 @@ Backlog (no committed order):
 | 2026-09-18 | UI polish: overlays share the dialog language (picker/perm/settings/walkthrough: ◆ titles, keycap footers, styled cursors, flash notes, step dots, fetch spinner) | ecdf9bd |
 | 2026-09-18 | UI: view-dump harness (`TestDumpViews`, DUMP_DIR) for inspecting frames off a tty; go mod tidy promotes termenv/openai-go to direct (no version changes) | 1645c5c |
 | 2026-09-18 | Fix: startup banner no longer repeats the header (version/provider/model/session/mode live there now) — it only points at /help and /settings | 3dfba3b |
+| 2026-09-18 | Slash-command autocomplete popup above the input (prefix filter with exact-match-first, wraparound nav, tab fills, enter runs argument-free commands, relayout carve-out); `slashCommands` table now feeds both the popup and `/help`; popup dump frames; real-pty e2e via expect with a sized pty | HASH |

@@ -81,6 +81,7 @@ type Model struct {
 	picker   *picker   // session chooser overlay; nil when closed
 	settings *settings // configuration overlay; nil when closed
 	welcome  *welcome  // first-run walkthrough; nil when closed
+	popup    *cmdPopup // slash-command completion above the input; nil when hidden
 
 	streaming bool
 	cancel    context.CancelFunc
@@ -362,6 +363,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
+		if m.popup != nil {
+			// The completion list answers first; keys it skips fall
+			// through to the textarea below.
+			if cmd, done := m.popupKey(msg); done {
+				return m, cmd
+			}
+		}
 		switch {
 		case msg.Type == tea.KeyCtrlC:
 			m.stopStream()
@@ -386,6 +394,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		m.maybeGrowInput()
+		m.syncPopup()
 		return m, cmd
 	}
 
@@ -418,13 +427,12 @@ func (m Model) View() string {
 	inputBox := border.Render(m.textarea.View())
 	help := m.helpLine()
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		viewportStyle.Render(m.viewport.View()),
-		status,
-		inputBox,
-		help,
-	)
+	parts := []string{header, viewportStyle.Render(m.viewport.View()), status}
+	if m.popup != nil {
+		parts = append(parts, m.popupView()) // floats just above the input
+	}
+	parts = append(parts, inputBox, help)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // header renders the chrome above the chat: the gradient wordmark and
@@ -653,6 +661,7 @@ func (m *Model) submit() tea.Cmd {
 	input := strings.TrimSpace(m.textarea.Value())
 	m.textarea.Reset()
 	m.maybeGrowInput()
+	m.closePopup()
 	if input == "" {
 		return nil
 	}
@@ -796,18 +805,7 @@ func (m *Model) command(input string) tea.Cmd {
 	parts := strings.Fields(input)
 	switch parts[0] {
 	case "/help":
-		m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join([]string{
-			"/new [name]   fresh session, optionally named",
-			"/sessions     switch session (picker)",
-			"/settings     configure keys, provider, model, MCP, hooks",
-			"/model <name> switch model (persisted)",
-			"/mode [name]  permission mode: plan · ask · accept-edits · auto",
-			"/compact      summarize older turns to shrink the context",
-			"/tools        list tools the model can call",
-			"/mcp          MCP server status",
-			"/exit, /quit  leave khode",
-			"/help         this list",
-		}, "\n")})
+		m.messages = append(m.messages, uiMessage{role: "system", raw: helpText()})
 
 	case "/settings", "/config":
 		m.OpenSettings(rowProvider)
@@ -1057,7 +1055,9 @@ func (m *Model) invalidateRendered() {
 // relayout recomputes the viewport size from the current window and input.
 func (m *Model) relayout() {
 	inputH := m.textarea.Height() + 2 // rounded border
-	vh := m.height - inputH - 4       // header line + rule + status + help
+	// header line + rule + status + help; the popup carves out its own
+	// rows from the viewport while it is open.
+	vh := m.height - inputH - 4 - m.popupHeight()
 	if vh < 3 {
 		vh = 3
 	}
