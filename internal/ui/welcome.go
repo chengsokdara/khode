@@ -315,28 +315,42 @@ func indexOf(xs []string, x string) int {
 	return -1
 }
 
+// stepDots renders walkthrough progress: filled dots up to the current
+// step, hollow ones after.
+func stepDots(cur, total int) string {
+	dots := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		if i <= cur {
+			dots = append(dots, pickSel.Render("●"))
+		} else {
+			dots = append(dots, dimStyle.Render("○"))
+		}
+	}
+	return strings.Join(dots, dimStyle.Render(" "))
+}
+
 func (m *Model) welcomeView() string {
 	w := m.welcome
 	var title, body string
 	switch w.step {
 	case welcomeIntro:
-		title = "◆ welcome to khode"
+		title = logo()
 		body = strings.Join([]string{
-			"a coding agent for your terminal.",
+			"welcome to khode — a coding agent for your terminal.",
 			"",
 			"  " + pickSel.Render("·") + " reads, edits, and runs code here — always with your approval",
 			"  " + pickSel.Render("·") + " answers stream from Anthropic, OpenAI, khateway, or your own endpoints",
 			"  " + pickSel.Render("·") + " every session is saved; resume with khode --resume",
 			"",
-			"setup takes a minute: pick a provider, paste a key.",
+			dimStyle.Render("setup takes a minute: pick a provider, paste a key."),
 		}, "\n")
 	case welcomeProvider:
-		title = "◆ pick a provider"
+		title = dialogTitle("pick a provider", "")
 		var rows []string
 		for i, name := range m.providerChoices() {
 			cur := "  "
 			if i == w.provIdx {
-				cur = "❯ "
+				cur = pickSel.Render("❯ ")
 			}
 			line := name
 			switch {
@@ -358,7 +372,7 @@ func (m *Model) welcomeView() string {
 		body = strings.Join(rows, "\n") + "\n\n" +
 			dimStyle.Render("  keys are stored per provider; you can switch any time.")
 	case welcomeCustom:
-		title = "◆ add a custom provider"
+		title = dialogTitle("add a custom provider", "")
 		proto := "openai" + dimStyle.Render("  · <base>/models  ←/→ cycle")
 		if w.cProto == 1 {
 			proto = "anthropic" + dimStyle.Render("  · <base>/v1/models  ←/→ cycle")
@@ -366,33 +380,33 @@ func (m *Model) welcomeView() string {
 		cur1, cur2, cur3 := "  ", "  ", "  "
 		switch w.cField {
 		case 0:
-			cur1 = "❯ "
+			cur1 = pickSel.Render("❯ ")
 		case 1:
-			cur2 = "❯ "
+			cur2 = pickSel.Render("❯ ")
 		case 2:
-			cur3 = "❯ "
+			cur3 = pickSel.Render("❯ ")
 		}
 		body = strings.Join([]string{
-			cur1 + "  " + fmt.Sprintf("%-9s", "name") + w.cName.View(),
-			cur2 + "  " + fmt.Sprintf("%-9s", "base url") + w.cURL.View(),
-			cur3 + "  " + fmt.Sprintf("%-9s", "protocol") + proto,
+			cur1 + dimStyle.Render(fmt.Sprintf("  %-9s", "name")) + w.cName.View(),
+			cur2 + dimStyle.Render(fmt.Sprintf("  %-9s", "base url")) + w.cURL.View(),
+			cur3 + dimStyle.Render(fmt.Sprintf("  %-9s", "protocol")) + proto,
 			"",
 			dimStyle.Render("  the provider activates right away; its key can stay empty."),
 		}, "\n")
 	case welcomeKey:
-		title = "◆ paste your API key"
+		title = dialogTitle("paste your API key", "")
 		body = strings.Join([]string{
-			"  " + m.cfg.Provider + " key:",
+			"  " + statusStyle.Render(m.cfg.Provider) + dimStyle.Render(" key:"),
 			"",
 			"  " + w.input.View(),
 			"",
 			dimStyle.Render("  stored in ~/.khode/auth.json · owner-only · never displayed"),
 		}, "\n")
 	case welcomeModel:
-		title = "◆ pick a model"
+		title = dialogTitle("pick a model", "")
 		switch {
 		case w.fetching:
-			body = "  fetching the " + m.cfg.Provider + " model list…"
+			body = m.spinner.View() + statusStyle.Render(" fetching the "+m.cfg.Provider+" model list…")
 		case w.fetchErr != "":
 			body = strings.Join([]string{
 				"  couldn't reach " + m.cfg.Provider + ":",
@@ -412,7 +426,7 @@ func (m *Model) welcomeView() string {
 			for i := start; i < min(len(w.models), start+windowH); i++ {
 				cur := "  "
 				if i == w.mCur {
-					cur = "❯ "
+					cur = pickSel.Render("❯ ")
 				}
 				rows = append(rows, cur+w.models[i])
 			}
@@ -422,20 +436,20 @@ func (m *Model) welcomeView() string {
 			}
 		}
 	case welcomeReady:
-		title = "◆ you're set"
+		title = dialogTitle("you're set", "")
 		rows := []string{
 			"try asking khode:",
 			"",
-			"  " + userStyle.Render("summarize what this repo does"),
-			"  " + userStyle.Render("find and fix the failing test"),
+			"  " + exampleStyle.Render("summarize what this repo does"),
+			"  " + exampleStyle.Render("find and fix the failing test"),
 			"",
 		}
 		if mo := m.cfg.Model(); mo != "" {
-			rows = append(rows, "  model: "+statusStyle.Render(mo), "")
+			rows = append(rows, "  "+dimStyle.Render("model: ")+statusStyle.Render(mo), "")
 		}
 		if m.cfg.Model() == "" {
 			rows = append(rows,
-				"  "+pickSel.Render("next:")+" open /settings → model and pick one from "+
+				"  "+dimStyle.Render("next:")+" open /settings → model and pick one from "+
 					m.cfg.Provider+" ("+keyHint("f", "fetches the list")+")",
 				"")
 		}
@@ -457,7 +471,7 @@ func (m *Model) welcomeView() string {
 	case welcomeModel:
 		switch {
 		case w.fetching:
-			footer = dimStyle.Render("fetching…") + dimStyle.Render("  ·  ") + keyHint("enter", "skip for now") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+			footer = keyHint("enter", "skip for now") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 		case w.fetchErr != "" || len(w.models) == 0:
 			footer = keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 		default:
@@ -467,10 +481,12 @@ func (m *Model) welcomeView() string {
 		footer = keyHint("enter", "start chatting")
 	}
 	if w.savedMsg != "" {
-		footer = okStyle.Render(w.savedMsg) + "\n" + footer
+		footer = flash(w.savedMsg) + "\n" + footer
 	}
 
-	head := title + dimStyle.Render(fmt.Sprintf("  ·  step %d/%d", w.step+1, welcomeSteps-1))
+	steps := welcomeSteps - 1 // the custom form is a detour, not a step
+	head := lipgloss.JoinHorizontal(lipgloss.Center, title,
+		"  ", stepDots(min(w.step, steps-1), steps))
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, head, "", body, "", footer))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }

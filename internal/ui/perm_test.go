@@ -110,7 +110,7 @@ func TestPermViewRendersDiff(t *testing.T) {
 	if !strings.Contains(v, "-old line") || !strings.Contains(v, "+new line") {
 		t.Errorf("view missing diff: %q", v)
 	}
-	if !strings.Contains(v, "y allow") {
+	if !strings.Contains(v, "allow") || !strings.Contains(v, "deny") {
 		t.Errorf("view missing keys help: %q", v)
 	}
 }

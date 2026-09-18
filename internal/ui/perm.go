@@ -58,8 +58,7 @@ func (m *Model) permView() string {
 		return m.planView(req)
 	}
 
-	title := titleStyle.Render("◆ permission") +
-		dimStyle.Render(fmt.Sprintf("  %s · %s", req.Call.Name, req.Risk))
+	title := dialogTitle("permission", fmt.Sprintf("%s · %s", req.Call.Name, req.Risk))
 	if target := requestTarget(req.Call.Input); target != "" {
 		title += dimStyle.Render(" · " + clip(target, 60))
 	}
@@ -67,7 +66,7 @@ func (m *Model) permView() string {
 	var body string
 	switch {
 	case req.Call.Name == "bash":
-		body = userStyle.Render("$ "+req.Preview) + "\n" +
+		body = cmdStyle.Render("$ "+req.Preview) + "\n" +
 			dimStyle.Render("runs in "+m.workdir)
 	case req.Preview != "":
 		body = colorizeDiff(req.Preview, permPreviewMax(m.height))
@@ -75,7 +74,8 @@ func (m *Model) permView() string {
 		body = dimStyle.Render("(no preview available)")
 	}
 
-	help := dimStyle.Render("y allow · n/esc deny")
+	help := keyHint("y", "allow") + dimStyle.Render("  ·  ") +
+		keyHint("n/esc", "deny")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
@@ -83,10 +83,10 @@ func (m *Model) permView() string {
 // planView renders the plan-approval dialog: the plan text plus the
 // consequence of approving.
 func (m *Model) planView(req agent.Request) string {
-	title := titleStyle.Render("◆ plan") +
-		dimStyle.Render("  approve to switch to accept-edits")
+	title := dialogTitle("plan", "approve to switch to accept-edits")
 	body := clipPlain(req.Preview, permPreviewMax(m.height))
-	help := dimStyle.Render("y approve — implement · n/esc keep planning")
+	help := keyHint("y", "approve — implement") + dimStyle.Render("  ·  ") +
+		keyHint("n/esc", "keep planning")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }

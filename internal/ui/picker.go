@@ -17,8 +17,6 @@ type picker struct {
 	cursor  int
 }
 
-var pickSel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-
 // OpenPicker shows the session chooser over the chat view.
 func (m *Model) OpenPicker(entries []agent.Info) {
 	m.picker = &picker{entries: entries}
@@ -77,10 +75,17 @@ func (m *Model) pickerView() string {
 			rows = append(rows, "  "+name+dimStyle.Render("  "+meta))
 		}
 	}
-	body := titleStyle.Render("◆ sessions") +
-		dimStyle.Render("  ↑/↓ move · enter open · esc cancel") + "\n\n" +
-		strings.Join(rows, "\n")
-	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, body)
+	footer := keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
+		keyHint("enter", "open") + dimStyle.Render("  ·  ") +
+		keyHint("esc", "cancel")
+	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
+		dialogTitle("sessions", fmt.Sprintf("%d saved", len(m.picker.entries))),
+		"",
+		strings.Join(rows, "\n"),
+		"",
+		footer,
+	))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // clip shortens s to n runes with an ellipsis.

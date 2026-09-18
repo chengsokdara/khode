@@ -826,54 +826,44 @@ func (m *Model) applyMCPResult(msg mcpApplyMsg) {
 
 func (m *Model) settingsView() string {
 	s := m.settings
-	title := titleStyle.Render("◆ settings") +
-		dimStyle.Render("  changes save instantly")
+	title := dialogTitle("settings", "changes save instantly")
 	var body []string
 	switch {
 	case s.form != nil:
 		body = s.formView()
 	case s.view == viewProviderList:
-		title = titleStyle.Render("◆ settings · providers") +
-			dimStyle.Render("  n new custom · enter switch/edit · d remove")
+		title = dialogTitle("settings · providers", "n new custom · enter switch/edit · d remove")
 		body = m.providerListView()
 	case s.view == viewModels:
-		title = titleStyle.Render("◆ settings · models") +
-			dimStyle.Render("  for "+m.cfg.Provider)
+		title = dialogTitle("settings · models", "for "+m.cfg.Provider)
 		body = m.modelPickerView()
 	case s.view == viewMCPList:
-		title = titleStyle.Render("◆ settings · mcp servers") +
-			dimStyle.Render("  n new · enter edit · d remove")
+		title = dialogTitle("settings · mcp servers", "n new · enter edit · d remove")
 		body = m.mcpListView()
 	case s.view == viewHookList:
-		title = titleStyle.Render("◆ settings · hooks") +
-			dimStyle.Render("  n new · enter edit · d remove")
+		title = dialogTitle("settings · hooks", "n new · enter edit · d remove")
 		body = m.hookListView()
 	default:
 		body = s.rowsView(m)
 	}
 
-	footer := s.savedMsg
+	var footer string
 	switch {
-	case footer != "":
+	case s.savedMsg != "":
+		footer = flash(s.savedMsg)
 	case s.editor != nil:
-		footer = keyHint("enter", "save") + dimStyle.Render(" · ") +
-			keyHint("esc", "cancel") + dimStyle.Render(" · "+s.editor.hint)
+		footer = keyHint("enter", "save") + dimStyle.Render("  ·  ") +
+			keyHint("esc", "cancel") + dimStyle.Render("  ·  "+s.editor.hint)
 	default:
-		footer = keyHint("↑/↓", "move") + dimStyle.Render(" · ") +
-			keyHint("←/→", "change") + dimStyle.Render(" · ") +
-			keyHint("enter", "edit") + dimStyle.Render(" · ") +
+		footer = keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
+			keyHint("←/→", "change") + dimStyle.Render("  ·  ") +
+			keyHint("enter", "edit") + dimStyle.Render("  ·  ") +
 			keyHint("esc", "close")
 	}
 
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
 		title, "", strings.Join(body, "\n"), "", footer))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-}
-
-// keyHint renders one footer fragment: the key name highlighted, the
-// verb dim — footer keys must be findable, not wallpaper.
-func keyHint(keyName, verb string) string {
-	return pickSel.Render(keyName) + dimStyle.Render(" "+verb)
 }
 
 func (s *settings) rowsView(m *Model) []string {
@@ -888,9 +878,9 @@ func (s *settings) renderRow(m *Model, row settingsRow) string {
 	editing := s.editor != nil && s.editor.row == row
 	marker := "  "
 	if editing || (row == settingsRow(s.cursor) && s.view == viewRows && s.editor == nil) {
-		marker = "❯ "
+		marker = pickSel.Render("❯ ")
 	}
-	label := fmt.Sprintf("%-12s", rowLabel(row)+":")
+	label := dimStyle.Render(fmt.Sprintf("%-13s", rowLabel(row)+":"))
 	if editing {
 		return marker + label + s.editor.input.View()
 	}
@@ -1471,7 +1461,7 @@ func (m *Model) modelPickerView() []string {
 	for i := start; i < min(len(p.list), start+windowH); i++ {
 		cur := "  "
 		if i == p.cursor && !p.adding {
-			cur = "❯ "
+			cur = pickSel.Render("❯ ")
 		}
 		dot := "  "
 		if p.list[i] == active {
@@ -1487,7 +1477,7 @@ func (m *Model) modelPickerView() []string {
 		out = append(out, dimStyle.Render(fmt.Sprintf("  %d/%d · ↑/↓ more", p.cursor+1, len(p.list))))
 	}
 	if p.fetching {
-		out = append(out, statusStyle.Render("fetching models…"))
+		out = append(out, m.spinner.View()+statusStyle.Render(" fetching models…"))
 	}
 	if p.status != "" {
 		out = append(out, dimStyle.Render(p.status))
