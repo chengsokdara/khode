@@ -247,6 +247,39 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
 
 ## Decisions already made (do not re-litigate without asking)
 
+- **M15 hardening + deploy contract (session 21, do not regress)**:
+  - **Webhook record+credit is ATOMIC**: `webhook_events` INSERT rides the
+    same D1 batch as the ledger insert + balance bump. Never split the
+    delivery-record from the credit again — a recorded-but-uncredited delivery
+    makes every LS retry answer "duplicate" and the top-up is silently lost.
+    Only `isUniqueViolation(err, table)` (walks the drizzle cause chain for
+    `UNIQUE constraint failed: <table>.` — trailing dot for exact table
+    match) may answer `{ok, duplicate:true}`; ANY other error must throw (500)
+    so Lemon Squeezy retries into a clean state. Non-crediting outcomes still
+    answer 200 with a recorded note (no LS retry-loops).
+  - **request_logs carries `request_logs_api_key_idx`** (migration 0009): the
+    spend-cap SUM + logs filters + keyUsage aggregates all hit api_key_id on
+    every keyed request. Portal keyUsage is SQL SUM+count — never a row load.
+  - **Admin PATCH validation order**: validate `balance_adjust_usd` before
+    applying the `enabled` toggle (no partial application on 400).
+  - **Root onError is generic**: `Internal server error` 500; raw err.message
+    (SQL fragments) never reaches clients; `HTTPException` from
+    `hono/http-exception` passes through with its own status/message.
+  - **Remote deploy facts (2026-09-19)**: remote D1 `khateway` =
+    `32583a0a-d5ed-4e14-8308-0e0c019f2fcc` (in wrangler.jsonc — placeholder
+    gone); Worker live at **https://khateway.chengsokdara.workers.dev**
+    (account cf8467c085e4ec1d0735b3136f4884ad, chengsokdara@gmail.com);
+    secrets ENCRYPTION_KEY (fresh random) + ADMIN_PASSWORD (= the .dev.vars
+    value) set via piped stdin — never printed to chat/logs. Rotate the admin
+    password with `npx wrangler secret put ADMIN_PASSWORD` whenever asked.
+    Deployed-surface smoke: /health, keyless /v1/models, bogus-model 404
+    envelope, admin login 200, SPA 200. The remote DB starts EMPTY — real
+    providers/models must be registered in the admin console (or migrated by
+    hand); smokes must NEVER run against it (they wipe logs/fixtures).
+  - **git**: the repo is on `main` (init session 21 — the project was
+    UNVERSIONED before that). .gitignore covers node_modules/.wrangler/
+    web-dist/.dev.vars/.video_agent/.zcode. Commit at milestone boundaries.
+
 - **M14 playground contract (session 20, do not regress)**:
   - **Session-scoped keys, not a proxy**: the playground hits the REAL /v1
     gateway with an ordinary enrolled key so every gate (auth, spend cap,
@@ -706,7 +739,7 @@ See `STATUS.md` (kept live there — it is the resume point). **M1–M7 done —
 - A mounted Hono sub-app's `notFound()` is bypassed by the root app — the gateway owns unknown `/v1/*` paths via a wildcard `all('*')` route (returns OpenAI-shaped 404). Don't "simplify" it back to notFound().
 - No CSRF hardening on /admin (SameSite=Lax, HttpOnly, single-origin same-Worker). Acceptable internal; revisit if ever exposed publicly.
 - The local D1 has real user fixtures (provider KiosAPI — now unused; provider Z.ai serving slug `glm-5.3-flash`) that smoke scripts must never delete; smoke fixtures are `… (smoke)`-named and self-cleaning (incl. api keys).
-- Deploy needs: real D1 `database_id` (placeholder in wrangler.jsonc), `wrangler secret put ADMIN_PASSWORD` + `ENCRYPTION_KEY`.
+- Deploy needs: ~~real D1 `database_id` (placeholder in wrangler.jsonc), `wrangler secret put ADMIN_PASSWORD` + `ENCRYPTION_KEY`~~ **DONE (session 21 — deployed to khateway.chengsokdara.workers.dev; see the M15 contract)**.
 - **Request bodies are always rebuilt from canonical** (even same-dialect pairings — only responses/SSE relay untouched), so dialect-specific fields Khateway doesn't model are lost: anthropic block-level `cache_control` (prompt caching does not survive Khateway today), openai message-level extras other than `name`-style passthrough, and intra-message text/image ordering. If prompt caching matters, that's a canonical-extensions decision, not a bug fix.
 - SSE fragment assertions in smoke must **parse events** (`parseSseEvents`/`parseDataLines`) — JSON escaping hides fragment content from substring matching (burned session 5 twice).
 - Z.ai quirks (see M7 contract above): coding-plan keys only work on the `/api/coding/paas/v4` base; `/models` returns HTTP 200 with auth-error bodies, so admin test-connection can't detect a bad z.ai key.

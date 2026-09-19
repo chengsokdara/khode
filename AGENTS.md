@@ -225,7 +225,8 @@ drizzle/            — generated SQL migrations (applied with wrangler d1 migra
                       0006_m10_rate_limits adds models.rate_limit_rpm + api_keys.rate_limit_rpm;
                       0007_m11_cache adds models/api_keys.cache_enabled, request_logs.cache_hit,
                       the cache_entries table + expires/model indexes;
-                      0008_m14_playground adds api_keys.playground_session)
+                      0008_m14_playground adds api_keys.playground_session;
+                      0009_m15_log_indexes adds request_logs_api_key_idx)
 
 tests/              — offline golden-fixture suite (vitest; no server needed)
 ├── fixtures/       — arrays of {name, …input, expected} cases per wire-format area

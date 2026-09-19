@@ -33,9 +33,8 @@
     {
       "binding": "DB",
       "database_name": "khateway",
-      // Placeholder for local dev. Before remote deploy run:
-      //   npx wrangler d1 create khateway   (then paste the returned database_id)
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Remote database created 2026-09-19 (M15 deploy): khateway @ Chengsokdara@gmail.com's Account.
+      "database_id": "32583a0a-d5ed-4e14-8308-0e0c019f2fcc",
       "migrations_dir": "drizzle"
     }
   ],

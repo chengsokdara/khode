@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-19 (session 20 — M14 playground UI)
+Last updated: 2026-09-19 (session 21 — M15 hardening + real deploy)
 
 ## How to use this file
 
@@ -10,6 +10,66 @@ where the milestone plan lives, "Recent changes" for history (newest first).
 If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
+
+- **M15 — pre-launch hardening + REAL DEPLOY ✅ complete (session 21,
+  2026-09-19)** — user picked all four queued packages (M15 hardening+deploy →
+  M16 parity pack → M17 reasoning → M18 structured outputs) after a
+  codebase-wide audit (2 exploration passes + hand verification). M15 shipped:
+  - **Webhook money-loss fix** (`routes/webhooks.ts`): the `webhook_events`
+    row is now written in the SAME atomic D1 batch as the credit (ledger +
+    balance bump); the old gate-1-then-credit order meant a transient D1
+    failure was answered `{ok,duplicate}` (LS never retries) and even a 5xx
+    retry would have been blocked as a duplicate without crediting. New
+    exported `isUniqueViolation(err, table)` walks the drizzle cause chain for
+    `UNIQUE constraint failed: <table>.` (trailing dot = exact table match);
+    unique → duplicate 200, anything else → throw → 500 so LS retries into a
+    clean state. Non-crediting outcomes record-with-note at insert (no more
+    noteAndFinish UPDATE). Pinned by `tests/worker/webhook-errors.test.ts`
+    (4 tests); smoke_m8 43/43 green.
+  - **`request_logs.api_key_id` index** (migration `0009_m15_log_indexes`,
+    generated + renamed + journal tag hand-edited, applied local + REMOTE):
+    the spend-cap SUM ran on every keyed request against an unindexed
+    append-only table. Portal `keyUsage` now SQL `SUM`+`count` (mirrors
+    admin) — the unbounded row-load + N+1 in `GET /keys` is gone.
+  - **PATCH /users/:id + /orgs/:id**: `balance_adjust_usd` validated BEFORE
+    the enable/disable toggle applies (no partial application on 400).
+  - **Root `onError`**: generic `Internal server error` 500 (raw err.message
+    with SQL fragments never reaches clients); Hono `HTTPException`
+    (from `hono/http-exception`) passes through.
+  - **Doc drift**: README milestones through M14 + new `/app` portal section;
+    App.tsx sidebar footer "M1–M14 · development"; `UserInsert` → `UserRow`.
+  - **REAL DEPLOY ✅** — https://khateway.chengsokdara.workers.dev — remote
+    D1 `khateway` created (id in wrangler.jsonc, placeholder gone), all 10
+    migrations applied `--remote`, Worker deployed (RATE_LIMITER DO + DB +
+    ASSETS bindings verified), secrets set: `ENCRYPTION_KEY` (freshly
+    generated, piped, never displayed) + `ADMIN_PASSWORD` (the .dev.vars
+    value, piped — ROTATE ANYTIME via `npx wrangler secret put
+    ADMIN_PASSWORD`). Verified on the deployed URL: /health ok, keyless
+    /v1/models 200 (empty list — fresh DB), bogus-model chat → 404 openai
+    envelope (auth→parse→routing→D1 all live), admin login 200, SPA root 200.
+  - **git initialized** (was unversioned!): repo on `main`, .gitignore covers
+    node_modules/.wrangler/web-dist/.dev.vars/.video_agent/.zcode; commits:
+    initial (M1–M14) + M15 hardening.
+- **Next: M16 — OpenRouter client-parity pack** (per the user's chosen
+  sequence): /v1/models pricing + supported_parameters, client /api/v1
+  key+credits endpoints, legacy /v1/completions, attribution headers, DO
+  count/limit/reset exposure + x-ratelimit success headers, usage:{include},
+  SSE keep-alives. Then M17 reasoning/thinking, M18 structured outputs.
+- **MVP M1–M7 ✅**; **M8 ✅ (session 13)**; **M9 ✅ (session 14)**; **M10 ✅
+  (session 15)**; **M11 ✅ (session 17)**; **M12 ✅ (session 18)**; **M13 ✅
+  (session 19)**; **M14 ✅ (session 20)**.
+
+## Verification baseline (2026-09-19, session 21)
+
+- `npm run check` — clean (worker + web + test tsconfigs)
+- `npm test` — **270/270** (+4: webhook unique-violation discrimination)
+- `npm run build:web` — clean (408.3 KB js / 112.4 KB gzip)
+- `npm run migrate:local` — `0009_m15_log_indexes` applied
+- All seven smokes re-run post-M15: `npm run smoke` green (exit 0),
+  `smoke:gateway` **176/176**, `smoke:m8` **43**, `smoke:m9` **75**,
+  `smoke:m10` **33**, `smoke:m11` **ALL PASS (30)**, `smoke:m14` **ALL PASS (24)**
+- Deploy verification: see the M15 block above (remote /health, /v1/models,
+  chat 404 envelope, admin login, SPA — all green)
 
 - **M14 — playground UI ✅ complete (session 20, 2026-09-19)** — "Let's go
   M14"; scope per ROADMAP.md's M14 row: in-admin chat tester hitting the
@@ -442,6 +502,22 @@ from the unscheduled polish queue or user direction.
 
 ## Recent changes
 
+- 2026-09-19 — **M15: pre-launch hardening + real deploy (session 21)**.
+  Audit first (2 exploration passes + hand verification of the top findings),
+  then: webhooks.ts rewritten atomic (webhook_events + ledger + balance in
+  ONE batch, `isUniqueViolation` cause-chain discriminator — unique →
+  duplicate 200, else 500 so LS retries); migration `0009_m15_log_indexes`
+  (request_logs.api_key_idx — spend-cap SUM was a full scan per keyed
+  request); portal keyUsage → SQL SUM+count; PATCH /users + /orgs validate
+  balance BEFORE toggling enabled; root onError → generic 500 (HTTPException
+  passthrough); README/App.tsx footer/UserRow drift fixes. **Real deploy:
+  remote D1 `khateway` (32583a0a-…) wired into wrangler.jsonc, 10 migrations
+  --remote, Worker live at https://khateway.chengsokdara.workers.dev,
+  ENCRYPTION_KEY + ADMIN_PASSWORD secrets set (values piped, never
+  displayed), deployed surface verified**. git init (main) + 2 commits.
+  Tests: tests/worker/webhook-errors.test.ts (+4); all seven smokes re-green
+  post-change. Contract in MEMORY.md → "M15 hardening + deploy contract".
+
 - 2026-09-19 — **M14: playground UI (session 20)**. Migration
   `0008_m14_playground` (api_keys.playground_session — the owning admin
   session's sha256 token hash). Admin API: `POST /admin/playground/key`
@@ -724,6 +800,10 @@ from the unscheduled polish queue or user direction.
     `smoke_m10` restores 'off' at cleanup too (neutral dev state).
   - `/admin` has no CSRF hardening (SameSite=Lax + HttpOnly, single origin). Fine internally; revisit if ever exposed publicly.
   - `wrangler 4.133.0` available (on 4.132.0) — informational, stack is frozen per RULES.md.
-  - Remote deploy prerequisites not yet done (database_id placeholder, remote secrets/migrations) — recommended before M10/public launch (see ROADMAP.md). M8's billing features additionally need real Lemon Squeezy credentials (store/variant/API key/webhook secret) configured on the admin Settings page.
+  - ~~Remote deploy prerequisites not yet done~~ **DONE (session 21)**:
+    deployed to https://khateway.chengsokdara.workers.dev (remote D1 + secrets
+    set). The remote DB starts EMPTY — register real providers/models in the
+    deployed admin console; real Lemon Squeezy credentials still needed on
+    admin Settings → Billing before top-ups work there.
   - Models with **null pricing cost portal users nothing** (unknown cost never debits) — set pricing before selling access to a model.
   - Portal accounts have **no email verification** (no email sender on Workers) — deliberate M8 deferral.
