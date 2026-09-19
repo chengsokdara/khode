@@ -1,0 +1,253 @@
+[
+  {
+    "name": "order_created paid, subtotal/discount breakdown present",
+    "payload": {
+      "meta": {
+        "event_name": "order_created",
+        "custom_data": { "user_id": "usr_1" },
+        "test_mode": false
+      },
+      "data": {
+        "type": "orders",
+        "id": "101",
+        "attributes": {
+          "store_id": 7,
+          "identifier": "order_abc",
+          "user_email": "buyer@example.com",
+          "currency": "USD",
+          "subtotal": 1000,
+          "discount_total": 200,
+          "tax": 0,
+          "total": 800,
+          "status": "paid",
+          "refunded": false
+        }
+      }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:101",
+      "orderId": "101",
+      "userId": "usr_1",
+      "orgId": null,
+      "status": "paid",
+      "refunded": false,
+      "currency": "USD",
+      "subtotalCents": 1000,
+      "discountCents": 200,
+      "totalCents": 800,
+      "userEmail": "buyer@example.com"
+    },
+    "creditMicros": 8000000
+  },
+  {
+    "name": "order_created paid, no breakdown fields → total fallback",
+    "payload": {
+      "meta": { "event_name": "order_created", "custom_data": { "user_id": "usr_2" } },
+      "data": {
+        "type": "orders",
+        "id": "7",
+        "attributes": { "currency": "USD", "total": 500, "status": "paid", "refunded": false }
+      }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:7",
+      "orderId": "7",
+      "userId": "usr_2",
+      "orgId": null,
+      "status": "paid",
+      "refunded": false,
+      "currency": "USD",
+      "subtotalCents": null,
+      "discountCents": null,
+      "totalCents": 500,
+      "userEmail": null
+    },
+    "creditMicros": 5000000
+  },
+  {
+    "name": "order_created org top-up (custom_data.org_id, M9)",
+    "payload": {
+      "meta": { "event_name": "order_created", "custom_data": { "org_id": "org_9" } },
+      "data": {
+        "type": "orders",
+        "id": "16",
+        "attributes": { "currency": "USD", "subtotal": 2000, "discount_total": 0, "total": 2000, "status": "paid", "refunded": false }
+      }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:16",
+      "orderId": "16",
+      "userId": null,
+      "orgId": "org_9",
+      "status": "paid",
+      "refunded": false,
+      "currency": "USD",
+      "subtotalCents": 2000,
+      "discountCents": 0,
+      "totalCents": 2000,
+      "userEmail": null
+    },
+    "creditMicros": 20000000
+  },
+  {
+    "name": "org_id wins over user_id when both present",
+    "payload": {
+      "meta": { "event_name": "order_created", "custom_data": { "user_id": "usr_1", "org_id": "org_9" } },
+      "data": {
+        "type": "orders",
+        "id": "17",
+        "attributes": { "currency": "USD", "total": 3000, "status": "paid", "refunded": false }
+      }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:17",
+      "orderId": "17",
+      "userId": "usr_1",
+      "orgId": "org_9",
+      "status": "paid",
+      "refunded": false,
+      "currency": "USD",
+      "subtotalCents": null,
+      "discountCents": null,
+      "totalCents": 3000,
+      "userEmail": null
+    },
+    "creditMicros": 30000000
+  },
+  {
+    "name": "order_created pending → no credit",
+    "payload": {
+      "meta": { "event_name": "order_created", "custom_data": { "user_id": "usr_1" } },
+      "data": { "type": "orders", "id": "12", "attributes": { "subtotal": 1000, "discount_total": 0, "total": 1000, "status": "pending", "refunded": false } }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:12",
+      "orderId": "12",
+      "userId": "usr_1",
+      "orgId": null,
+      "status": "pending",
+      "refunded": false,
+      "currency": null,
+      "subtotalCents": 1000,
+      "discountCents": 0,
+      "totalCents": 1000,
+      "userEmail": null
+    },
+    "creditMicros": 0
+  },
+  {
+    "name": "order_created refunded → no credit",
+    "payload": {
+      "meta": { "event_name": "order_created", "custom_data": { "user_id": "usr_1" } },
+      "data": { "type": "orders", "id": "13", "attributes": { "subtotal": 1000, "discount_total": 0, "total": 1000, "status": "paid", "refunded": true } }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:13",
+      "orderId": "13",
+      "userId": "usr_1",
+      "orgId": null,
+      "status": "paid",
+      "refunded": true,
+      "currency": null,
+      "subtotalCents": 1000,
+      "discountCents": 0,
+      "totalCents": 1000,
+      "userEmail": null
+    },
+    "creditMicros": 0
+  },
+  {
+    "name": "order_refunded event → recorded but never credited",
+    "payload": {
+      "meta": { "event_name": "order_refunded", "custom_data": { "user_id": "usr_1" } },
+      "data": { "type": "orders", "id": "101", "attributes": { "subtotal": 1000, "discount_total": 0, "total": 1000, "status": "paid", "refunded": true } }
+    },
+    "expected": {
+      "eventName": "order_refunded",
+      "eventKey": "order_refunded:101",
+      "orderId": "101",
+      "userId": "usr_1",
+      "orgId": null,
+      "status": "paid",
+      "refunded": true,
+      "currency": null,
+      "subtotalCents": 1000,
+      "discountCents": 0,
+      "totalCents": 1000,
+      "userEmail": null
+    },
+    "creditMicros": 0
+  },
+  {
+    "name": "missing custom_data → userId null (webhook records, ignores)",
+    "payload": {
+      "meta": { "event_name": "order_created" },
+      "data": { "type": "orders", "id": "14", "attributes": { "total": 1000, "status": "paid", "refunded": false } }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:14",
+      "orderId": "14",
+      "userId": null,
+      "orgId": null,
+      "status": "paid",
+      "refunded": false,
+      "currency": null,
+      "subtotalCents": null,
+      "discountCents": null,
+      "totalCents": 1000,
+      "userEmail": null
+    },
+    "creditMicros": 10000000
+  },
+  {
+    "name": "zero after discount → credit 0",
+    "payload": {
+      "meta": { "event_name": "order_created", "custom_data": { "user_id": "usr_1" } },
+      "data": { "type": "orders", "id": "15", "attributes": { "subtotal": 500, "discount_total": 500, "total": 0, "status": "paid", "refunded": false } }
+    },
+    "expected": {
+      "eventName": "order_created",
+      "eventKey": "order_created:15",
+      "orderId": "15",
+      "userId": "usr_1",
+      "orgId": null,
+      "status": "paid",
+      "refunded": false,
+      "currency": null,
+      "subtotalCents": 500,
+      "discountCents": 500,
+      "totalCents": 0,
+      "userEmail": null
+    },
+    "creditMicros": 0
+  },
+  {
+    "name": "subscription event with custom data parses (ignored for credit)",
+    "payload": {
+      "meta": { "event_name": "subscription_created", "custom_data": { "user_id": "usr_3" } },
+      "data": { "type": "subscriptions", "id": "55", "attributes": { "status": "active" } }
+    },
+    "expected": {
+      "eventName": "subscription_created",
+      "eventKey": "subscription_created:55",
+      "orderId": "55",
+      "userId": "usr_3",
+      "orgId": null,
+      "status": "active",
+      "refunded": false,
+      "currency": null,
+      "subtotalCents": null,
+      "discountCents": null,
+      "totalCents": null,
+      "userEmail": null
+    },
+    "creditMicros": 0
+  }
+]

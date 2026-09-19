@@ -1,0 +1,192 @@
+// Shared request-option validators for the dialect parsers (dialects/*).
+// Extracted from openaiChat.ts in M4 so the anthropic parser enforces the
+// same bounds; each dialect decides which of these to apply and with which
+// limits (e.g. openai `stop` ≤ 4 strings, anthropic `stop_sequences` ≤ 16).
+// M6 adds the shared tool-definition / tool_choice / image validators used by
+// all three dialect parsers — they normalize each dialect's wire shape onto
+// the canonical form (src/worker/canonical.ts).
+
+import type { CanonicalImage, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
+
+export type OptResult = { err?: string; val?: number | null };
+
+export function floatOption(v: unknown, param: string, lo: number, hi: number): OptResult {
+  if (v === undefined) return { val: undefined };
+  if (v === null) return { val: null };
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) {
+    return { err: `${param} must be a number between ${lo} and ${hi}` };
+  }
+  return { val: v };
+}
+
+export function intOption(v: unknown, param: string, lo: number, hi: number): OptResult {
+  if (v === undefined) return { val: undefined };
+  if (v === null) return { val: null };
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi) {
+    return { err: `${param} must be an integer between ${lo} and ${hi}` };
+  }
+  return { val: v };
+}
+
+export function stopOption(v: unknown, maxCount = 4): { err?: string; val?: string[] | null } {
+  if (v === undefined) return { val: undefined };
+  if (v === null) return { val: null };
+  const items = typeof v === 'string' ? [v] : Array.isArray(v) ? v : null;
+  const okItems = !!items && items.every((x) => typeof x === 'string' && x.length > 0 && x.length <= 128);
+  if (!okItems || items.length > maxCount) {
+    return { err: `stop must be a string or an array of at most ${maxCount} strings (≤128 chars each)` };
+  }
+  return { val: items as string[] };
+}
+
+export function boolOption(v: unknown, param: string): { err?: string; val?: boolean | null } {
+  if (v === undefined) return { val: undefined };
+  if (v === null) return { val: null };
+  if (typeof v !== 'boolean') return { err: `${param} must be a boolean` };
+  return { val: v };
+}
+
+// ------------------------------------------------------------------- tools
+
+/**
+ * Client-declared tools → canonical defs, per source dialect:
+ * - `openai`: `[{type:'function', function:{name, description?, parameters?}}]`
+ * - `anthropic`: `[{name, description?, input_schema}]`
+ * - `responses`: `[{type:'function', name, description?, parameters?}]` (flat)
+ * Non-function / server-hosted tool types are rejected — Khateway only routes
+ * client-executed function tools (hosted tools execute inside one vendor's
+ * cloud and cannot be translated to another dialect).
+ */
+export function toolDefsOption(
+  v: unknown,
+  mode: 'openai' | 'anthropic' | 'responses',
+): { err?: string; val?: CanonicalToolDef[] | null } {
+  if (v === undefined) return { val: undefined };
+  if (v === null) return { val: null };
+  if (!Array.isArray(v)) return { err: 'tools must be an array of tool definitions' };
+  const defs: CanonicalToolDef[] = [];
+  for (const [i, raw] of v.entries()) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { err: `tools[${i}] must be an object` };
+    }
+    const t = raw as Record<string, unknown>;
+    if (mode === 'anthropic') {
+      if (typeof t.type === 'string') {
+        return { err: `tools[${i}]: server-hosted tool type '${t.type}' cannot be routed across dialects — only client-executed tools are supported` };
+      }
+      if (typeof t.name !== 'string' || !t.name) return { err: `tools[${i}].name must be a string` };
+      if (t.description !== undefined && t.description !== null && typeof t.description !== 'string') {
+        return { err: `tools[${i}].description must be a string` };
+      }
+      if (!t.input_schema || typeof t.input_schema !== 'object' || Array.isArray(t.input_schema)) {
+        return { err: `tools[${i}].input_schema must be a JSON schema object` };
+      }
+      defs.push({
+        name: t.name,
+        ...(typeof t.description === 'string' ? { description: t.description } : {}),
+        parameters: t.input_schema,
+      });
+      continue;
+    }
+    // openai + responses declare function tools with type:'function'
+    if (t.type !== 'function') {
+      return { err: `tools[${i}]: tool type '${String(t.type)}' is vendor-hosted and cannot be routed across dialects — only 'function' tools are supported` };
+    }
+    if (mode === 'responses') {
+      if (typeof t.name !== 'string' || !t.name) return { err: `tools[${i}].name must be a string` };
+      if (t.description !== undefined && t.description !== null && typeof t.description !== 'string') {
+        return { err: `tools[${i}].description must be a string` };
+      }
+      if (t.parameters !== undefined && t.parameters !== null && (typeof t.parameters !== 'object' || Array.isArray(t.parameters))) {
+        return { err: `tools[${i}].parameters must be a JSON schema object` };
+      }
+      defs.push({
+        name: t.name,
+        ...(typeof t.description === 'string' ? { description: t.description } : {}),
+        ...(t.parameters !== undefined && t.parameters !== null ? { parameters: t.parameters } : {}),
+      });
+      continue;
+    }
+    const fn = t.function;
+    if (!fn || typeof fn !== 'object' || Array.isArray(fn)) return { err: `tools[${i}].function must be an object` };
+    const f = fn as Record<string, unknown>;
+    if (typeof f.name !== 'string' || !f.name) return { err: `tools[${i}].function.name must be a string` };
+    if (f.description !== undefined && f.description !== null && typeof f.description !== 'string') {
+      return { err: `tools[${i}].function.description must be a string` };
+    }
+    if (f.parameters !== undefined && f.parameters !== null && (typeof f.parameters !== 'object' || Array.isArray(f.parameters))) {
+      return { err: `tools[${i}].function.parameters must be a JSON schema object` };
+    }
+    defs.push({
+      name: f.name,
+      ...(typeof f.description === 'string' ? { description: f.description } : {}),
+      ...(f.parameters !== undefined && f.parameters !== null ? { parameters: f.parameters } : {}),
+    });
+  }
+  return { val: defs };
+}
+
+/** Tool-choice → canonical, per source dialect. */
+export function toolChoiceOption(
+  v: unknown,
+  mode: 'openai' | 'anthropic' | 'responses',
+): { err?: string; val?: CanonicalToolChoice | null } {
+  if (v === undefined) return { val: undefined };
+  if (v === null) return { val: null };
+  if (typeof v === 'string') {
+    if (mode === 'anthropic') return { err: 'tool_choice must be an object like {type: "auto" | "any" | "tool" | "none", name?}' };
+    if (v === 'auto' || v === 'none' || v === 'required') return { val: v };
+    return { err: `tool_choice must be 'auto', 'none', 'required' or a function specifier` };
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { err: 'tool_choice must be a string or an object' };
+  const t = v as Record<string, unknown>;
+  if (mode === 'anthropic') {
+    if (t.type === 'auto') return { val: 'auto' };
+    if (t.type === 'any') return { val: 'required' };
+    if (t.type === 'none') return { val: 'none' };
+    if (t.type === 'tool') {
+      if (typeof t.name !== 'string' || !t.name) return { err: 'tool_choice.name must be a string when type is "tool"' };
+      return { val: { name: t.name } };
+    }
+    return { err: 'tool_choice.type must be one of auto, any, tool, none' };
+  }
+  if (t.type !== 'function') {
+    return { err: `tool_choice: only function tool choice can be routed — '${String(t.type)}' is not supported` };
+  }
+  if (mode === 'responses') {
+    if (typeof t.name !== 'string' || !t.name) return { err: 'tool_choice.name must be a string' };
+    return { val: { name: t.name } };
+  }
+  const fn = t.function;
+  if (!fn || typeof fn !== 'object' || Array.isArray(fn)) return { err: 'tool_choice.function must be an object' };
+  const name = (fn as Record<string, unknown>).name;
+  if (typeof name !== 'string' || !name) return { err: 'tool_choice.function.name must be a string' };
+  return { val: { name } };
+}
+
+// ------------------------------------------------------------------- images
+
+/** Validates an image URL (data URL or http(s)) — the only forms every dialect can express. */
+export function imageUrlValue(v: unknown, param: string): { err?: string; url?: string } {
+  if (typeof v !== 'string' || !v) return { err: `${param} must be an image URL string` };
+  if (v.startsWith('data:')) return { url: v };
+  if (v.startsWith('http://') || v.startsWith('https://')) return { url: v };
+  return { err: `${param} must be a data: URL or an http(s) URL` };
+}
+
+/** Builds a canonical image from a URL value that may be a string or `{url, detail?}`. */
+export function imageOption(v: unknown, param: string): { err?: string; val?: CanonicalImage } {
+  let urlVal: unknown = v;
+  let detail: unknown;
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    urlVal = o.url;
+    detail = o.detail;
+  }
+  const url = imageUrlValue(urlVal, param);
+  if (url.err) return { err: url.err };
+  if (detail !== undefined && detail !== 'auto' && detail !== 'low' && detail !== 'high') {
+    return { err: `${param}.detail must be one of auto, low, high` };
+  }
+  return { val: detail === undefined ? { url: url.url as string } : { url: url.url as string, detail } };
+}

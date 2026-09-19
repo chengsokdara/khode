@@ -1,0 +1,149 @@
+[
+  {
+    "name": "openai: string input normalized to array; POST {base}/embeddings",
+    "adapter": "openai-embeddings",
+    "apiKeyPlain": "sk-emb-mock",
+    "cand": {
+      "model": { "upstreamModel": "text-embedding-3-small" },
+      "provider": { "name": "Embed (smoke)", "baseUrl": "https://api.example.com/v1" },
+      "baseUrl": "https://api.example.com/v1"
+    },
+    "req": { "input": ["hello"], "dimensions": null, "encodingFormat": null, "extras": {} },
+    "expected": {
+      "url": "https://api.example.com/v1/embeddings",
+      "headers": { "authorization": "Bearer sk-emb-mock", "content-type": "application/json" },
+      "body": { "model": "text-embedding-3-small", "input": ["hello"] },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "name": "openai: array input + dimensions + encoding_format + extras passthrough",
+    "adapter": "openai-embeddings",
+    "apiKeyPlain": "sk-emb-mock",
+    "cand": {
+      "model": { "upstreamModel": "text-embedding-3-large" },
+      "provider": { "name": "Embed (smoke)", "baseUrl": "https://api.example.com/v1" },
+      "baseUrl": "https://api.example.com/v1"
+    },
+    "req": {
+      "input": ["a", "b"],
+      "dimensions": 256,
+      "encodingFormat": "base64",
+      "extras": { "user": "u-1" }
+    },
+    "expected": {
+      "url": "https://api.example.com/v1/embeddings",
+      "headers": { "authorization": "Bearer sk-emb-mock", "content-type": "application/json" },
+      "body": { "user": "u-1", "model": "text-embedding-3-large", "input": ["a", "b"], "dimensions": 256, "encoding_format": "base64" },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "name": "openai: bare-origin base gains /v1 (mirrors the chat rule)",
+    "adapter": "openai-embeddings",
+    "apiKeyPlain": "sk-emb-mock",
+    "cand": {
+      "model": { "upstreamModel": "emb-mock" },
+      "provider": { "name": "Embed (smoke)", "baseUrl": "https://api.example.com" },
+      "baseUrl": "https://api.example.com"
+    },
+    "req": { "input": ["x"], "dimensions": null, "encodingFormat": null, "extras": {} },
+    "expected": {
+      "url": "https://api.example.com/v1/embeddings",
+      "headers": { "authorization": "Bearer sk-emb-mock", "content-type": "application/json" },
+      "body": { "model": "emb-mock", "input": ["x"] },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "name": "gemini: single text → :embedContent with model + content, no config",
+    "adapter": "gemini-embeddings",
+    "apiKeyPlain": "sk-gem-mock",
+    "cand": {
+      "model": { "upstreamModel": "gemini-embedding-001" },
+      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "req": { "input": ["What is the meaning of life?"], "dimensions": null, "encodingFormat": null, "extras": {} },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "body": {
+        "model": "models/gemini-embedding-001",
+        "content": { "parts": [{ "text": "What is the meaning of life?" }] }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "name": "gemini: multiple texts → :batchEmbedContents, one request entry per input",
+    "adapter": "gemini-embeddings",
+    "apiKeyPlain": "sk-gem-mock",
+    "cand": {
+      "model": { "upstreamModel": "text-embedding-004" },
+      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "req": { "input": ["alpha", "beta", "gamma"], "dimensions": null, "encodingFormat": null, "extras": {} },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents",
+      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "body": {
+        "requests": [
+          { "model": "models/text-embedding-004", "content": { "parts": [{ "text": "alpha" }] } },
+          { "model": "models/text-embedding-004", "content": { "parts": [{ "text": "beta" }] } },
+          { "model": "models/text-embedding-004", "content": { "parts": [{ "text": "gamma" }] } }
+        ]
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "name": "gemini: dimensions → outputDimensionality; task_type/title extras → embedContentConfig",
+    "adapter": "gemini-embeddings",
+    "apiKeyPlain": "sk-gem-mock",
+    "cand": {
+      "model": { "upstreamModel": "gemini-embedding-001" },
+      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "req": {
+      "input": ["doc body"],
+      "dimensions": 768,
+      "encodingFormat": null,
+      "extras": { "task_type": "RETRIEVAL_DOCUMENT", "title": "My doc" }
+    },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "body": {
+        "model": "models/gemini-embedding-001",
+        "content": { "parts": [{ "text": "doc body" }] },
+        "embedContentConfig": { "outputDimensionality": 768, "taskType": "RETRIEVAL_DOCUMENT", "title": "My doc" }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "name": "gemini: bare-origin base gains /v1beta (mirrors the chat rule)",
+    "adapter": "gemini-embeddings",
+    "apiKeyPlain": "sk-gem-mock",
+    "cand": {
+      "model": { "upstreamModel": "gemini-embedding-001" },
+      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com" },
+      "baseUrl": "https://generativelanguage.googleapis.com"
+    },
+    "req": { "input": ["x", "y"], "dimensions": null, "encodingFormat": null, "extras": {} },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents",
+      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "body": {
+        "requests": [
+          { "model": "models/gemini-embedding-001", "content": { "parts": [{ "text": "x" }] } },
+          { "model": "models/gemini-embedding-001", "content": { "parts": [{ "text": "y" }] } }
+        ]
+      },
+      "timeoutMs": 60000
+    }
+  }
+]

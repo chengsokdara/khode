@@ -1,0 +1,79 @@
+[
+  {
+    "name": "plain text request → stable JSON: sorted keys, explicit nulls, no stream keys",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hello", "extra": {} }],
+      "stream": false,
+      "options": { "temperature": 0.7 },
+      "extras": {}
+    },
+    "modelSlug": "gpt-5",
+    "expectedStableJson": "{\"extras\":{},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
+  },
+  {
+    "name": "property-order permutation → identical stable JSON (same cache key)",
+    "request": {
+      "extras": { "b": 2, "a": 1 },
+      "options": { "temperature": 0.7 },
+      "stream": false,
+      "messages": [{ "extra": {}, "content": "Hello", "role": "user" }]
+    },
+    "modelSlug": "gpt-5",
+    "expectedStableJson": "{\"extras\":{\"a\":1,\"b\":2},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
+  },
+  {
+    "name": "stream/streamIncludeUsage excluded → same projection as the non-streaming case",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hello", "extra": {} }],
+      "stream": true,
+      "streamIncludeUsage": true,
+      "options": { "temperature": 0.7 },
+      "extras": {}
+    },
+    "modelSlug": "gpt-5",
+    "expectedStableJson": "{\"extras\":{},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
+  },
+  {
+    "name": "model slug is part of the key",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hello", "extra": {} }],
+      "stream": false,
+      "options": { "temperature": 0.7 },
+      "extras": {}
+    },
+    "modelSlug": "claude-sonnet-4-5",
+    "expectedStableJson": "{\"extras\":{},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"claude-sonnet-4-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
+  },
+  {
+    "name": "per-message extra + options ride along (they change the upstream request)",
+    "request": {
+      "messages": [
+        { "role": "system", "content": "Be terse.", "extra": {} },
+        { "role": "user", "content": "Hi", "extra": { "name": "session-1" } }
+      ],
+      "stream": false,
+      "options": { "maxTokens": 256, "maxTokensField": "max_completion_tokens", "stop": ["END"] },
+      "extras": { "logit_bias": { "50256": -100 } }
+    },
+    "modelSlug": "gpt-5",
+    "expectedStableJson": "{\"extras\":{\"logit_bias\":{\"50256\":-100}},\"messages\":[{\"content\":\"Be terse.\",\"extra\":{},\"images\":null,\"role\":\"system\",\"toolCallId\":null,\"toolCalls\":null},{\"content\":\"Hi\",\"extra\":{\"name\":\"session-1\"},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":256,\"maxTokensField\":\"max_completion_tokens\",\"n\":null,\"parallelToolCalls\":null,\"stop\":[\"END\"],\"temperature\":null,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
+  },
+  {
+    "name": "tools/images/n projected too (the eligibility gate rejects these, the key builder stays shape-agnostic)",
+    "request": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is this?",
+          "images": [{ "url": "https://x/y.png", "detail": "low" }],
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": { "n": 2, "tools": [{ "name": "get_time", "parameters": { "type": "object" } }], "toolChoice": "auto" },
+      "extras": {}
+    },
+    "modelSlug": "gpt-5",
+    "expectedStableJson": "{\"extras\":{},\"messages\":[{\"content\":\"What is this?\",\"extra\":{},\"images\":[{\"detail\":\"low\",\"url\":\"https://x/y.png\"}],\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":2,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":null,\"toolChoice\":\"auto\",\"tools\":[{\"name\":\"get_time\",\"parameters\":{\"type\":\"object\"}}],\"topP\":null},\"v\":1}"
+  }
+]

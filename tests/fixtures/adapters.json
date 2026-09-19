@@ -1,0 +1,921 @@
+[
+  {
+    "adapter": "openai",
+    "name": "minimal: no key → no auth header; defaults for timeout",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "baseUrl": "https://api.example.com/v1",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "openai"
+        ]
+      },
+      "baseUrl": "https://api.example.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.example.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi"
+          }
+        ],
+        "stream": false
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "openai",
+    "name": "full: key + default headers + vision + tools + all options + extras + trailing-slash base",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "baseUrl": "https://api.example.com/v1/",
+        "apiKeyEnc": "RUNTIME",
+        "defaultHeaders": "{\"x-org\":\"org_1\",\"x-trace\":\"t9\"}",
+        "timeoutMs": 250,
+        "adapters": [
+          "openai"
+        ]
+      },
+      "baseUrl": "https://api.example.com/v1/"
+    },
+    "apiKeyPlain": "sk-live-test-424242",
+    "req": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Be terse.",
+          "extra": {}
+        },
+        {
+          "role": "developer",
+          "content": "Be honest.",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "Describe",
+          "images": [
+            {
+              "url": "data:image/png;base64,AAA",
+              "detail": "high"
+            },
+            {
+              "url": "https://example.com/cat.jpg"
+            }
+          ],
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_1",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          ],
+          "extra": {}
+        },
+        {
+          "role": "tool",
+          "content": "22C",
+          "toolCallId": "call_1",
+          "extra": {
+            "custom": "x"
+          }
+        }
+      ],
+      "stream": false,
+      "options": {
+        "temperature": 0.5,
+        "topP": 0.9,
+        "maxTokens": 512,
+        "maxTokensField": "max_completion_tokens",
+        "stop": [
+          "END",
+          "STOP"
+        ],
+        "n": 1,
+        "tools": [
+          {
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "toolChoice": {
+          "name": "get_weather"
+        },
+        "parallelToolCalls": false
+      },
+      "extras": {
+        "seed": 42,
+        "logprobs": true
+      }
+    },
+    "expected": {
+      "url": "https://api.example.com/v1/chat/completions",
+      "headers": {
+        "x-org": "org_1",
+        "x-trace": "t9",
+        "authorization": "Bearer sk-live-test-424242",
+        "content-type": "application/json"
+      },
+      "body": {
+        "seed": 42,
+        "logprobs": true,
+        "model": "gpt-5",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Be terse."
+          },
+          {
+            "role": "developer",
+            "content": "Be honest."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Describe"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAA",
+                  "detail": "high"
+                }
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Paris\"}"
+                }
+              }
+            ]
+          },
+          {
+            "custom": "x",
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "22C"
+          }
+        ],
+        "stream": false,
+        "temperature": 0.5,
+        "top_p": 0.9,
+        "max_completion_tokens": 512,
+        "stop": [
+          "END",
+          "STOP"
+        ],
+        "n": 1,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "get_weather"
+          }
+        },
+        "parallel_tool_calls": false
+      },
+      "timeoutMs": 1000
+    }
+  },
+  {
+    "adapter": "openai",
+    "name": "timeout clamp upper bound (120s)",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "baseUrl": "https://api.example.com/v1",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": 999999,
+        "adapters": [
+          "openai"
+        ]
+      },
+      "baseUrl": "https://api.example.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.example.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi"
+          }
+        ],
+        "stream": false
+      },
+      "timeoutMs": 120000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "minimal: system folding, default max_tokens 4096, no key → no x-api-key",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Be terse.",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "system": "Be terse."
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "full: key + default headers + turn merge + tool_result-first reorder + tools + extras filter",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com/",
+        "apiKeyEnc": "RUNTIME",
+        "defaultHeaders": "{\"anthropic-beta\":\"prompt-caching-2024\"}",
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com/"
+    },
+    "apiKeyPlain": "ak-test-777",
+    "req": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "S1",
+          "extra": {}
+        },
+        {
+          "role": "system",
+          "content": "S2",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "Q1",
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "Checking",
+          "toolCalls": [
+            {
+              "id": "toolu_1",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          ],
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "Q3",
+          "extra": {}
+        },
+        {
+          "role": "tool",
+          "content": "22C",
+          "toolCallId": "toolu_1",
+          "extra": {}
+        }
+      ],
+      "stream": true,
+      "options": {
+        "temperature": 0.5,
+        "topP": 0.9,
+        "maxTokens": 512,
+        "stop": [
+          "END"
+        ],
+        "tools": [
+          {
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ],
+        "toolChoice": "auto",
+        "parallelToolCalls": false
+      },
+      "extras": {
+        "top_k": 40,
+        "metadata": {
+          "user_id": "u1"
+        },
+        "seed": 42
+      }
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-beta": "prompt-caching-2024",
+        "x-api-key": "ak-test-777",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "top_k": 40,
+        "metadata": {
+          "user_id": "u1"
+        },
+        "system": "S1\n\nS2",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Q1"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Checking"
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "get_weather",
+                "input": {
+                  "city": "Paris"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "22C"
+              },
+              {
+                "type": "text",
+                "text": "Q3"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 512,
+        "stream": true,
+        "temperature": 0.5,
+        "top_p": 0.9,
+        "stop_sequences": [
+          "END"
+        ],
+        "tools": [
+          {
+            "name": "get_weather",
+            "description": "Get weather",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "auto",
+          "disable_parallel_tool_use": true
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "vision (data URL split + https url source) + tool_choice none omits tools + model max_tokens default",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": 1000
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Look",
+          "images": [
+            {
+              "url": "data:image/png;base64,AAA"
+            },
+            {
+              "url": "https://example.com/cat.jpg"
+            }
+          ],
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {
+        "tools": [
+          {
+            "name": "get_weather",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ],
+        "toolChoice": "none"
+      },
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Look"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "AAA"
+                }
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 1000,
+        "stream": false
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "error: assistant-first conversation is untranslatable",
+    "error": "unsupported",
+    "messageContains": "first message to use the 'user' role",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "Hello",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "error: system-only conversation is untranslatable",
+    "error": "unsupported",
+    "messageContains": "only system messages were provided",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "only",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "error: n>1 is untranslatable",
+    "error": "unsupported",
+    "messageContains": "no multi-choice equivalent for n=2",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {
+        "n": 2
+      },
+      "extras": {}
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "error: undecryptable stored key → UpstreamMisconfigError",
+    "error": "misconfig",
+    "messageContains": "unreadable",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": "v1.!!!.???",
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "dual-dialect base URL: /v1 stripped for anthropic on a shared openai-style base",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "adapters": [
+          "openai",
+          "anthropic"
+        ],
+        "baseUrl": "https://dual.example.com/v1",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null
+      },
+      "baseUrl": "https://dual.example.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://dual.example.com/v1/messages",
+      "headers": {
+        "x-api-key": "sk-dual",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "stream": false
+      },
+      "timeoutMs": 60000
+    },
+    "apiKeyPlain": "sk-dual"
+  },
+  {
+    "adapter": "openai",
+    "name": "dual-dialect base URL: openai keeps the /v1 base as-is",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "adapters": [
+          "openai",
+          "anthropic"
+        ],
+        "baseUrl": "https://dual.example.com/v1",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null
+      },
+      "baseUrl": "https://dual.example.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://dual.example.com/v1/chat/completions",
+      "headers": {
+        "authorization": "Bearer sk-dual",
+        "content-type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi"
+          }
+        ],
+        "stream": false
+      },
+      "timeoutMs": 60000
+    },
+    "apiKeyPlain": "sk-dual"
+  },
+  {
+    "adapter": "openai",
+    "name": "stream_options.include_usage forwarded for streaming requests",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "baseUrl": "https://api.example.com/v1",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "openai"
+        ]
+      },
+      "baseUrl": "https://api.example.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi",
+          "extra": {}
+        }
+      ],
+      "stream": true,
+      "streamIncludeUsage": true,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.example.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        }
+      },
+      "timeoutMs": 60000
+    }
+  }
+]

@@ -1,0 +1,16 @@
+// Worker-side type checking (Hono API, D1, adapters). No DOM lib on purpose —
+// Workers runtime globals come from @cloudflare/workers-types.
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/worker", "src/shared", "drizzle.config.ts"]
+}

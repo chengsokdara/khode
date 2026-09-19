@@ -1,0 +1,164 @@
+[
+  {
+    "name": "parse: string input normalizes to a one-element array",
+    "fn": "parse",
+    "body": { "model": "text-embedding-3-small", "input": "hello world" },
+    "expected": {
+      "ok": true,
+      "model": "text-embedding-3-small",
+      "request": { "input": ["hello world"], "dimensions": null, "encodingFormat": null, "extras": {} }
+    }
+  },
+  {
+    "name": "parse: string array + dimensions + encoding_format ride through",
+    "fn": "parse",
+    "body": { "model": "m", "input": ["a", "b"], "dimensions": 256, "encoding_format": "base64" },
+    "expected": {
+      "ok": true,
+      "model": "m",
+      "request": { "input": ["a", "b"], "dimensions": 256, "encodingFormat": "base64", "extras": {} }
+    }
+  },
+  {
+    "name": "parse: unknown top-level fields are preserved as extras",
+    "fn": "parse",
+    "body": { "model": "m", "input": "x", "user": "u-1", "task_type": "RETRIEVAL_QUERY", "encoding_format": "float" },
+    "expected": {
+      "ok": true,
+      "model": "m",
+      "request": {
+        "input": ["x"],
+        "dimensions": null,
+        "encodingFormat": "float",
+        "extras": { "user": "u-1", "task_type": "RETRIEVAL_QUERY" }
+      }
+    }
+  },
+  {
+    "name": "parse: missing model rejected",
+    "fn": "parse",
+    "body": { "input": "x" },
+    "expected": { "ok": false, "status": 400, "message": "Request must include a 'model' parameter", "param": "model", "code": null }
+  },
+  {
+    "name": "parse: missing input rejected",
+    "fn": "parse",
+    "body": { "model": "m" },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Request must include an 'input' parameter — a string or an array of strings",
+      "param": "input",
+      "code": null
+    }
+  },
+  {
+    "name": "parse: pre-tokenized integer input arrays rejected explicitly",
+    "fn": "parse",
+    "body": { "model": "m", "input": [1, 2, 3] },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "input: pre-tokenized integer input arrays are not supported — send text strings (Khateway routes embeddings across providers)",
+      "param": "input",
+      "code": null
+    }
+  },
+  {
+    "name": "parse: empty input array rejected",
+    "fn": "parse",
+    "body": { "model": "m", "input": [] },
+    "expected": { "ok": false, "status": 400, "message": "input must contain at least one string", "param": "input", "code": null }
+  },
+  {
+    "name": "parse: non-integer dimensions rejected",
+    "fn": "parse",
+    "body": { "model": "m", "input": "x", "dimensions": 1.5 },
+    "expected": { "ok": false, "status": 400, "message": "dimensions must be a positive integer", "param": "dimensions", "code": null }
+  },
+  {
+    "name": "parse: unknown encoding_format rejected",
+    "fn": "parse",
+    "body": { "model": "m", "input": "x", "encoding_format": "hex" },
+    "expected": { "ok": false, "status": 400, "message": "encoding_format must be 'float' or 'base64'", "param": "encoding_format", "code": null }
+  },
+  {
+    "name": "parse: non-object body rejected",
+    "fn": "parse",
+    "body": [1, 2],
+    "expected": { "ok": false, "status": 400, "message": "Request body must be a JSON object", "param": null, "code": null }
+  },
+  {
+    "name": "parse: invalid JSON body rejected",
+    "fn": "parse",
+    "invalidJson": true,
+    "body": null,
+    "expected": { "ok": false, "status": 400, "message": "Request body must be valid JSON", "param": null, "code": "invalid_json" }
+  },
+  {
+    "name": "normalize: embedContent response → one-element openai list with usage",
+    "fn": "normalize",
+    "model": "text-emb-smoke",
+    "payload": {
+      "embedding": { "values": [0.25, -0.5, 1] },
+      "usageMetadata": { "promptTokenCount": 4 }
+    },
+    "expected": {
+      "object": "list",
+      "data": [{ "object": "embedding", "index": 0, "embedding": [0.25, -0.5, 1] }],
+      "model": "text-emb-smoke",
+      "usage": { "prompt_tokens": 4, "total_tokens": 4 }
+    }
+  },
+  {
+    "name": "normalize: batchEmbedContents response → data[] in input order",
+    "fn": "normalize",
+    "model": "text-emb-smoke",
+    "payload": {
+      "embeddings": [{ "values": [1, 2] }, { "values": [3, 4] }, { "values": [5, 6] }],
+      "usageMetadata": { "promptTokenCount": 9 }
+    },
+    "expected": {
+      "object": "list",
+      "data": [
+        { "object": "embedding", "index": 0, "embedding": [1, 2] },
+        { "object": "embedding", "index": 1, "embedding": [3, 4] },
+        { "object": "embedding", "index": 2, "embedding": [5, 6] }
+      ],
+      "model": "text-emb-smoke",
+      "usage": { "prompt_tokens": 9, "total_tokens": 9 }
+    }
+  },
+  {
+    "name": "normalize: missing usageMetadata omits the usage key",
+    "fn": "normalize",
+    "model": "text-emb-smoke",
+    "payload": { "embedding": { "values": [0.5] } },
+    "expected": {
+      "object": "list",
+      "data": [{ "object": "embedding", "index": 0, "embedding": [0.5] }],
+      "model": "text-emb-smoke"
+    }
+  },
+  {
+    "name": "normalize: missing values degrade to an empty embedding (defensive)",
+    "fn": "normalize",
+    "model": "text-emb-smoke",
+    "payload": { "embeddings": [{}, { "values": [1] }] },
+    "expected": {
+      "object": "list",
+      "data": [
+        { "object": "embedding", "index": 0, "embedding": [] },
+        { "object": "embedding", "index": 1, "embedding": [1] }
+      ],
+      "model": "text-emb-smoke"
+    }
+  },
+  {
+    "name": "normalize: encoding_format base64 packs little-endian float32 (runner decodes)",
+    "fn": "normalize-base64",
+    "model": "text-emb-smoke",
+    "payload": { "embedding": { "values": [0.1, -0.2, 0.3] } },
+    "expectedValues": [0.1, -0.2, 0.3]
+  }
+]

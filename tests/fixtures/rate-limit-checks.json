@@ -1,0 +1,118 @@
+[
+  {
+    "name": "disabled → no checks (zero DO round-trips)",
+    "input": {
+      "settings": { "enabled": false, "keyRpm": 120, "ipRpm": 60 },
+      "key": null,
+      "ip": "203.0.113.7",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": []
+  },
+  {
+    "name": "anonymous keyless request → ip bucket only",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": null,
+      "ip": "203.0.113.7",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": [{ "kind": "ip", "scope": "ip:203.0.113.7", "limit": 60, "windowMs": 60000 }]
+  },
+  {
+    "name": "keyed request → key bucket at deployment default, no ip bucket",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": { "id": "key_1", "rateLimitRpm": null },
+      "ip": "203.0.113.7",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": [{ "kind": "key", "scope": "key:key_1", "limit": 120, "windowMs": 60000 }]
+  },
+  {
+    "name": "per-key override beats the deployment default",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": { "id": "key_2", "rateLimitRpm": 7 },
+      "ip": "203.0.113.7",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": [{ "kind": "key", "scope": "key:key_2", "limit": 7, "windowMs": 60000 }]
+  },
+  {
+    "name": "model with a global cap adds a shared model bucket",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": { "id": "key_1", "rateLimitRpm": null },
+      "ip": "203.0.113.7",
+      "modelSlug": "hot-model",
+      "modelRpm": 30
+    },
+    "expected": [
+      { "kind": "key", "scope": "key:key_1", "limit": 120, "windowMs": 60000 },
+      { "kind": "model", "scope": "model:hot-model", "limit": 30, "windowMs": 60000 }
+    ]
+  },
+  {
+    "name": "anonymous request to a capped model → ip + model buckets",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": null,
+      "ip": "198.51.100.9",
+      "modelSlug": "hot-model",
+      "modelRpm": 30
+    },
+    "expected": [
+      { "kind": "ip", "scope": "ip:198.51.100.9", "limit": 60, "windowMs": 60000 },
+      { "kind": "model", "scope": "model:hot-model", "limit": 30, "windowMs": 60000 }
+    ]
+  },
+  {
+    "name": "unknown caller IP still buckets (dev 'unknown' sentinel)",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": null,
+      "ip": "unknown",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": [{ "kind": "ip", "scope": "ip:unknown", "limit": 60, "windowMs": 60000 }]
+  },
+  {
+    "name": "zero ip default means unlimited for anonymous (no bucket)",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 0, "ipRpm": 0 },
+      "key": null,
+      "ip": "203.0.113.7",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": []
+  },
+  {
+    "name": "zero key override means unlimited for that key (no bucket)",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": { "id": "key_3", "rateLimitRpm": 0 },
+      "ip": "203.0.113.7",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": []
+  },
+  {
+    "name": "keyed requests never touch the ip bucket even at the same address",
+    "input": {
+      "settings": { "enabled": true, "keyRpm": 120, "ipRpm": 60 },
+      "key": { "id": "key_1", "rateLimitRpm": null },
+      "ip": "198.51.100.9",
+      "modelSlug": "gpt-5",
+      "modelRpm": null
+    },
+    "expected": [{ "kind": "key", "scope": "key:key_1", "limit": 120, "windowMs": 60000 }]
+  }
+]

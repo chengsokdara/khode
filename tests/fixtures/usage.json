@@ -1,0 +1,208 @@
+[
+  {
+    "fn": "json",
+    "name": "openai usage present",
+    "upstream": "openai",
+    "payload": { "id": "x", "usage": { "prompt_tokens": 10, "completion_tokens": 5 } },
+    "expected": { "tokensIn": 10, "tokensOut": 5 }
+  },
+  {
+    "fn": "json",
+    "name": "openai usage absent → null",
+    "upstream": "openai",
+    "payload": { "id": "x" },
+    "expected": null
+  },
+  {
+    "fn": "json",
+    "name": "openai non-numeric usage → null",
+    "upstream": "openai",
+    "payload": { "usage": { "prompt_tokens": "many" } },
+    "expected": null
+  },
+  {
+    "fn": "json",
+    "name": "anthropic usage present",
+    "upstream": "anthropic",
+    "payload": { "usage": { "input_tokens": 23, "output_tokens": 59 } },
+    "expected": { "tokensIn": 23, "tokensOut": 59 }
+  },
+  {
+    "fn": "json",
+    "name": "anthropic partial usage (input only)",
+    "upstream": "anthropic",
+    "payload": { "usage": { "input_tokens": 23 } },
+    "expected": { "tokensIn": 23, "tokensOut": null }
+  },
+  {
+    "fn": "json",
+    "name": "anthropic empty usage object → null",
+    "upstream": "anthropic",
+    "payload": { "usage": {} },
+    "expected": null
+  },
+  {
+    "fn": "cost",
+    "name": "standard pricing",
+    "pricingIn": 3,
+    "pricingOut": 15,
+    "usage": { "tokensIn": 1000000, "tokensOut": 500000 },
+    "expected": 10.5
+  },
+  {
+    "fn": "cost",
+    "name": "null pricing → null (unknown ≠ free)",
+    "pricingIn": null,
+    "pricingOut": null,
+    "usage": { "tokensIn": 10, "tokensOut": 5 },
+    "expected": null
+  },
+  {
+    "fn": "cost",
+    "name": "explicit zero pricing → $0",
+    "pricingIn": 0,
+    "pricingOut": 0,
+    "usage": { "tokensIn": 10, "tokensOut": 5 },
+    "expected": 0
+  },
+  {
+    "fn": "cost",
+    "name": "one-sided pricing sums only the priced side",
+    "pricingIn": 0.5,
+    "pricingOut": null,
+    "usage": { "tokensIn": 10, "tokensOut": 5 },
+    "expected": 0.000005
+  },
+  {
+    "fn": "cost",
+    "name": "no usage → null",
+    "pricingIn": 3,
+    "pricingOut": 15,
+    "usage": null,
+    "expected": null
+  },
+  {
+    "fn": "cost",
+    "name": "all-null token counts → null",
+    "pricingIn": 3,
+    "pricingOut": 15,
+    "usage": { "tokensIn": null, "tokensOut": null },
+    "expected": null
+  },
+  {
+    "fn": "cost",
+    "name": "fractional micro-costs survive (7 × $0.15/1M in)",
+    "pricingIn": 0.15,
+    "pricingOut": 0,
+    "usage": { "tokensIn": 7, "tokensOut": 3 },
+    "expected": 0.00000105
+  },
+  {
+    "fn": "sse",
+    "name": "openai stream: usage on a late chunk",
+    "upstream": "openai",
+    "inputEvents": [
+      { "data": { "id": "c1", "choices": [{ "index": 0, "delta": { "content": "hi" }, "finish_reason": null }] } },
+      { "data": { "id": "c1", "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }] } },
+      { "data": { "id": "c1", "choices": [], "usage": { "prompt_tokens": 10, "completion_tokens": 5 } } },
+      { "data": "[DONE]" }
+    ],
+    "expected": { "tokensIn": 10, "tokensOut": 5 }
+  },
+  {
+    "fn": "sse",
+    "name": "openai stream: last usage chunk wins",
+    "upstream": "openai",
+    "inputEvents": [
+      { "data": { "choices": [], "usage": { "prompt_tokens": 1, "completion_tokens": 2 } } },
+      { "data": { "choices": [], "usage": { "prompt_tokens": 3, "completion_tokens": 4 } } },
+      { "data": "[DONE]" }
+    ],
+    "expected": { "tokensIn": 3, "tokensOut": 4 }
+  },
+  {
+    "fn": "sse",
+    "name": "anthropic stream: message_start input + message_delta output",
+    "upstream": "anthropic",
+    "inputEvents": [
+      { "event": "message_start", "data": { "type": "message_start", "message": { "usage": { "input_tokens": 23 } } } },
+      { "event": "content_block_delta", "data": { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "hi" } } },
+      { "event": "message_delta", "data": { "type": "message_delta", "delta": { "stop_reason": "end_turn" }, "usage": { "output_tokens": 59 } } },
+      { "event": "message_stop", "data": { "type": "message_stop" } }
+    ],
+    "expected": { "tokensIn": 23, "tokensOut": 59 }
+  },
+  {
+    "fn": "sse",
+    "name": "stream without usage → null",
+    "upstream": "openai",
+    "inputEvents": [
+      { "data": { "choices": [{ "index": 0, "delta": { "content": "hi" }, "finish_reason": null }] } },
+      { "data": "[DONE]" }
+    ],
+    "expected": null
+  },
+  {
+    "fn": "sse",
+    "name": "malformed events are skipped, real usage still found",
+    "upstream": "anthropic",
+    "inputEvents": [
+      { "data": "not json" },
+      { "event": "message_start", "data": { "type": "message_start", "message": { "usage": { "input_tokens": 7 } } } },
+      { "event": "message_delta", "data": { "type": "message_delta", "usage": { "output_tokens": 9 } } }
+    ],
+    "expected": { "tokensIn": 7, "tokensOut": 9 }
+  },
+  {
+    "fn": "sse",
+    "name": "keep-alive comments ignored",
+    "upstream": "openai",
+    "raw": ": ping\n\n",
+    "expected": null
+  },
+  {
+    "fn": "json",
+    "name": "gemini usageMetadata: prompt + candidates + thoughts (thoughts bill as output)",
+    "upstream": "gemini",
+    "payload": { "candidates": [], "usageMetadata": { "promptTokenCount": 4, "candidatesTokenCount": 6, "thoughtsTokenCount": 2, "totalTokenCount": 12 } },
+    "expected": { "tokensIn": 4, "tokensOut": 8 }
+  },
+  {
+    "fn": "json",
+    "name": "gemini usageMetadata without thoughts (non-thinking model)",
+    "upstream": "gemini",
+    "payload": { "usageMetadata": { "promptTokenCount": 9, "candidatesTokenCount": 7, "totalTokenCount": 16 } },
+    "expected": { "tokensIn": 9, "tokensOut": 7 }
+  },
+  {
+    "fn": "json",
+    "name": "gemini payload without usageMetadata → null",
+    "upstream": "gemini",
+    "payload": { "candidates": [] },
+    "expected": null
+  },
+  {
+    "fn": "sse",
+    "name": "gemini stream: usageMetadata on the final chunk wins (thoughts folded in)",
+    "upstream": "gemini",
+    "inputEvents": [
+      { "data": { "candidates": [{ "content": { "role": "model", "parts": [{ "text": "hi" }] }, "index": 0 }] } },
+      { "data": { "candidates": [{ "content": { "role": "model", "parts": [] }, "finishReason": "STOP", "index": 0 }], "usageMetadata": { "promptTokenCount": 4, "candidatesTokenCount": 6, "thoughtsTokenCount": 2, "totalTokenCount": 12 } } }
+    ],
+    "expected": { "tokensIn": 4, "tokensOut": 8 }
+  },
+  {
+    "fn": "sse",
+    "name": "gemini stream without usageMetadata → null",
+    "upstream": "gemini",
+    "inputEvents": [{ "data": { "candidates": [{ "content": { "role": "model", "parts": [{ "text": "hi" }] }, "index": 0 }] } }],
+    "expected": null
+  },
+  {
+    "fn": "watchJson",
+    "name": "tee'd JSON body branch extracts usage",
+    "upstream": "openai",
+    "payload": { "id": "x", "usage": { "prompt_tokens": 11, "completion_tokens": 6 } },
+    "expected": { "tokensIn": 11, "tokensOut": 6 }
+  }
+]

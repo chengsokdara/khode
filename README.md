@@ -1,0 +1,171 @@
+# Khateway — AI model router
+
+One base URL for every model. Khateway is a self-hosted, OpenRouter-style gateway:
+clients speak any of the big-3 API dialects against **your** endpoint, and Khateway
+translates and routes each request to the provider that serves the model.
+
+```
+openai / anthropic / groq / deepseek / xai / openrouter / ollama /
+gemini (native generateContent or OpenAI-compat) …
+                 │ register providers + models (admin dashboard)
+                 ▼
+  POST /v1/chat/completions      ← OpenAI Chat dialect
+  POST /v1/responses             ← OpenAI Responses API
+  POST /v1/messages              ← Anthropic Messages
+  POST /v1/embeddings            ← OpenAI Embeddings API (openai/gemini upstreams)
+                 │  any-to-any translation (incl. SSE streaming) — M3–M6
+                 ▼
+            upstream provider
+```
+
+MVP plan + status: [`docs/plans/mvp-plan.md`](docs/plans/mvp-plan.md)
+
+## Project docs (AI agents & humans)
+
+- [`AGENTS.md`](AGENTS.md) — architecture, file map, conventions
+- [`RULES.md`](RULES.md) — project rules (docs sync, frozen stack, secrets…)
+- [`STATUS.md`](STATUS.md) — live state; the resume point after any interruption
+- [`MEMORY.md`](MEMORY.md) — cross-session memory (decisions, lessons, preferences)
+
+
+## Quickstart (local, no Cloudflare account needed)
+
+```bash
+cd khateway
+npm install
+openssl rand -base64 32   # → ENCRYPTION_KEY
+cp .dev.vars.example .dev.vars   # then edit: ADMIN_PASSWORD + ENCRYPTION_KEY
+npm run migrate:local    # create local D1 SQLite + apply migrations
+npm run dev              # one-terminal dev: wrangler (:8787) + vite HMR (:5173)
+```
+
+Open <http://localhost:5173> → sign in with `ADMIN_PASSWORD` from `.dev.vars`.
+UI edits hot-reload instantly; worker edits (`src/worker/**`) reload
+automatically. `npm run dev:prod` serves the production-style built bundle on
+:8787 instead.
+
+- Add a provider (one or more adapters + base URL + API key). Vendors that
+  speak both dialects (OpenRouter, LiteLLM, …) are ONE provider with both
+  `OpenAI-compatible` and `Anthropic` checked — one shared base URL serves
+  both, and Khateway picks the upstream dialect per request. Google Gemini
+  can be registered either natively (`Gemini (native)` preset — the adapter
+  builds `generateContent`/`streamGenerateContent` requests with thinking
+  budgets and native multiparts, translating every client dialect) or through
+  its OpenAI-compat endpoint (`Gemini (OpenAI-compat)` preset, openai
+  adapter).
+- Register models (slug → upstream model id, pricing, capabilities).
+- Test connections from the Providers page.
+
+## Pointing clients at the gateway
+
+By default the gateway is **keyless**: any OpenAI or Anthropic SDK works with
+the base URL alone (clients that insist on a key can send any placeholder —
+the literal `anonymous` is the convention, and unknown values are treated the
+same). Model listing (`GET /v1/models`) and all chat endpoints are served
+anonymously.
+
+To require client keys instead (spend caps, model allow-lists, per-key logs),
+flip **Client-key enforcement** on the API Keys page (or `PATCH
+/admin/settings {"client_key_enforcement":"on"}`) and give clients a `khat-…`
+key: `Authorization: Bearer <key>` (OpenAI SDKs) or `x-api-key: <key>`
+(Anthropic SDKs). Requests without a valid key then get 401.
+
+## Rate limiting (M10)
+
+The gateway enforces request-rate limits by default — an open endpoint without
+them is abuse bait. All windows are fixed **1-minute** counters stored in a
+Durable Object (SQLite-backed, works on the Workers free plan), so limits hold
+across all isolates and PoPs:
+
+| Bucket | Applies to | Default | Configured via |
+|---|---|---|---|
+| per-key | requests carrying a valid `khat-` key | 120 req/min | Settings → Rate limiting (`rate_limit_key_rpm`), per-key override on each API key |
+| per-IP | anonymous (keyless) requests only | 60 req/min | Settings → Rate limiting (`rate_limit_ip_rpm`) |
+| per-model | everyone, global per model slug | unlimited | `rate_limit_rpm` on each model |
+
+Notes:
+
+- Keyed requests never touch the IP bucket (a shared office egress IP must not
+  punish a legitimate heavy key), and the IP bucket exists to bound exactly the
+  keyless traffic the default mode invites.
+- Exceeding a limit answers **429** with an integer `Retry-After` (seconds
+  until the window rolls over) and the error envelope in the caller's dialect
+  (`code: "rate_limit_exceeded"` / anthropic `type: "rate_limit_error"`).
+  Rate-limited requests are logged like any other outcome.
+- Disable everything with the **Rate limiting** toggle in Settings
+  (`rate_limit_enabled: "off"`); a limiter outage fails open (requests keep
+  flowing) rather than taking the gateway down.
+- Fixed windows allow up to 2× the limit across a window boundary — the
+  standard tradeoff, fine for abuse control.
+
+## Semantic cache (M11)
+
+The gateway can serve repeats of the **same text-only, non-streaming request**
+from a local cache instead of hitting the upstream again. Opt-in on two
+surfaces while the master switch is on:
+
+| Switch | Meaning | Configured via |
+|---|---|---|
+| master | deployment-wide kill switch + entry lifetime | Settings → Semantic cache (`cache_enabled`, `cache_ttl_seconds`, default off / 3600 s) |
+| per model | cache every eligible request to this model | `cache_enabled` on each model (Models page) |
+| per key | cache every eligible request this key makes | `cache_enabled` on each API key (API Keys page) |
+
+Notes:
+
+- The cache key is a **sha-256 over the canonical request + model slug**, so
+  the same conversation arriving through `/v1/chat/completions`,
+  `/v1/messages` and `/v1/responses` hits the same entry — cross-dialect
+  repeats are served translated, same-dialect repeats byte-identical.
+- Eligible = text-only completions: no streaming, no tools/tool history, no
+  images, `n` ≤ 1. Widen later, not silently.
+- Cache hits are **logged and billed like any response** (`cache_hit` in
+  request_logs, "cached" badge in the Logs UI, savings counted on the Overview
+  and Settings cards) and still consume rate-limit budget.
+- `x-khateway-cache: HIT` / `MISS` response headers report cache state on
+  eligible requests.
+- Admin **Flush cache** drops every entry immediately; expired entries are
+  swept lazily on each store.
+
+## UI hot-reload during development
+
+`npm run dev` already runs both servers in one terminal (tagged `[worker]`/
+`[ui]` logs, Ctrl-C stops both). Prefer separate terminals?
+
+```bash
+npm run dev:worker   # terminal 1 — wrangler on :8787 (worker edits auto-reload)
+npm run dev:ui       # terminal 2 — Vite dev server on :5173, proxies /admin /v1 /health
+```
+
+## Deploy to Cloudflare
+
+```bash
+npx wrangler d1 create khateway          # paste the returned database_id into wrangler.jsonc
+npx wrangler secret put ADMIN_PASSWORD
+npx wrangler secret put ENCRYPTION_KEY # openssl rand -base64 32
+npx wrangler d1 migrations apply khateway --remote
+npm run deploy
+```
+
+## Milestones
+
+| M | Scope |
+|---|---|
+| M1 ✅ | Scaffold, login/session, app shell |
+| M2 ✅ | Providers & models CRUD, encrypted keys, connection tests |
+| M3 ✅ | `/v1/chat/completions` + `/v1/models`, routing, openai adapter |
+| M4 ✅ | Anthropic adapter, `/v1/messages`, cross-dialect SSE translation |
+| M5 ✅ | `/v1/responses` |
+| M6 ✅ | Tool calling + vision + fallback chains |
+| M7 ✅ | Client API keys, request logs + cost, snippets (keyless-native default since then) |
+| M8 ✅ | User accounts + prepaid balances + Lemon Squeezy top-ups (`/app` portal, `/webhooks/lemonsqueezy`) |
+| M9 ✅ | Orgs / teams: shared org balances, join-code invites, portal Teams page, admin Organizations |
+| M10 ✅ | Gateway rate limiting: per-key / per-IP / per-model caps in a Durable Object, 429 + `Retry-After` |
+| M11 ✅ | Semantic cache: opt-in per model/key, canonical-request hash key, TTL + admin flush, hits marked in logs |
+| M12 ✅ | Native Gemini adapter: `generateContent` upstream (thinking budgets, native multiparts) — OpenAI-compat endpoint still available |
+| M13 ✅ | `POST /v1/embeddings`: OpenAI Embeddings API face, openai-compatible + native-gemini upstreams, logged + priced like chat |
+
+**MVP complete + M8 public foundations + M9 orgs + M10 rate limiting + M11 semantic cache + M12 native Gemini + M13 embeddings.**
+See [`STATUS.md`](STATUS.md) for the verification baseline and
+[`ROADMAP.md`](ROADMAP.md) for what's next (playground).
+
+See [`docs/plans/mvp-plan.md`](docs/plans/mvp-plan.md) for the full plan.

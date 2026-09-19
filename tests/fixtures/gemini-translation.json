@@ -1,0 +1,196 @@
+[
+  {
+    "fn": "json",
+    "name": "text response — usageMetadata with thoughts folded into completion tokens",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "responseId": "AbCdEf",
+      "modelVersion": "gemini-2.5-flash",
+      "candidates": [
+        {
+          "content": { "role": "model", "parts": [{ "text": "Hello from Gemini!" }] },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": { "promptTokenCount": 4, "candidatesTokenCount": 6, "thoughtsTokenCount": 2, "totalTokenCount": 12 }
+    },
+    "expected": {
+      "id": "chatcmpl-AbCdEf",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "Hello from Gemini!" }, "finish_reason": "stop" }],
+      "usage": { "prompt_tokens": 4, "completion_tokens": 8, "total_tokens": 12 }
+    }
+  },
+  {
+    "fn": "json",
+    "name": "functionCall part → tool_calls with JSON-string arguments + finish_reason tool_calls",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "candidates": [
+        {
+          "content": { "role": "model", "parts": [{ "functionCall": { "name": "get_weather", "args": { "city": "Paris" } } }] },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": { "promptTokenCount": 9, "candidatesTokenCount": 7, "totalTokenCount": 16 }
+    },
+    "expected": {
+      "id": "chatcmpl-khateway",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{ "id": "call_gemini_0", "type": "function", "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" } }]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": { "prompt_tokens": 9, "completion_tokens": 7, "total_tokens": 16 }
+    }
+  },
+  {
+    "name": "MAX_TOKENS → length (even with tool calls present)",
+    "fn": "json",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "candidates": [
+        {
+          "content": { "role": "model", "parts": [{ "functionCall": { "name": "f", "args": {} } }] },
+          "finishReason": "MAX_TOKENS",
+          "index": 0
+        }
+      ],
+      "usageMetadata": { "promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2 }
+    },
+    "expected": {
+      "id": "chatcmpl-khateway",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": { "role": "assistant", "content": null, "tool_calls": [{ "id": "call_gemini_0", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
+          "finish_reason": "length"
+        }
+      ],
+      "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+    }
+  },
+  {
+    "fn": "json",
+    "name": "SAFETY finishReason → content_filter; multiple text parts join with newline",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "candidates": [
+        {
+          "content": { "role": "model", "parts": [{ "text": "line one" }, { "text": "line two" }] },
+          "finishReason": "SAFETY",
+          "index": 0
+        }
+      ],
+      "usageMetadata": { "promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5 }
+    },
+    "expected": {
+      "id": "chatcmpl-khateway",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "line one\nline two" }, "finish_reason": "content_filter" }],
+      "usage": { "prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5 }
+    }
+  },
+  {
+    "fn": "json",
+    "name": "thought parts are skipped (thinking summaries never surface)",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "candidates": [
+        {
+          "content": { "role": "model", "parts": [{ "thought": true, "text": "internal reasoning" }, { "text": "visible answer" }] },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": { "promptTokenCount": 5, "candidatesTokenCount": 2, "thoughtsTokenCount": 9, "totalTokenCount": 16 }
+    },
+    "expected": {
+      "id": "chatcmpl-khateway",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "visible answer" }, "finish_reason": "stop" }],
+      "usage": { "prompt_tokens": 5, "completion_tokens": 11, "total_tokens": 16 }
+    }
+  },
+  {
+    "fn": "json",
+    "name": "no usageMetadata → zeroed usage (defensive; real responses always carry it)",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "candidates": [{ "content": { "role": "model", "parts": [{ "text": "hi" }] }, "finishReason": "STOP", "index": 0 }]
+    },
+    "expected": {
+      "id": "chatcmpl-khateway",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "hi" }, "finish_reason": "stop" }],
+      "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+    }
+  },
+  {
+    "fn": "error",
+    "name": "INVALID_ARGUMENT 400 → invalid_request_error, gemini status rides in code",
+    "status": 400,
+    "raw": "{\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received.\",\"status\":\"INVALID_ARGUMENT\"}}",
+    "expected": {
+      "error": { "message": "Invalid JSON payload received.", "type": "invalid_request_error", "param": null, "code": "INVALID_ARGUMENT" }
+    }
+  },
+  {
+    "fn": "error",
+    "name": "RESOURCE_EXHAUSTED 429 → rate_limit_error",
+    "status": 429,
+    "raw": "{\"error\":{\"code\":429,\"message\":\"Resource exhausted.\",\"status\":\"RESOURCE_EXHAUSTED\"}}",
+    "expected": {
+      "error": { "message": "Resource exhausted.", "type": "rate_limit_error", "param": null, "code": "RESOURCE_EXHAUSTED" }
+    }
+  },
+  {
+    "fn": "error",
+    "name": "UNAUTHENTICATED 401 → authentication_error",
+    "status": 401,
+    "raw": "{\"error\":{\"code\":401,\"message\":\"API key not valid.\",\"status\":\"UNAUTHENTICATED\"}}",
+    "expected": {
+      "error": { "message": "API key not valid.", "type": "authentication_error", "param": null, "code": "UNAUTHENTICATED" }
+    }
+  },
+  {
+    "fn": "error",
+    "name": "unknown gemini status → type derived from HTTP status; status string still kept",
+    "status": 500,
+    "raw": "{\"error\":{\"code\":500,\"message\":\"Boom.\",\"status\":\"SOMETHING_NEW\"}}",
+    "expected": {
+      "error": { "message": "Boom.", "type": "api_error", "param": null, "code": "SOMETHING_NEW" }
+    }
+  },
+  {
+    "fn": "error",
+    "name": "non-JSON raw body → wrapped with status-derived type",
+    "status": 502,
+    "raw": "bad gateway",
+    "expected": {
+      "error": { "message": "bad gateway", "type": "api_error", "param": null, "code": null }
+    }
+  }
+]

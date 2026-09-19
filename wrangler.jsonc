@@ -1,0 +1,43 @@
+// Khateway — AI model router. One Worker serves the admin SPA (static assets)
+// and the /v1 gateway + /admin API.
+{
+  "$schema": "node_modules/wrangler/config/schema.json",
+  "name": "khateway",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-09-15",
+  "assets": {
+    "directory": "./web-dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/v1",
+      "/v1/*",
+      "/admin",
+      "/admin/*",
+      "/app/api",
+      "/app/api/*",
+      "/webhooks",
+      "/webhooks/*",
+      "/health"
+    ]
+  },
+  // M10 rate limiting: every /v1 request increments fixed-window counters in
+  // ONE Durable Object instance (name "global"). SQLite-backed class so the
+  // binding works on the Workers free plan; the migration below only declares
+  // the class for deploys (wrangler d1 migrations are separate, in drizzle/).
+  "durable_objects": {
+    "bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiterDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiterDO"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "khateway",
+      // Placeholder for local dev. Before remote deploy run:
+      //   npx wrangler d1 create khateway   (then paste the returned database_id)
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "observability": { "enabled": true }
+}

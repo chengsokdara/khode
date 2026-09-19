@@ -1,0 +1,199 @@
+// Anthropic Messages upstream adapter. Builds the concrete request against
+// `<base_url>/v1/messages` (the anthropic base_url has NO trailing /v1 —
+// DEFAULT_BASES.anthropic is the bare domain; dual-dialect providers may share
+// an openai-style `/v1` base URL — joinAdapterUrl strips it) with `x-api-key` +
+// `anthropic-version` auth, translating the canonical chat request into the
+// Messages dialect: system/developer messages fold into the top-level
+// `system` param, turns are merged into strict user/assistant alternation
+// (tool_results first inside a user turn), stop → stop_sequences, images →
+// image blocks (data URLs split into base64 sources, https URLs passed as
+// url sources), tool calls → tool_use/tool_result blocks, and the REQUIRED
+// max_tokens defaults to the model's configured max output (4096 when unset).
+// Response/SSE translation back into client dialects lives in dialects/*.
+import type { Env } from '../env';
+import { joinAdapterUrl } from '../env';
+import type { CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolChoice } from '../canonical';
+import type { RoutingCandidate } from '../routing';
+import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
+
+/** Wire value Khateway sends unless the provider overrides it via default_headers. */
+export const ANTHROPIC_VERSION = '2023-06-01';
+
+/** Client extras that have a home in the Messages dialect; everything else is dropped. */
+const ANTHROPIC_EXTRA_KEYS: readonly string[] = ['top_k', 'metadata'];
+
+/** anthropic message content blocks as Khateway builds them. */
+type AnthropicBlock = Record<string, unknown>;
+
+/** Splits a `data:<media>;base64,<data>` URL; null for any other shape. */
+function parseDataUrl(url: string): { mediaType: string; data: string } | null {
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(url);
+  return m ? { mediaType: m[1], data: m[2] } : null;
+}
+
+function imageBlock(img: CanonicalImage): AnthropicBlock {
+  const data = parseDataUrl(img.url);
+  if (data) {
+    return { type: 'image', source: { type: 'base64', media_type: data.mediaType, data: data.data } };
+  }
+  return { type: 'image', source: { type: 'url', url: img.url } };
+}
+
+/** Canonical tool_choice → the Messages `tool_choice` param ('none' → tools omitted upstream). */
+function anthropicToolChoice(choice: CanonicalToolChoice, parallelDisabled: boolean): AnthropicBlock | null {
+  if (choice === 'none') return null;
+  if (choice === 'auto') {
+    return parallelDisabled ? { type: 'auto', disable_parallel_tool_use: true } : { type: 'auto' };
+  }
+  if (choice === 'required') {
+    return parallelDisabled ? { type: 'any', disable_parallel_tool_use: true } : { type: 'any' };
+  }
+  return parallelDisabled ? { type: 'tool', name: choice.name, disable_parallel_tool_use: true } : { type: 'tool', name: choice.name };
+}
+
+/** One conversation turn: a role plus its content blocks (merged with peers below). */
+interface Turn {
+  role: 'user' | 'assistant';
+  blocks: AnthropicBlock[];
+}
+
+/** Canonical message → turn blocks (or system folds). Tool results become user turns. */
+function turnFor(m: CanonicalMessage, system: string[]): Turn | null {
+  if (m.role === 'system' || m.role === 'developer') {
+    if (m.content) system.push(m.content);
+    return null;
+  }
+  if (m.role === 'tool') {
+    const result: AnthropicBlock = { type: 'tool_result', tool_use_id: m.toolCallId };
+    const images = m.images ?? [];
+    if (images.length) {
+      const parts: AnthropicBlock[] = [];
+      if (m.content) parts.push({ type: 'text', text: m.content });
+      parts.push(...images.map(imageBlock));
+      result.content = parts;
+    } else if (m.content) {
+      result.content = m.content;
+    }
+    if (m.extra.is_error === true) result.is_error = true;
+    return { role: 'user', blocks: [result] };
+  }
+  const blocks: AnthropicBlock[] = [];
+  if (m.content) blocks.push({ type: 'text', text: m.content });
+  if (m.role === 'user') {
+    for (const img of m.images ?? []) blocks.push(imageBlock(img));
+  }
+  for (const tc of m.toolCalls ?? []) {
+    let input: unknown = {};
+    try {
+      input = tc.arguments.trim() ? JSON.parse(tc.arguments) : {};
+    } catch {
+      input = {}; // defensive: parsers only admit JSON-encoded arguments
+    }
+    blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input });
+  }
+  if (blocks.length === 0) return null; // empty assistant turns are dropped
+  return { role: m.role === 'assistant' ? 'assistant' : 'user', blocks };
+}
+
+/**
+ * Builds the upstream POST for one candidate. Throws UpstreamMisconfigError
+ * when the stored key cannot be decrypted and UnsupportedTranslationError
+ * when the canonical request cannot be expressed in the Messages dialect
+ * (assistant-first conversations, n > 1). A provider without a key is allowed
+ * (proxies/local gateways) — the x-api-key header is omitted.
+ */
+export async function buildAnthropicMessagesRequest(
+  env: Env,
+  cand: RoutingCandidate,
+  req: CanonicalChatRequest,
+): Promise<UpstreamRequest> {
+  const apiKey = await decryptProviderKey(env, cand); // throws UpstreamMisconfigError
+
+  const headers = { ...parseHeaderMap(cand.provider.defaultHeaders) };
+  if (apiKey) headers['x-api-key'] = apiKey;
+  headers['anthropic-version'] = ANTHROPIC_VERSION;
+  headers['content-type'] = 'application/json';
+
+  const system: string[] = [];
+  const turns: Turn[] = [];
+  for (const m of req.messages) {
+    const turn = turnFor(m, system);
+    if (turn) turns.push(turn);
+  }
+  // The Messages API requires strict alternation starting with `user`; merge
+  // consecutive same-role turns instead of failing. tool_result blocks must
+  // lead a user turn (API rule), so user merges are reordered accordingly.
+  const merged: Turn[] = [];
+  for (const t of turns) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === t.role) last.blocks.push(...t.blocks);
+    else merged.push({ ...t, blocks: [...t.blocks] });
+  }
+  for (const turn of merged) {
+    if (turn.role === 'user') {
+      const results = turn.blocks.filter((b) => b.type === 'tool_result');
+      const rest = turn.blocks.filter((b) => b.type !== 'tool_result');
+      turn.blocks = [...results, ...rest];
+    }
+  }
+  if (merged.length === 0) {
+    throw new UnsupportedTranslationError(
+      'Anthropic upstreams require at least one user or assistant message — only system messages were provided.',
+    );
+  }
+  if (merged[0].role !== 'user') {
+    throw new UnsupportedTranslationError(
+      "Anthropic upstreams require the first message to use the 'user' role; this conversation starts with 'assistant'.",
+    );
+  }
+
+  const o = req.options;
+  if (o.n !== undefined && o.n !== null && o.n > 1) {
+    throw new UnsupportedTranslationError(
+      `The Anthropic Messages dialect has no multi-choice equivalent for n=${o.n} — only n=1 can be translated.`,
+    );
+  }
+
+  const maxTokens =
+    o.maxTokens !== undefined && o.maxTokens !== null ? o.maxTokens : (cand.model.maxOutputTokens ?? 4096);
+
+  const body: Record<string, unknown> = {};
+  for (const key of ANTHROPIC_EXTRA_KEYS) {
+    if (key in req.extras) body[key] = req.extras[key];
+  }
+  // NOTE: remaining client extras are openai-dialect fields (frequency_penalty,
+  // seed, …) that the Messages API would reject — dropped deliberately.
+  if (system.length > 0) body.system = system.join('\n\n');
+  body.messages = merged.map((t) => ({ role: t.role, content: t.blocks }));
+  body.model = cand.model.upstreamModel;
+  body.max_tokens = maxTokens;
+  body.stream = req.stream;
+  if (o.temperature !== undefined && o.temperature !== null) body.temperature = o.temperature;
+  if (o.topP !== undefined && o.topP !== null) body.top_p = o.topP;
+  if (o.stop !== undefined && o.stop !== null && o.stop.length > 0) body.stop_sequences = o.stop;
+
+  if (o.tools?.length) {
+    // tool_choice 'none' means "offer nothing" — the Messages dialect has no
+    // none choice, so the tools are omitted from the request entirely.
+    if (o.toolChoice !== 'none') {
+      body.tools = o.tools.map((t) => ({
+        name: t.name,
+        ...(t.description ? { description: t.description } : {}),
+        input_schema: t.parameters ?? { type: 'object' },
+      }));
+      const parallelDisabled = o.parallelToolCalls === false;
+      const choice = anthropicToolChoice(o.toolChoice ?? 'auto', parallelDisabled);
+      if (choice) body.tool_choice = choice;
+    }
+  }
+
+  const timeoutMs = Math.min(120_000, Math.max(1_000, cand.provider.timeoutMs ?? 60_000));
+  return {
+    // joinAdapterUrl strips a trailing `/v1` from shared dual-dialect base
+    // URLs so one provider base URL serves both conventions.
+    url: joinAdapterUrl(cand.effectiveBaseUrl('anthropic'), 'anthropic', '/v1/messages'),
+    headers,
+    body: JSON.stringify(body),
+    timeoutMs,
+  };
+}
