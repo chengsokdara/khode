@@ -105,10 +105,11 @@ Removing an MCP server purges its tools' toggles, so re-adding starts
 fully enabled. The alt+enter newline binding stays the only modifier
 enter: bubbletea v1 has no kitty-protocol key parsing, so shift+enter
 is unrepresentable (kitty-protocol terminals can remap shift+enter to
-send ESC+CR in terminal config). Mouse capture is gone entirely (like
-Claude Code, the mouse is never grabbed): selection/copy are native
-from launch and pgup/pgdn scroll the chat — the ctrl+o stopgap lasted
-one day before the toggle was dropped as redundant.
+send ESC+CR in terminal config). Mouse capture went through three
+iterations in two days: toggle off by default (alt+m, then ctrl+o) →
+dropped entirely → permanently on (ebec1a7) once the user verified
+Claude Code/opencode consume wheel events, which is exactly how they
+prevent the terminal from scrolling out of the TUI.
 
 **Slash-command completion (2026-09-18):** typing `/` in the chat
 input floats a completion popup just above it — input-box width, a
@@ -133,10 +134,14 @@ face, otherwise openai face; both serve `/models` listings); the model
 row opens the auto-fetch picker; khateway never inherits a vendor
 default model. Env: `KHATEWAY_API_KEY` / `KHATEWAY_BASE_URL`.
 
-**Selectable text + thinking (2026-09-17):** khode never captures the
-mouse — drag-select and the terminal's copy-on-select work natively
-from launch, and pgup/pgdn scroll the chat (the capture toggle went
-away on 2026-09-18; see changelog). Model
+**Selectable text + thinking (2026-09-17):** mouse capture is on from
+launch (Claude Code and opencode do the same — the wheel scrolls the
+chat instead of the terminal scrolling out of the TUI into the dead
+pre-launch scrollback). Text selection survives via the shift+drag
+override every major terminal keeps for mouse-reporting apps
+(Terminal.app, iTerm2, kitty, Ghostty), and Terminal.app's View >
+Allow Mouse Reporting (⌘R) is the full escape hatch; pgup/pgdn also
+scroll. Model
 reasoning is now separated from the answer: `llm.ThinkingDeltaEvent`
 carries it (Anthropic thinking blocks; DeepSeek-style
 `reasoning_content` read from the delta's raw JSON; inline
@@ -259,3 +264,4 @@ Backlog (no committed order):
 | 2026-09-18 | Input keys: alt+m footer hint says "wheel scroll"; alt+enter-only newline constraint documented in code (bubbletea v1 can't parse kitty-protocol keys → shift+enter unrepresentable) | 63442c7 |
 | 2026-09-18 | Fix: mouse capture toggles with ctrl+o — alt+m never fired on default macOS (option composes µ, no alt key event); alt+m kept as meta-terminal alias, footer/notes/comment updated, toggle test | 44193ac |
 | 2026-09-18 | Mouse capture removed entirely (Claude Code parity: never grab the mouse) — footer hint, toggle, MouseMsg forward, and tests dropped; pgup/pgdn scroll, selection/copy native; inline-scrollback rendering added to the backlog | bef8b9b |
+| 2026-09-18 | Mouse capture restored permanently: WithMouseCellMotion at startup, wheel feeds the viewport (Claude Code/opencode consume wheel the same way — user-verified in Apple Terminal); selection via shift+drag override, ⌘R escape hatch; wheel test | ebec1a7 |
