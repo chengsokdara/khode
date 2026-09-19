@@ -129,7 +129,15 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	ta.Prompt = "❯ "
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
+	// v2 sizes the box itself: it grows and shrinks with the content
+	// between minInputHeight and maxInputHeight rows, scrolling
+	// internally beyond the cap. MaxContentHeight is pushed out of the
+	// way because v2 would otherwise block input once MaxHeight
+	// logical lines are reached; v1 never blocked.
+	ta.DynamicHeight = true
+	ta.MinHeight = minInputHeight
 	ta.MaxHeight = maxInputHeight
+	ta.MaxContentHeight = 10_000
 	// The defaults paint the focused cursor line with a hard background,
 	// which renders as a strip inside the input box on dark terminal
 	// themes; drop it so the line keeps the theme's colors.
@@ -411,8 +419,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		var cmd tea.Cmd
+		inputH := m.textarea.Height()
 		m.textarea, cmd = m.textarea.Update(msg)
-		m.maybeGrowInput()
+		m.syncInputLayout(inputH)
 		m.syncPopup()
 		return m, cmd
 	}
@@ -667,8 +676,9 @@ func (m *Model) stopStream() {
 
 func (m *Model) submit() tea.Cmd {
 	input := strings.TrimSpace(m.textarea.Value())
+	inputH := m.textarea.Height()
 	m.textarea.Reset()
-	m.maybeGrowInput()
+	m.syncInputLayout(inputH)
 	m.closePopup()
 	if input == "" {
 		return nil
@@ -1063,11 +1073,11 @@ func (m *Model) relayout() {
 	m.viewport.SetHeight(vh)
 }
 
-func (m *Model) maybeGrowInput() {
-	lines := strings.Count(m.textarea.Value(), "\n") + 1
-	h := min(maxInputHeight, max(minInputHeight, lines))
-	if h != m.textarea.Height() {
-		m.textarea.SetHeight(h)
+// syncInputLayout re-fits the chat viewport after the input's height
+// changed. The textarea sizes itself (DynamicHeight resizes on content
+// edits); callers capture Height() before mutating it.
+func (m *Model) syncInputLayout(before int) {
+	if m.textarea.Height() != before {
 		m.relayout()
 	}
 }

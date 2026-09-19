@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -75,6 +76,36 @@ func TestModifierEnterInsertsNewline(t *testing.T) {
 	if m.streaming {
 		t.Error("shift+enter submitted the turn")
 	}
+
+	// The rendered box must show the typed line above the cursor row.
+	// (A v2 regression once scrolled it out of view: two empty prompt
+	// rows rendered, and the text was only reachable by arrowing up.)
+	view := ansiStrip(m.textarea.View())
+	lines := strings.Split(view, "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "❯ hi") {
+		t.Fatalf("input box after shift+enter = %q, want the typed line visible above the cursor row", view)
+	}
+	if !strings.Contains(lines[1], "❯") {
+		t.Errorf("second row lost its prompt: %q", lines[1])
+	}
+
+	// Submit clears and the box shrinks back to one row, giving the row
+	// back to the chat viewport.
+	h := m.textarea.Height()
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	if m.textarea.Value() != "" {
+		t.Errorf("enter did not submit the multi-line input: %q", m.textarea.Value())
+	}
+	if m.textarea.Height() >= h {
+		t.Errorf("input did not shrink after submit: %d rows, want < %d", m.textarea.Height(), h)
+	}
+}
+
+// ansiStrip removes SGR/CSI escape sequences for content assertions.
+func ansiStrip(s string) string {
+	re := regexp.MustCompile(`\x1b\[[0-9;:]*[a-zA-Z]`)
+	return re.ReplaceAllString(s, "")
 }
 
 func TestPlainEnterSubmits(t *testing.T) {

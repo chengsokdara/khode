@@ -155,8 +155,9 @@ func (p *cmdPopup) highlighted() slashCommand {
 // so argument typing can start right away.
 func (m *Model) fillCommand(name string) {
 	m.closePopup()
+	inputH := m.textarea.Height()
 	m.textarea.SetValue("/" + name + " ")
-	m.maybeGrowInput()
+	m.syncInputLayout(inputH)
 }
 
 // acceptCommand answers enter: argument-free commands run at once
