@@ -184,6 +184,15 @@ If you are starting a session, or recovering after an interrupt:
   to a *virtual* painted cursor (`Cursor()` returns nil unless you opt
   into a real one); field reads became methods (`Width()`,
   `Height()`, `YOffset()`).
+- **v2 textarea sizing**: with `DynamicHeight`, the textarea resizes
+  and re-clamps its internal scroll offset inside its own Update pass —
+  never drive its height from outside (a stale-but-valid offset pins
+  the cursor row to the top of the later-grown box, hiding typed text
+  above an end-of-buffer row). Caveats: `MaxHeight` doubles as an input
+  block at MaxHeight logical lines when `MaxContentHeight` is 0 — set
+  `MaxContentHeight` high to keep long messages scrolling like v1;
+  `splitLine`/newline does not call `recalculateHeight` directly, it
+  runs at the end of Update.
 - macOS terminals compose characters with option by default — option+m
   types µ and no alt key event is generated — so alt+letter bindings
   never fire on default Terminal.app/Ghostty/kitty/iTerm2 setups. Any
@@ -369,4 +378,5 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-18 | Footer label switched to the standard shift+enter (user request) with both modifier enters bound; the physical key still submits on unmapped terminals — pointed the user at Claude Code's /terminal-setup (writes the Terminal.app/iTerm2 shift+enter→ESC+CR mapping khode then picks up as alt+enter) and floated a khode /terminal-setup equivalent as future work | bc7e4e9 |
 | 2026-09-18 | User reported shift+enter not working in iTerm2 — expected: with no key mapping iTerm2 sends plain Return, identical to enter. Fix is terminal-side (Key Mappings → Shift↩ → Send Hex Codes 1b 0d); khode-side ESC+CR→newline wiring pinned by a regression test (TestModifierEnterInsertsNewline) | 36c428a |
 | 2026-09-19 | Bubble Tea v2 migration (planned via ExitPlanMode, executed in one atomic code commit + docs): import swaps to charm.land/*, tea.View declaration, KeyPressMsg dispatch, wheel-only mouse case, textarea styles/default-dark + InsertNewline without "enter", "space" matches, PasteMsg → textarea, dump harness drops termenv. Verified all uncertain APIs against module source before coding; smoke test via expect-pty (sized pty → boots, renders, ctrl+c exits; exit sequence shows the kitty `[<1u` pop proving protocol negotiation). Full gate green + dump frames eyeballed | e40738c |
+| 2026-09-19 | User hit the first real-world v2 bug: after shift+enter the input showed two empty prompt rows (typed text scrolled out of view). Reproduced with a render-assertion test, root-caused to external SetHeight racing the textarea's internal scroll-follow, fixed with native DynamicHeight + syncInputLayout; pty smoke test typed "hi" + real kitty ESC[13;2u and the frame kept the typed row visible | d6ba85a |
 | 2026-09-19 | User verified Claude Code/opencode get shift+enter for free in iTerm2 → root cause: they run Bubble Tea v2, which enables the kitty keyboard protocol (iTerm2 3.5+ reports modified keys); v1 could never. Chose the v2 migration over a hand-rolled shim (research: v2 stable since Feb 2026; opencode on v2; Terminal.app lacks protocol support even for Claude — same caveat stays for khode). Key insight for the terminal-mapping workaround era: ESC+CR still works as alt+enter, so nothing breaks on legacy terminals | e40738c |
