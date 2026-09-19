@@ -434,6 +434,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
+	// Wheel events are swallowed on purpose (the View captures the
+	// mouse): the wheel must never scroll the terminal's scrollback out
+	// from under the bottom-pinned frame. History stays reachable via
+	// the scrollbar and terminal search.
+	case tea.MouseWheelMsg:
+		return m, nil
+
 	// Key releases are ignored outright: only presses drive the app.
 	case tea.KeyPressMsg:
 		if m.perm != nil {
@@ -517,12 +524,16 @@ func (m Model) View() tea.View {
 	} else {
 		content = m.chatView()
 	}
-	// Inline program: nothing to declare on the view. The terminal keeps
-	// its real scrollback — sealed turns are tea.Println'd into it — so
-	// the native scrollbar, wheel scrolling, and text selection all work
-	// (no mouse capture to take the wheel away). khode redraws only the
-	// live region at the bottom: the in-flight turn, status, input.
-	return tea.NewView(content)
+	// Inline program: no alt screen — the terminal keeps its real
+	// scrollback, and the native scrollbar and text selection cover
+	// history. The mouse IS captured (Claude Code parity): the wheel
+	// must not scroll the scrollback out from under the bottom-pinned
+	// frame, so the terminal hands wheel events to the app, which
+	// swallows them. Selection survives via shift+drag, history via the
+	// scrollbar and terminal search.
+	v := tea.NewView(content)
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // chatView assembles the live region: the unprinted (streaming) blocks,
@@ -561,20 +572,24 @@ func (m Model) chatView() string {
 // the right, over a quiet rule. It prints once into the terminal's real
 // scrollback at startup and on session switches (flush); the status
 // line carries the mode and model live. The right side yields when the
-// terminal is too narrow for both.
+// terminal is too narrow for both. Everything is built one column short
+// of the terminal width: flush prefixes every printed line with a space
+// for the left-edge alignment, and a full-width rule would wrap its
+// last character onto a second row.
 func (m Model) header() string {
 	left := logo() +
 		dimStyle.Render(fmt.Sprintf("  v%s · %s/%s", Version, m.provider.Name(), m.modelLabel()))
 	right := dimStyle.Render(clip(m.session.Name(), 24)) + " " + modeChip.Render(string(m.mode()))
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	w := m.width - 1
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 2 {
 		right = ""
-		gap = m.width - lipgloss.Width(left)
+		gap = w - lipgloss.Width(left)
 		if gap < 0 {
 			gap = 0
 		}
 	}
-	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, m.width)))
+	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, w)))
 	return left + strings.Repeat(" ", gap) + right + "\n" + rule
 }
 

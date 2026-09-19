@@ -79,7 +79,14 @@ and tracks the two state fields the math needs (`top`, `hModel`).
 Verified in tmux capture-panes (real emulator — pyte mis-parses kitty
 sequences): boot, seals, overlay grow/close, shift+tab, and multiline
 input all end with the help line on the last terminal row and clean
-scrollback.
+scrollback. Follow-ups from the user's first pinned run: the mouse is
+captured again (wheel swallowed — under a full-screen pinned frame the
+wheel must not scroll the scrollback out from under it; Claude Code
+consumes the wheel the same way; history stays reachable via the
+scrollbar and terminal search, selection via shift+drag), and the
+header is built one column short of the terminal — flush's left-edge
+alignment prefix made the full-width rule and the mode chip wrap onto
+extra rows.
 
 **shift+tab mode cycling (2026-09-19):** shift+tab walks the permission
 modes (plan → ask → accept-edits → auto, wrapping via `perm.Next`)
@@ -329,3 +336,4 @@ Backlog (no committed order):
 | 2026-09-19 | Inline transcript rendering (backlog 1): alt screen + mouse capture retired; sealed turns tea.Println into real scrollback as they seal; live region = streaming turn + status (mode chip + model) + popup + input within a height−2 budget; banner-in-scrollback on startup/switch with transcript reprint (picked sessions show history now); overlays become bounded centered boxes with sliding windows (picker, settings lists); wheel/scrollbar/selection native; pty-verified (no 1049h, scrollback inserts above frame) | d52f53d |
 | 2026-09-19 | Mode switching UI: shift+tab cycles permission modes (`perm.Next` + quiet `cycleMode`, no chat notice), Claude-Code-style mode line above the input (per-mode accent, hidden in ask, liveChrome-accounted), bare `/mode` opens an interactive picker (`modepicker.go`) replacing the printed list; `/mode <name>` + settings row unchanged; tests + dump frames | a537a0f |
 | 2026-09-19 | Bottom-pinned inline frame: flush tops seal chunks up with blank rows so the input glues to the terminal's bottom edge (Claude Code's full-screen inline look); two-regime pin law (no-scroll fill / scroll self-pin) + one-tick-delayed refill for the height-mismatch case; tmux-verified end to end | (this commit) |
+| 2026-09-19 | Fixes from the first pinned run: mouse capture restored (wheel swallowed — Claude Code parity; the wheel must not scroll the scrollback under a full-screen frame) and the header built one column short — flush's alignment prefix was wrapping the rule onto a second row and could push the mode chip off | (this commit) |

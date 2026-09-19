@@ -12,6 +12,8 @@ import (
 	"khode/internal/llm"
 	"khode/internal/tools"
 
+	"charm.land/lipgloss/v2"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -36,9 +38,10 @@ func newTestModel(t *testing.T) Model {
 		tools.Default(t.TempDir()), nil, t.TempDir())
 }
 
-// The program is inline: the view declares no alt screen and no mouse
-// capture, so the terminal keeps its native scrollback, wheel, and
-// selection — the whole point of printing sealed turns into it.
+// The program is inline: the view declares no alt screen (the terminal
+// keeps its real scrollback), but the mouse IS captured — the wheel
+// must not scroll the scrollback out from under the bottom-pinned
+// frame, exactly like Claude Code. Selection survives via shift+drag.
 func TestInlineViewDeclaresNothing(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -48,8 +51,36 @@ func TestInlineViewDeclaresNothing(t *testing.T) {
 	if v.AltScreen {
 		t.Error("view entered the alt screen; scrollback would be suspended")
 	}
-	if v.MouseMode != tea.MouseModeNone {
-		t.Errorf("mouse mode = %v, want none (native wheel/selection)", v.MouseMode)
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("mouse mode = %v, want cell motion (captured wheel)", v.MouseMode)
+	}
+}
+
+// Wheel events are swallowed: they must never scroll the terminal.
+func TestWheelEventsSwallowed(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	before := m.top
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, Y: 5})
+	m = next.(Model)
+	if m.top != before {
+		t.Errorf("wheel event changed state: top %d -> %d", before, m.top)
+	}
+}
+
+// The header is built one column short of the terminal: flush prefixes
+// every printed line with a space, and a full-width rule would wrap its
+// last character onto a second row (the "two-row rule" bug).
+func TestHeaderFitsPrintWidth(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	for _, line := range strings.Split(m.header(), "\n") {
+		if w := lipgloss.Width(line); w > 99 {
+			t.Errorf("header line is %d wide, want <= 99 (terminal - prefix)", w)
+		}
 	}
 }
 
