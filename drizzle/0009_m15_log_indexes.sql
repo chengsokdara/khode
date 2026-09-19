@@ -1,0 +1,1 @@
+CREATE INDEX `request_logs_api_key_idx` ON `request_logs` (`api_key_id`);

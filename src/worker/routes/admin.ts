@@ -1397,9 +1397,9 @@ adminApp.delete('/api-keys/:id', async (c) => {
 // balance (ledgered as an `adjustment` entry), enable/disable, delete.
 // Platform admin stays global — org scoping arrives with M9.
 
-type UserInsert = typeof users.$inferSelect;
+type UserRow = typeof users.$inferSelect;
 
-function userDto(r: UserInsert, keyCount = 0) {
+function userDto(r: UserRow, keyCount = 0) {
   return {
     id: r.id,
     email: r.email,
@@ -1428,6 +1428,17 @@ adminApp.patch('/users/:id', async (c) => {
   const [existing] = await db.select().from(users).where(eq(users.id, id));
   if (!existing) return c.json(apiErr('User not found'), 404);
 
+  // Validate everything BEFORE applying anything — an invalid balance payload
+  // must not leave the enable/disable toggle already committed.
+  let balanceMicros: number | null = null;
+  if (body.balance_adjust_usd !== undefined) {
+    const adj = body.balance_adjust_usd;
+    if (typeof adj !== 'number' || !Number.isFinite(adj) || adj === 0 || Math.abs(adj) > 1_000_000) {
+      return c.json(apiErr('balance_adjust_usd must be a non-zero number within ±1,000,000'), 400);
+    }
+    balanceMicros = Math.round(adj * 1e6);
+  }
+
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') return c.json(apiErr('enabled must be a boolean'), 400);
     if (body.enabled !== Boolean(existing.enabled)) {
@@ -1437,18 +1448,13 @@ adminApp.patch('/users/:id', async (c) => {
     }
   }
 
-  if (body.balance_adjust_usd !== undefined) {
-    const adj = body.balance_adjust_usd;
-    if (typeof adj !== 'number' || !Number.isFinite(adj) || adj === 0 || Math.abs(adj) > 1_000_000) {
-      return c.json(apiErr('balance_adjust_usd must be a non-zero number within ±1,000,000'), 400);
-    }
-    const micros = Math.round(adj * 1e6);
+  if (balanceMicros !== null) {
     const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 200) : null;
     await db.batch([
       db.insert(balanceEntries).values({
         id: crypto.randomUUID(),
         userId: id,
-        deltaUsdMicros: micros,
+        deltaUsdMicros: balanceMicros,
         kind: 'adjustment',
         ref: `adjustment:${crypto.randomUUID()}`,
         note: note ?? 'Manual adjustment by admin',
@@ -1456,7 +1462,7 @@ adminApp.patch('/users/:id', async (c) => {
       }),
       db
         .update(users)
-        .set({ balanceUsdMicros: sql`${users.balanceUsdMicros} + ${micros}`, updatedAt: Date.now() })
+        .set({ balanceUsdMicros: sql`${users.balanceUsdMicros} + ${balanceMicros}`, updatedAt: Date.now() })
         .where(eq(users.id, id)),
     ]);
   }
@@ -1556,6 +1562,17 @@ adminApp.patch('/orgs/:id', async (c) => {
     patch.name = name;
     touched = true;
   }
+  // Validate the balance payload BEFORE applying anything (same ordering as
+  // PATCH /users/:id — no partial application on 400).
+  let balanceMicros: number | null = null;
+  if (body.balance_adjust_usd !== undefined) {
+    const adj = body.balance_adjust_usd;
+    if (typeof adj !== 'number' || !Number.isFinite(adj) || adj === 0 || Math.abs(adj) > 1_000_000) {
+      return c.json(apiErr('balance_adjust_usd must be a non-zero number within ±1,000,000'), 400);
+    }
+    balanceMicros = Math.round(adj * 1e6);
+  }
+
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') return c.json(apiErr('enabled must be a boolean'), 400);
     patch.enabled = body.enabled;
@@ -1565,18 +1582,13 @@ adminApp.patch('/orgs/:id', async (c) => {
     await db.update(orgs).set(patch).where(eq(orgs.id, id));
   }
 
-  if (body.balance_adjust_usd !== undefined) {
-    const adj = body.balance_adjust_usd;
-    if (typeof adj !== 'number' || !Number.isFinite(adj) || adj === 0 || Math.abs(adj) > 1_000_000) {
-      return c.json(apiErr('balance_adjust_usd must be a non-zero number within ±1,000,000'), 400);
-    }
-    const micros = Math.round(adj * 1e6);
+  if (balanceMicros !== null) {
     const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 200) : null;
     await db.batch([
       db.insert(balanceEntries).values({
         id: crypto.randomUUID(),
         orgId: id,
-        deltaUsdMicros: micros,
+        deltaUsdMicros: balanceMicros,
         kind: 'adjustment',
         ref: `adjustment:${crypto.randomUUID()}`,
         note: note ?? 'Manual adjustment by admin',
@@ -1584,7 +1596,7 @@ adminApp.patch('/orgs/:id', async (c) => {
       }),
       db
         .update(orgs)
-        .set({ balanceUsdMicros: sql`${orgs.balanceUsdMicros} + ${micros}`, updatedAt: Date.now() })
+        .set({ balanceUsdMicros: sql`${orgs.balanceUsdMicros} + ${balanceMicros}`, updatedAt: Date.now() })
         .where(eq(orgs.id, id)),
     ]);
   }

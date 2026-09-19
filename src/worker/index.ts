@@ -2,6 +2,7 @@
 // (user portal, M8; orgs/teams, M9), /webhooks (MoR callbacks, M8) and static
 // assets for the SPA (admin console + user portal). See docs/plans/mvp-plan.md.
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import type { Env } from './env';
 import { adminApp } from './routes/admin';
 import { gatewayApp } from './routes/gateway';
@@ -28,7 +29,11 @@ app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 app.onError((err, c) => {
   console.error('[khateway]', err);
-  return c.json({ error: err instanceof Error ? err.message : 'Internal error' }, 500);
+  // Never surface raw error text to clients — D1/drizzle messages carry SQL
+  // fragments. Callers that need detail live in the server logs. Hono's own
+  // HTTPException keeps its status/message; everything else is a generic 500.
+  if (err instanceof HTTPException) return err.getResponse();
+  return c.json({ error: 'Internal server error' }, 500);
 });
 
 export default app;

@@ -10,7 +10,7 @@
 // for top-ups (the webhook credit is handled in routes/webhooks.ts).
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { desc, eq, inArray, isNull, and } from 'drizzle-orm';
+import { count, desc, eq, inArray, isNull, and, sum } from 'drizzle-orm';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Env } from '../env';
 import { getDb } from '../db';
@@ -100,15 +100,13 @@ function apiKeyDto(r: { id: string; name: string; keyPrefix: string; allowedMode
   };
 }
 
-/** Per-key usage aggregates (mirrors the admin helper, scoped to one key). */
+/** Per-key usage aggregates — SQL SUM (M15: was an unbounded row load). */
 async function keyUsage(db: ReturnType<typeof getDb>, id: string): Promise<{ spentUsd: number; requests: number }> {
-  const rows = await db
-    .select({ cost: requestLogs.costUsd })
+  const [agg] = await db
+    .select({ spent: sum(requestLogs.costUsd), requests: count() })
     .from(requestLogs)
     .where(eq(requestLogs.apiKeyId, id));
-  let spent = 0;
-  for (const r of rows) if (r.cost != null) spent += r.cost;
-  return { spentUsd: spent, requests: rows.length };
+  return { spentUsd: agg?.spent != null ? Number(agg.spent) : 0, requests: agg?.requests ?? 0 };
 }
 
 // ------------------------------------------------------------------ session

@@ -1,12 +1,19 @@
 // /webhooks — inbound MoR (Lemon Squeezy) callbacks (M8). The HMAC signature
 // IS the authentication; there is no session or key here.
 //
-// Idempotency is two-layered:
+// Idempotency is two-layered (M15 hardening):
 //   1. `webhook_events` (unique source+event_key) — replays answer
 //      {ok, duplicate} without doing anything.
 //   2. `balance_entries.ref` (unique, `lemonsqueezy:order:<id>`) — the credit
 //      ledger insert throws on a duplicate inside the same D1 batch that bumps
 //      the balance, so even a race can never double-credit.
+// For crediting outcomes BOTH bookkeeping rows are written in the SAME atomic
+// batch as the balance bump: a transient D1 failure must leave nothing
+// recorded, so the 500 we answer makes Lemon Squeezy retry into a clean
+// state. Recording the delivery separately from the credit would let a crash
+// between the two permanently block the retry as a "duplicate" — a silently
+// lost top-up. Only genuine unique-violations may answer duplicate; any other
+// error must propagate as a 5xx.
 // Anything that parses and verifies but does not apply (unknown user, non-paid
 // status, ignored event) is still recorded with a `note` and answered 200 —
 // non-2xx would make Lemon Squeezy retry forever.
@@ -19,6 +26,18 @@ import { getBillingConfig } from '../billing/config';
 import { creditMicros, lsSignatureValid, parseLsWebhook } from '../billing/lemonsqueezy';
 
 export const webhookApp = new Hono<{ Bindings: Env }>();
+
+// D1 surfaces constraint violations as "UNIQUE constraint failed:
+// <table>.<col>"; drizzle wraps the driver error, so walk the cause chain.
+// The trailing dot keeps the table match exact (no prefix collisions).
+export function isUniqueViolation(err: unknown, table: string): boolean {
+  let e: unknown = err;
+  for (let depth = 0; e instanceof Error && depth < 5; depth++) {
+    if (e.message.includes(`UNIQUE constraint failed: ${table}.`)) return true;
+    e = e.cause;
+  }
+  return false;
+}
 
 webhookApp.post('/lemonsqueezy', async (c) => {
   const raw = await c.req.text();
@@ -42,38 +61,49 @@ webhookApp.post('/lemonsqueezy', async (c) => {
 
   const db = getDb(c.env);
 
-  // Idempotency gate #1: record the delivery (duplicate → done).
-  try {
-    await db.insert(webhookEvents).values({
-      id: crypto.randomUUID(),
-      source: 'lemonsqueezy',
-      eventKey: ev.eventKey,
-      eventName: ev.eventName,
-      createdAt: Date.now(),
-    });
-  } catch {
-    return c.json({ ok: true, duplicate: true });
-  }
-
-  const noteAndFinish = async (note: string, extra: Record<string, unknown> = {}) => {
-    await db.update(webhookEvents).set({ note }).where(eq(webhookEvents.eventKey, ev.eventKey));
-    return c.json({ ok: true, ...extra });
+  // Non-crediting outcome: record the delivery with its note, answer 200.
+  // A replay of a recorded outcome is a duplicate; any other insert failure
+  // propagates (500 → Lemon Squeezy retries; nothing is recorded mid-flight).
+  const recordIgnored = async (note: string) => {
+    try {
+      await db.insert(webhookEvents).values({
+        id: crypto.randomUUID(),
+        source: 'lemonsqueezy',
+        eventKey: ev.eventKey,
+        eventName: ev.eventName,
+        note,
+        createdAt: Date.now(),
+      });
+    } catch (err) {
+      if (isUniqueViolation(err, 'webhook_events')) {
+        return c.json({ ok: true, duplicate: true });
+      }
+      throw err;
+    }
+    return c.json({ ok: true });
   };
 
   if (ev.eventName !== 'order_created') {
-    return await noteAndFinish('ignored: unsupported event (only order_created credits)');
+    return await recordIgnored('ignored: unsupported event (only order_created credits)');
   }
   const micros = creditMicros(ev);
   if (micros <= 0) {
-    return await noteAndFinish(`ignored: order not creditable (status=${ev.status ?? '?'}, refunded=${ev.refunded})`);
+    return await recordIgnored(`ignored: order not creditable (status=${ev.status ?? '?'}, refunded=${ev.refunded})`);
   }
 
   // Org top-ups (M9): custom_data.org_id wins over user_id when both ride.
   if (ev.orgId) {
     const [org] = await db.select({ id: orgs.id }).from(orgs).where(eq(orgs.id, ev.orgId));
-    if (!org) return await noteAndFinish(`ignored: unknown org '${ev.orgId}'`);
+    if (!org) return await recordIgnored(`ignored: unknown org '${ev.orgId}'`);
     try {
       await db.batch([
+        db.insert(webhookEvents).values({
+          id: crypto.randomUUID(),
+          source: 'lemonsqueezy',
+          eventKey: ev.eventKey,
+          eventName: ev.eventName,
+          createdAt: Date.now(),
+        }),
         db.insert(balanceEntries).values({
           id: crypto.randomUUID(),
           orgId: org.id,
@@ -88,24 +118,34 @@ webhookApp.post('/lemonsqueezy', async (c) => {
           .set({ balanceUsdMicros: sql`${orgs.balanceUsdMicros} + ${micros}`, updatedAt: Date.now() })
           .where(eq(orgs.id, org.id)),
       ]);
-    } catch {
-      return c.json({ ok: true, duplicate: true });
+    } catch (err) {
+      if (isUniqueViolation(err, 'webhook_events') || isUniqueViolation(err, 'balance_entries')) {
+        return c.json({ ok: true, duplicate: true });
+      }
+      throw err;
     }
     return c.json({ ok: true, credited_usd: micros / 1e6 });
   }
 
   if (!ev.userId) {
-    return await noteAndFinish('ignored: no user_id or org_id in custom_data');
+    return await recordIgnored('ignored: no user_id or org_id in custom_data');
   }
   const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, ev.userId));
   if (!user) {
-    return await noteAndFinish(`ignored: unknown user '${ev.userId}'`);
+    return await recordIgnored(`ignored: unknown user '${ev.userId}'`);
   }
 
-  // Idempotency gate #2 + credit, atomically: the unique ledger ref aborts the
-  // whole batch (no balance change) if this order was ever credited before.
+  // Credit, atomically: the unique ledger ref aborts the whole batch (no
+  // balance change) if this order was ever credited before.
   try {
     await db.batch([
+      db.insert(webhookEvents).values({
+        id: crypto.randomUUID(),
+        source: 'lemonsqueezy',
+        eventKey: ev.eventKey,
+        eventName: ev.eventName,
+        createdAt: Date.now(),
+      }),
       db.insert(balanceEntries).values({
         id: crypto.randomUUID(),
         userId: user.id,
@@ -120,8 +160,11 @@ webhookApp.post('/lemonsqueezy', async (c) => {
         .set({ balanceUsdMicros: sql`${users.balanceUsdMicros} + ${micros}`, updatedAt: Date.now() })
         .where(eq(users.id, user.id)),
     ]);
-  } catch {
-    return c.json({ ok: true, duplicate: true });
+  } catch (err) {
+    if (isUniqueViolation(err, 'webhook_events') || isUniqueViolation(err, 'balance_entries')) {
+      return c.json({ ok: true, duplicate: true });
+    }
+    throw err;
   }
   return c.json({ ok: true, credited_usd: micros / 1e6 });
 });

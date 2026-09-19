@@ -80,7 +80,7 @@ function Shell({ children, onLogout }: { children: ReactNode; onLogout: () => vo
             <LogOut className="h-4 w-4" />
             Sign out
           </button>
-          <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-600">MVP · M1–M7 · development</div>
+          <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-600">M1–M14 · development</div>
         </div>
       </aside>
       <main className="ml-60 min-w-0">

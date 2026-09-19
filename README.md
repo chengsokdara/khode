@@ -163,9 +163,23 @@ npm run deploy
 | M11 ✅ | Semantic cache: opt-in per model/key, canonical-request hash key, TTL + admin flush, hits marked in logs |
 | M12 ✅ | Native Gemini adapter: `generateContent` upstream (thinking budgets, native multiparts) — OpenAI-compat endpoint still available |
 | M13 ✅ | `POST /v1/embeddings`: OpenAI Embeddings API face, openai-compatible + native-gemini upstreams, logged + priced like chat |
+| M14 ✅ | Playground: in-admin chat tester over the real gateway via session-scoped client keys, streamed render + per-request log card |
 
-**MVP complete + M8 public foundations + M9 orgs + M10 rate limiting + M11 semantic cache + M12 native Gemini + M13 embeddings.**
+**MVP complete + M8 public foundations + M9 orgs + M10 rate limiting + M11 semantic cache + M12 native Gemini + M13 embeddings + M14 playground.**
 See [`STATUS.md`](STATUS.md) for the verification baseline and
-[`ROADMAP.md`](ROADMAP.md) for what's next (playground).
+[`ROADMAP.md`](ROADMAP.md) for what's next.
+
+## User portal (`/app`)
+
+Khateway ships a self-serve user portal at [`/app`](http://localhost:5173/app):
+email/password accounts (PBKDF2-hashed), per-user prepaid balances in
+micro-USD with an auditable ledger, personal API keys, usage views, and
+Lemon Squeezy hosted-checkout top-ups. Organizations/teams (M9) add shared org
+balances, rotatable join-code invites, member roles, and org-scoped keys that
+draw the org balance at the gateway — all manageable from the portal's Teams
+page and the admin Organizations page. Public signup can be toggled in admin
+Settings. Top-ups credit through `POST /webhooks/lemonsqueezy`
+(signature-verified, idempotent); configure store/variant/API key/webhook
+secret on admin Settings → Billing.
 
 See [`docs/plans/mvp-plan.md`](docs/plans/mvp-plan.md) for the full plan.

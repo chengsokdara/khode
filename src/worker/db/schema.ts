@@ -265,6 +265,10 @@ export const requestLogs = sqliteTable(
     index('request_logs_created_idx').on(t.createdAt),
     index('request_logs_org_idx').on(t.orgId),
     index('request_logs_user_idx').on(t.userId),
+    // M15: the spend-cap SUM, logs filter and per-key usage aggregates all
+    // query by api_key_id on every keyed request — without this index each is
+    // a full scan of the append-only log table.
+    index('request_logs_api_key_idx').on(t.apiKeyId),
   ],
 );
 
