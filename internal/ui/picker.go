@@ -49,7 +49,13 @@ func (m *Model) pickerKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// openPicked swaps the picked transcript in as the active session.
+// pickerMaxRows caps the visible session list; further rows scroll a
+// window around the cursor so the box stays inside the live region's
+// height budget.
+const pickerMaxRows = 10
+
+// openPicked swaps the picked transcript in as the active session and
+// prints its header + history into scrollback.
 func (m *Model) openPicked() tea.Cmd {
 	e := m.picker.entries[m.picker.cursor]
 	sess, err := agent.Open(e.Path)
@@ -57,11 +63,10 @@ func (m *Model) openPicked() tea.Cmd {
 	if err != nil {
 		m.lastErr = err.Error()
 		m.messages = append(m.messages, uiMessage{role: "system", raw: "error: " + err.Error()})
-		m.renderAll()
-		return nil
+		return m.flush()
 	}
 	m.useSession(sess)
-	return nil
+	return m.flush()
 }
 
 func (m *Model) pickerView() string {
@@ -75,6 +80,7 @@ func (m *Model) pickerView() string {
 			rows = append(rows, "  "+name+dimStyle.Render("  "+meta))
 		}
 	}
+	rows = listWindow(rows, m.picker.cursor, listMaxRows(m.height))
 	footer := keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
 		keyHint("enter", "open") + dimStyle.Render("  ·  ") +
 		keyHint("esc", "cancel")
@@ -85,7 +91,7 @@ func (m *Model) pickerView() string {
 		"",
 		footer,
 	))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 }
 
 // clip shortens s to n runes with an ellipsis.

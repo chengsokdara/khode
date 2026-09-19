@@ -15,10 +15,12 @@ import (
 // permRequestMsg carries one permission question from the agent loop.
 type permRequestMsg struct{ req agent.Request }
 
-// permPreviewMax caps the preview shown in the approval dialog, reclaiming
-// room from the terminal height within a readable range.
+// permPreviewMax caps the preview shown in the approval dialog,
+// reclaiming room from the terminal height within a readable range. The
+// dialog is the whole live region inline, so the cap keeps the box
+// inside the frame budget (liveBudget).
 func permPreviewMax(height int) int {
-	return min(30, max(6, height-12))
+	return min(20, max(6, height-12))
 }
 
 // permKey handles input while the approval dialog is open: y allows the
@@ -38,7 +40,9 @@ func (m *Model) permKey(msg tea.KeyMsg) tea.Cmd {
 
 // answerPerm resolves the open dialog and resumes the event pump.
 // Approving a plan also switches khode to accept-edits mode: that is
-// the contract the plan tool's result reports back to the model.
+// the contract the plan tool's result reports back to the model. The
+// flush carries the mode-change notice to scrollback (setMode appends
+// it); it no-ops when nothing sealed is pending.
 func (m *Model) answerPerm(allow bool) tea.Cmd {
 	if m.perm != nil {
 		if m.perm.Kind == agent.KindPlan && allow {
@@ -47,7 +51,7 @@ func (m *Model) answerPerm(allow bool) tea.Cmd {
 		m.perm.Answer(allow)
 		m.perm = nil
 	}
-	return m.pump()
+	return tea.Batch(m.flush(), m.pump())
 }
 
 // permView renders the open dialog: a tool's permission question with
@@ -77,7 +81,7 @@ func (m *Model) permView() string {
 	help := keyHint("y", "allow") + dimStyle.Render("  ·  ") +
 		keyHint("n/esc", "deny")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 }
 
 // planView renders the plan-approval dialog: the plan text plus the
@@ -88,7 +92,7 @@ func (m *Model) planView(req agent.Request) string {
 	help := keyHint("y", "approve — implement") + dimStyle.Render("  ·  ") +
 		keyHint("n/esc", "keep planning")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 }
 
 // clipPlain wraps a plain-text dialog body: lines clipped, the whole

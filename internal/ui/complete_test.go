@@ -176,24 +176,32 @@ func TestAliasCompletesAndRuns(t *testing.T) {
 	}
 }
 
-func TestRelayoutCarvesRowsForPopup(t *testing.T) {
+func TestPopupShrinksLiveBudget(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	before := m.viewport.Height()
+	if m.popupHeight() != 0 {
+		t.Fatalf("hidden popup occupies %d rows", m.popupHeight())
+	}
+	before := m.liveBudget()
 	if before <= 0 {
-		t.Fatalf("baseline viewport height = %d", before)
+		t.Fatalf("baseline live budget = %d", before)
 	}
 
 	m = pressKeys(m, "/")
-	want := before - m.popupHeight()
-	if m.viewport.Height() != want {
-		t.Errorf("viewport height with popup = %d, want %d (%d minus popup rows)", m.viewport.Height(), want, before)
+	if m.popupHeight() == 0 {
+		t.Fatal("popup did not open")
+	}
+	if got := m.liveBudget(); got >= before {
+		t.Errorf("live budget with popup = %d, want < %d (popup rows carved out)", got, before)
 	}
 
 	m = pressKeys(m, "esc")
-	if m.viewport.Height() != before {
-		t.Errorf("viewport height after esc = %d, want the original %d", m.viewport.Height(), before)
+	if m.popupHeight() != 0 {
+		t.Fatal("popup still open after esc")
+	}
+	if got := m.liveBudget(); got != before {
+		t.Errorf("live budget after esc = %d, want the original %d", got, before)
 	}
 }
 

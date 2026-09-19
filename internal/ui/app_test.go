@@ -36,23 +36,20 @@ func newTestModel(t *testing.T) Model {
 		tools.Default(t.TempDir()), nil, t.TempDir())
 }
 
-func TestMouseWheelScrollsChat(t *testing.T) {
+// The program is inline: the view declares no alt screen and no mouse
+// capture, so the terminal keeps its native scrollback, wheel, and
+// selection — the whole point of printing sealed turns into it.
+func TestInlineViewDeclaresNothing(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	// Content far taller than the viewport, so both directions can move.
-	m.viewport.SetContent(strings.Repeat("line\n", 60))
 
-	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	m = next.(Model)
-	if m.viewport.YOffset() == 0 {
-		t.Fatal("wheel down did not scroll the chat")
+	v := m.View()
+	if v.AltScreen {
+		t.Error("view entered the alt screen; scrollback would be suspended")
 	}
-
-	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	m = next.(Model)
-	if m.viewport.YOffset() != 0 {
-		t.Errorf("wheel up left YOffset at %d, want 0", m.viewport.YOffset())
+	if v.MouseMode != tea.MouseModeNone {
+		t.Errorf("mouse mode = %v, want none (native wheel/selection)", v.MouseMode)
 	}
 }
 
@@ -90,7 +87,7 @@ func TestModifierEnterInsertsNewline(t *testing.T) {
 	}
 
 	// Submit clears and the box shrinks back to one row, giving the row
-	// back to the chat viewport.
+	// back to the live region.
 	h := m.textarea.Height()
 	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(Model)
@@ -162,7 +159,8 @@ func TestToolBlocksRender(t *testing.T) {
 		llm.TextDeltaEvent{Text: "here is what I found"},
 	}
 	m := pumpModel(t, newTestModel(t), evs)
-	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
 
 	var sawCall, sawResult, sawFinal bool
 	for i, msg := range m.messages {
@@ -267,7 +265,8 @@ func TestThinkingBlockSeparatesFromAnswer(t *testing.T) {
 		llm.TextDeltaEvent{Text: "final answer"},
 	}
 	m := pumpModel(t, newTestModel(t), evs)
-	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
 
 	var sawThink, sawAnswer bool
 	for i, msg := range m.messages {
@@ -302,7 +301,8 @@ func TestThinkingOnlyTurnRenders(t *testing.T) {
 	}
 	m := pumpModel(t, newTestModel(t), evs)
 
-	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
 	found := false
 	for i, msg := range m.messages {
 		if msg.kind == kindThinking {
@@ -361,5 +361,138 @@ func TestKeylessTurnStillBlockedForOtherProviders(t *testing.T) {
 	}
 	if m.streaming {
 		t.Error("turn started without a key")
+	}
+}
+
+// flush hands sealed blocks to the terminal's scrollback in one chunk
+// and advances the watermark; a streaming block is never printed.
+func TestFlushPrintsSealedBlocks(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model) // first flush: the banner
+
+	// A streaming block is never printed: flush has nothing to do.
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true, raw: "in flight", history: true})
+	if cmd := m.flush(); cmd != nil {
+		t.Error("flush printed while the last block was still streaming")
+	}
+	// Sealing it makes it printable; the chunk carries the final text.
+	m.messages[len(m.messages)-1].streaming = false
+	if cmd := m.flush(); cmd == nil {
+		t.Fatal("flush printed nothing after the block sealed")
+	}
+	if got := ansiStrip(m.lastPrint); !strings.Contains(got, "in flight") {
+		t.Errorf("printed chunk = %q, want the sealed block", got)
+	}
+	if m.printed != len(m.messages) {
+		t.Errorf("watermark = %d, want %d", m.printed, len(m.messages))
+	}
+	if got := ansiStrip(m.View().Content); strings.Contains(got, "in flight") {
+		t.Error("printed block still rendered in the live region")
+	}
+}
+
+// A restored transcript prints once, banner first, on the first resize
+// (the wrap width has to exist before anything can print), and none of
+// it stays in the live region.
+func TestStartupTranscriptPrintsOnResize(t *testing.T) {
+	sess, err := agent.NewSession(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range []llm.Message{
+		{Role: llm.RoleUser, Content: "earlier question"},
+		{Role: llm.RoleAssistant, Content: "earlier answer"},
+	} {
+		if err := sess.Append(msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{Provider: "test", MaxTokens: 100}
+	cfg.SetModel("test-model")
+	m := New(cfg, &config.Auth{}, nameOnlyProvider{}, sess, tools.Default(t.TempDir()), nil, t.TempDir())
+
+	if m.printed != 0 || m.lastPrint != "" {
+		t.Fatalf("transcript printed before any resize: printed=%d", m.printed)
+	}
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("first resize must flush the banner + transcript")
+	}
+	printed := ansiStrip(m.lastPrint)
+	for _, want := range []string{"khode", "earlier question", "earlier answer"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("startup chunk missing %q:\n%s", want, printed)
+		}
+	}
+	if m.printed != len(m.messages) {
+		t.Errorf("watermark = %d, want %d", m.printed, len(m.messages))
+	}
+	if got := ansiStrip(m.View().Content); strings.Contains(got, "earlier answer") {
+		t.Error("printed transcript leaked into the live region")
+	}
+}
+
+// Switching sessions re-prints the header and the picked transcript —
+// picked sessions finally show their history.
+func TestSessionSwitchPrintsTranscript(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	sess, err := agent.NewSession(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(llm.Message{Role: llm.RoleUser, Content: "picked session history"}); err != nil {
+		t.Fatal(err)
+	}
+	m.useSession(sess)
+	if cmd := m.flush(); cmd == nil {
+		t.Fatal("session switch printed nothing")
+	}
+	printed := ansiStrip(m.lastPrint)
+	if !strings.Contains(printed, "khode") || !strings.Contains(printed, "picked session history") {
+		t.Errorf("switch chunk = %q, want banner + transcript", printed)
+	}
+}
+
+// The live region — streaming blocks, popup, input — must never fill
+// the terminal: bubbletea's Println garbles a full-height frame, and
+// taller frames get clipped by the renderer.
+func TestLiveRegionStaysInsideBudget(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	m.streaming = true
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true,
+		raw: strings.Repeat("line of a long answer\n", 60), history: true})
+	m = pressKeys(m, "/") // popup open on top of the tall stream
+
+	v := m.View()
+	lines := strings.Split(v.Content, "\n")
+	if len(lines) > m.height-2 {
+		t.Errorf("live frame = %d rows, want <= %d (terminal %d minus safety)", len(lines), m.height-2, m.height)
+	}
+	if !strings.Contains(ansiStrip(v.Content), "line of a long answer") {
+		t.Error("streaming text vanished from the live region")
+	}
+}
+
+// The header moved into the scrollback banner, so the status line
+// carries the mode chip and model live.
+func TestStatusLineShowsModeAndModel(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	status := ansiStrip(m.statusLine())
+	if !strings.Contains(status, "ask") {
+		t.Errorf("status line missing the mode chip: %q", status)
+	}
+	if !strings.Contains(status, "test-model") {
+		t.Errorf("status line missing the model: %q", status)
 	}
 }

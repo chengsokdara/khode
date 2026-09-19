@@ -104,21 +104,16 @@ func (m *Model) syncPopup() {
 	if m.popup != nil && m.popup.query == query {
 		return // the list did not change; keep the cursor
 	}
-	was := m.popupHeight()
 	m.popup = &cmdPopup{query: query, matches: matches}
-	if m.popupHeight() != was {
-		m.relayout()
-	}
 }
 
-// closePopup hides the completion list and gives its rows back to the
-// chat viewport.
+// closePopup hides the completion list; its rows go back to the live
+// budget automatically (popupHeight feeds it per render).
 func (m *Model) closePopup() {
 	if m.popup == nil {
 		return
 	}
 	m.popup = nil
-	m.relayout()
 }
 
 // popupKey handles input while the popup is open, reporting done for
@@ -155,9 +150,7 @@ func (p *cmdPopup) highlighted() slashCommand {
 // so argument typing can start right away.
 func (m *Model) fillCommand(name string) {
 	m.closePopup()
-	inputH := m.textarea.Height()
 	m.textarea.SetValue("/" + name + " ")
-	m.syncInputLayout(inputH)
 }
 
 // acceptCommand answers enter: argument-free commands run at once
@@ -176,7 +169,13 @@ func (m *Model) acceptCommand() tea.Cmd {
 // matching its width so the two read as one unit.
 func (m *Model) popupView() string {
 	p := m.popup
-	rows := min(maxPopupRows, len(p.matches))
+	// The visible row count follows the clamped box height so the view
+	// and the budget accounting can never drift apart.
+	footerH := 0
+	if _, ok := m.popupFooter(); ok {
+		footerH = 1
+	}
+	rows := m.popupHeight() - 2 - footerH
 	from := max(0, min(p.cursor-rows+1, len(p.matches)-rows))
 
 	// The command column spans the widest entry of the whole table so
@@ -228,7 +227,9 @@ func (m *Model) popupFooter() (string, bool) {
 }
 
 // popupHeight is the screen rows the popup occupies, zero when hidden;
-// relayout takes it out of the viewport.
+// liveChrome takes it out of the chat-block budget. On short terminals
+// the list yields rows so the live region stays inside the frame cap
+// (see liveBudget) instead of being clipped by the renderer.
 func (m *Model) popupHeight() int {
 	if m.popup == nil {
 		return 0
@@ -236,6 +237,9 @@ func (m *Model) popupHeight() int {
 	h := min(maxPopupRows, len(m.popup.matches)) + 2 // rounded border
 	if _, ok := m.popupFooter(); ok {
 		h++
+	}
+	if room := m.height - 2 - (1 + m.textarea.Height() + 2 + 1) - 1; h > room && room > 0 {
+		h = room
 	}
 	return h
 }

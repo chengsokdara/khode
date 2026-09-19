@@ -488,5 +488,5 @@ func (m *Model) welcomeView() string {
 	head := lipgloss.JoinHorizontal(lipgloss.Center, title,
 		"  ", stepDots(min(w.step, steps-1), steps))
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, head, "", body, "", footer))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 }

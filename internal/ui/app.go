@@ -25,7 +25,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
@@ -72,11 +71,21 @@ type Model struct {
 
 	width    int
 	height   int
-	viewport viewport.Model
 	textarea textarea.Model
 	spinner  spinner.Model
 
+	// messages holds the chat blocks. Blocks up to the printed
+	// watermark have been handed to the terminal's real scrollback via
+	// tea.Println (flush) and are never redrawn; the live region renders
+	// only what is after it — the in-flight streaming turn.
 	messages []uiMessage
+	printed  int
+	// printBannerNext makes the next flush prepend the header
+	// (wordmark, provider/model, session, mode) once: at startup and
+	// whenever the session changes. lastPrint keeps the most recent
+	// chunk for tests.
+	printBannerNext bool
+	lastPrint       string
 
 	picker     *picker     // session chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
@@ -168,19 +177,19 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	ta.SetHeight(minInputHeight)
 
 	m := Model{
-		cfg:          cfg,
-		auth:         auth,
-		provider:     p,
-		session:      sess,
-		tools:        reg,
-		mcpClients:   mcpClients,
-		workdir:      workdir,
-		textarea:     ta,
-		spinner:      sp,
-		viewport:     viewport.New(viewport.WithWidth(60), viewport.WithHeight(10)),
-		partial:      new(strings.Builder),
-		partialThink: new(strings.Builder),
-		approvals:    agent.NewBridge(),
+		cfg:             cfg,
+		auth:            auth,
+		provider:        p,
+		session:         sess,
+		tools:           reg,
+		mcpClients:      mcpClients,
+		workdir:         workdir,
+		textarea:        ta,
+		spinner:         sp,
+		partial:         new(strings.Builder),
+		partialThink:    new(strings.Builder),
+		approvals:       agent.NewBridge(),
+		printBannerNext: true, // the first flush prints the header above the transcript
 	}
 
 	m.registerTaskTool()
@@ -190,6 +199,15 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	modeFn := func() perm.Mode { return perm.Parse(cfg.PermissionMode) }
 	reg.Register(agent.NewPlanTool(m.approvals, modeFn))
 
+	m.replayTranscript(sess)
+	m.banner()
+	return m
+}
+
+// replayTranscript turns a session's messages into chat blocks — the
+// same shape the live turn renders, so a resumed conversation prints
+// into scrollback exactly as it looked when it happened.
+func (m *Model) replayTranscript(sess *agent.Session) {
 	for _, msg := range sess.Messages() {
 		switch {
 		case msg.Role == llm.RoleTool && msg.ToolResult != nil:
@@ -221,8 +239,6 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 			}
 		}
 	}
-	m.banner()
-	return m
 }
 
 // banner seeds the one notice a fresh chat starts with. The header
@@ -274,14 +290,19 @@ func (m *Model) modelLabel() string {
 }
 
 // useSession makes sess the active conversation and resets the view.
-// The context estimate resets with it: the new transcript is empty
-// until the first usage report comes back.
+// The transcript replays into unprinted blocks so the next flush prints
+// the header plus the whole prior conversation into scrollback (picked
+// sessions show their history from now on). The context estimate resets
+// with it: the new transcript is empty until the first usage report
+// comes back.
 func (m *Model) useSession(sess *agent.Session) {
 	m.session = sess
 	m.ctxIn, m.ctxOut = 0, 0
 	m.messages = nil
+	m.printed = 0
+	m.replayTranscript(sess)
+	m.printBannerNext = true
 	m.banner()
-	m.renderAll()
 }
 
 // --- tea.Model -------------------------------------------------------------
@@ -305,22 +326,18 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		first := m.width == 0
 		m.width = msg.Width
 		m.height = msg.Height
 		m.textarea.SetWidth(max(10, m.width-4))
-		m.relayout()
 		m.invalidateRendered()
-		m.renderAll()
+		if first {
+			// Width is known for the first time: the banner and any
+			// restored transcript print into scrollback now, wrapped to
+			// the real terminal.
+			return m, m.flush()
+		}
 		return m, nil
-
-	case tea.MouseWheelMsg:
-		// Mouse capture is on (View), so the wheel arrives here and
-		// scrolls the chat instead of the terminal's dead pre-launch
-		// scrollback. Everything else (clicks, drags) is ignored;
-		// shift+drag still selects text terminal-side.
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
 
 	case tea.PasteMsg:
 		// Bracketed paste: v2 enables it by default, and multi-line
@@ -351,8 +368,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, uiMessage{role: "system",
 				raw: fmt.Sprintf("compacted · summarized %d messages (session transcript rewritten)", msg.removed)})
 		}
-		m.renderAll()
-		return m, nil
+		return m, m.flush()
 
 	case permRequestMsg:
 		if !m.streaming || m.events == nil {
@@ -366,7 +382,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mcpApplyMsg:
 		m.applyMCPResult(msg)
-		return m, nil
+		return m, m.flush() // the reconciliation notice prints to scrollback
 
 	case modelsFetchedMsg:
 		m.applyFetchedModels(msg)
@@ -411,17 +427,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.submit()
-		case msg.String() == "pgup" || msg.String() == "pgdown":
-			// In alt screen the terminal's own scrollback is suspended,
-			// so these are the only way back through the chat.
-			var cmd tea.Cmd
-			m.viewport, cmd = m.viewport.Update(msg)
-			return m, cmd
 		}
+		// History is the terminal's real scrollback now (inline program,
+		// no mouse capture): wheel, scrollbar, and selection are native,
+		// and pgup/pgdn have nothing left to do in the app.
 		var cmd tea.Cmd
-		inputH := m.textarea.Height()
 		m.textarea, cmd = m.textarea.Update(msg)
-		m.syncInputLayout(inputH)
 		m.syncPopup()
 		return m, cmd
 	}
@@ -446,17 +457,18 @@ func (m Model) View() tea.View {
 	} else {
 		content = m.chatView()
 	}
-	v := tea.NewView(content)
-	// The app owns the whole window; the wheel scrolls the chat while
-	// shift+drag still selects text terminal-side. Cursors stay virtual:
-	// the bubbles paint their own block cursors into the content.
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
+	// Inline program: nothing to declare on the view. The terminal keeps
+	// its real scrollback — sealed turns are tea.Println'd into it — so
+	// the native scrollbar, wheel scrolling, and text selection all work
+	// (no mouse capture to take the wheel away). khode redraws only the
+	// live region at the bottom: the in-flight turn, status, input.
+	return tea.NewView(content)
 }
 
+// chatView assembles the live region: the unprinted (streaming) blocks,
+// the status line, the completion popup while it is open, and the input.
+// Finished conversation lives in the terminal's scrollback above.
 func (m Model) chatView() string {
-	header := m.header()
 	status := m.statusLine()
 	border := inputBorder
 	if m.streaming {
@@ -465,7 +477,11 @@ func (m Model) chatView() string {
 	inputBox := border.Render(m.textarea.View())
 	help := m.helpLine()
 
-	parts := []string{header, viewportStyle.Render(m.viewport.View()), status}
+	var parts []string
+	if live := m.liveBlocks(); live != "" {
+		parts = append(parts, live)
+	}
+	parts = append(parts, status)
 	if m.popup != nil {
 		parts = append(parts, m.popupView()) // floats just above the input
 	}
@@ -473,9 +489,11 @@ func (m Model) chatView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-// header renders the chrome above the chat: the gradient wordmark and
+// header renders the scrollback banner: the gradient wordmark and
 // provider/model on the left, the session and a permission-mode chip on
-// the right, over a quiet rule. The right side yields when the
+// the right, over a quiet rule. It prints once into the terminal's real
+// scrollback at startup and on session switches (flush); the status
+// line carries the mode and model live. The right side yields when the
 // terminal is too narrow for both.
 func (m Model) header() string {
 	left := logo() +
@@ -499,7 +517,6 @@ func (m Model) helpLine() string {
 	hints := []struct{ k, v string }{
 		{"enter", "send"},
 		{"shift+enter", "newline"},
-		{"pgup/pgdn", "scroll"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
 	}
@@ -539,38 +556,34 @@ func (m *Model) pump() tea.Cmd {
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	switch e := ev.(type) {
 	case llm.ThinkingDeltaEvent:
-		m.ensureStreamingBlock(kindThinking)
+		sealed := m.ensureStreamingBlock(kindThinking)
 		m.partialThink.WriteString(e.Text)
 		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
 			m.messages[idx].raw = m.partialThink.String()
 		}
-		m.renderAll()
-		return m.pump()
+		return tea.Batch(m.pump(), m.flushIf(sealed))
 
 	case llm.TextDeltaEvent:
-		m.ensureStreamingBlock(kindText)
+		sealed := m.ensureStreamingBlock(kindText)
 		m.partial.WriteString(e.Text)
 		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
 			m.messages[idx].raw = m.partial.String()
 		}
-		m.renderAll()
-		return m.pump()
+		return tea.Batch(m.pump(), m.flushIf(sealed))
 
 	case llm.ToolCallEvent:
 		m.sealStreamingText()
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
 		})
-		m.renderAll()
-		return m.pump()
+		return tea.Batch(m.pump(), m.flush())
 
 	case llm.ToolResultEvent:
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleTool, kind: kindToolResult, raw: e.Output, isErr: e.IsError,
 			full: e.Name == "todo",
 		})
-		m.renderAll()
-		return m.pump()
+		return tea.Batch(m.pump(), m.flush())
 
 	case llm.UsageEvent:
 		m.inTokens += e.InputTokens
@@ -585,8 +598,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.CompactEvent:
 		m.messages = append(m.messages, uiMessage{role: "system",
 			raw: fmt.Sprintf("context compacted · summarized %d earlier messages, %d recent turns kept in the transcript", e.Removed, e.Kept)})
-		m.renderAll()
-		return m.pump()
+		return tea.Batch(m.pump(), m.flush())
 
 	case llm.ErrorEvent:
 		if !errors.Is(e.Err, context.Canceled) {
@@ -603,21 +615,23 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 // ensureStreamingBlock opens a fresh streaming bubble of the given kind
 // when the last block is not one (turn start, a new round after tool
 // calls, or the thinking ↔ answer switch within one round — the switch
-// seals the old phase and appends the new one). A sealed block always
-// carries content by the time the stream moves on.
-func (m *Model) ensureStreamingBlock(kind uiMessageKind) {
+// seals the old phase, reports it, and appends the new one). A sealed
+// block always carries content by the time the stream moves on.
+func (m *Model) ensureStreamingBlock(kind uiMessageKind) (sealed bool) {
 	if len(m.messages) > 0 {
 		last := &m.messages[len(m.messages)-1]
 		if last.streaming {
 			if last.kind == kind {
-				return
+				return false
 			}
 			last.streaming = false
 			m.partial.Reset()
 			m.partialThink.Reset()
+			sealed = true // the old phase can print now
 		}
 	}
 	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kind, streaming: true, history: true})
+	return sealed
 }
 
 // sealStreamingText finalizes the open streaming bubble for display: the
@@ -662,8 +676,9 @@ func (m *Model) finishStream() tea.Cmd {
 		m.lastErr = ""
 	}
 
-	m.renderAll()
-	return textarea.Blink
+	// The turn is over: its blocks (final answer included) print into
+	// the terminal's real scrollback and the live region empties.
+	return tea.Batch(m.flush(), textarea.Blink)
 }
 
 func (m *Model) stopStream() {
@@ -676,9 +691,7 @@ func (m *Model) stopStream() {
 
 func (m *Model) submit() tea.Cmd {
 	input := strings.TrimSpace(m.textarea.Value())
-	inputH := m.textarea.Height()
 	m.textarea.Reset()
-	m.syncInputLayout(inputH)
 	m.closePopup()
 	if input == "" {
 		return nil
@@ -690,20 +703,17 @@ func (m *Model) submit() tea.Cmd {
 		m.messages = append(m.messages, uiMessage{role: "system",
 			raw: fmt.Sprintf("no API key for %s · open /settings → api key and paste one (or set %s)",
 				m.cfg.Provider, m.cfg.APIKeyEnvName(m.cfg.Provider))})
-		m.renderAll()
-		return nil
+		return m.flush()
 	}
 	if m.cfg.Model() == "" {
 		m.messages = append(m.messages, uiMessage{role: "system",
 			raw: fmt.Sprintf("no model set for %s · open /settings → model (f fetches the list, n adds one)",
 				m.cfg.Provider)})
-		m.renderAll()
-		return nil
+		return m.flush()
 	}
 
 	m.messages = append(m.messages, uiMessage{role: llm.RoleUser, raw: input, history: true})
-	m.renderAll()
-	return m.startTurn(input)
+	return tea.Batch(m.flush(), m.startTurn(input))
 }
 
 // startTurn hands the user input to the agent loop. The loop owns session
@@ -923,8 +933,7 @@ func (m *Model) command(input string) tea.Cmd {
 		m.messages = append(m.messages, uiMessage{role: "system",
 			raw: fmt.Sprintf("unknown command %s · try /help", parts[0])})
 	}
-	m.renderAll()
-	return nil
+	return m.flush()
 }
 
 // --- rendering --------------------------------------------------------------
@@ -981,21 +990,37 @@ func (m *Model) statusLine() string {
 			state += dimStyle.Render(" · last turn " + m.lastTurn.Truncate(time.Second).String())
 		}
 	}
-	segs := []string{
-		dimStyle.Render(fmt.Sprintf("in %s · out %s",
-			humanTokens(m.inTokens), humanTokens(m.outTokens))),
-	}
+	// The header moved into the scrollback banner, so the status line
+	// carries the mode and model live. On narrow terminals it yields the
+	// model name first, then the token counts — mode, context, and cost
+	// stay put.
+	sep := dimStyle.Render(" · ")
+	usage := []string{}
 	if c := m.ctxLabel(); c != "" {
-		segs = append(segs, c)
+		usage = append(usage, c)
 	}
-	segs = append(segs, dimStyle.Render(m.costLabel()))
-	tok := strings.Join(segs, dimStyle.Render(" · "))
+	usage = append(usage, dimStyle.Render(m.costLabel()))
+	build := func(withModel, withTok bool) string {
+		segs := []string{modeChip.Render(string(m.mode()))}
+		if withModel {
+			segs = append(segs, dimStyle.Render(clip(m.modelLabel(), 24)))
+		}
+		if withTok {
+			segs = append(segs, dimStyle.Render(fmt.Sprintf("in %s · out %s",
+				humanTokens(m.inTokens), humanTokens(m.outTokens))))
+		}
+		return strings.Join(append(segs, usage...), sep)
+	}
 
-	gap := m.width - lipgloss.Width(state) - lipgloss.Width(tok)
-	if gap < 1 {
-		gap = 1
+	right := build(true, true)
+	if m.width-lipgloss.Width(state)-lipgloss.Width(right) < 1 {
+		right = build(false, true)
 	}
-	return state + strings.Repeat(" ", gap) + tok
+	if m.width-lipgloss.Width(state)-lipgloss.Width(right) < 1 {
+		right = build(false, false)
+	}
+	gap := max(1, m.width-lipgloss.Width(state)-lipgloss.Width(right))
+	return state + strings.Repeat(" ", gap) + right
 }
 
 // block renders one chat message, caching the result until invalidated.
@@ -1041,17 +1066,73 @@ func (m *Model) block(i int, width int) string {
 	return out
 }
 
-// renderAll rebuilds the viewport content from all messages.
-func (m *Model) renderAll() {
+// printWidth is the wrap width of chat blocks: the terminal width minus
+// the live region's one-column side padding.
+func (m Model) printWidth() int { return m.width - 2 }
+
+// flush prints every sealed, not-yet-printed block into the terminal's
+// real scrollback with a single tea.Println and advances the printed
+// watermark — the live region never draws those blocks again. Sealed
+// blocks reach the scrollback as they happen (the user message at
+// submit, tool activity as it lands, the answer at turn end), so a long
+// agentic turn never piles up in the redrawn region. The one-shot
+// banner (header) rides the first flush after startup or a session
+// switch.
+func (m *Model) flush() tea.Cmd {
 	if m.width == 0 {
-		return
+		return nil // no wrap width yet; the first WindowSizeMsg flushes
 	}
-	blocks := make([]string, 0, len(m.messages))
-	for i := range m.messages {
-		blocks = append(blocks, strings.TrimSpace(m.block(i, m.viewport.Width()-2)))
+	end := m.printed
+	for end < len(m.messages) && !m.messages[end].streaming {
+		end++
 	}
-	m.viewport.SetContent(strings.Join(blocks, "\n\n"))
-	m.viewport.GotoBottom()
+	if end == m.printed && !m.printBannerNext {
+		return nil
+	}
+
+	var chunk string
+	if m.printBannerNext {
+		m.printBannerNext = false
+		chunk = m.header()
+	}
+	if end > m.printed {
+		blocks := make([]string, 0, end-m.printed)
+		for i := m.printed; i < end; i++ {
+			blocks = append(blocks, strings.TrimSpace(m.block(i, m.printWidth())))
+		}
+		joined := strings.Join(blocks, "\n\n")
+		if chunk == "" {
+			chunk = joined
+		} else {
+			chunk += "\n\n" + joined
+		}
+	}
+	chunk = strings.TrimRight(chunk, "\n")
+	if chunk == "" {
+		return nil
+	}
+
+	// One leading space per line matches the live region's padding, so
+	// printed history and live blocks share a left edge.
+	lines := strings.Split(chunk, "\n")
+	for i, l := range lines {
+		lines[i] = " " + l
+	}
+	m.lastPrint = strings.Join(lines, "\n")
+	for i := m.printed; i < end; i++ {
+		m.messages[i].rendered = "" // printed blocks never render again
+	}
+	m.printed = end
+	return tea.Println(m.lastPrint)
+}
+
+// flushIf flushes only when a seal actually happened, saving an empty
+// command on every streaming delta.
+func (m *Model) flushIf(sealed bool) tea.Cmd {
+	if !sealed {
+		return nil
+	}
+	return m.flush()
 }
 
 func (m *Model) invalidateRendered() {
@@ -1060,26 +1141,40 @@ func (m *Model) invalidateRendered() {
 	}
 }
 
-// relayout recomputes the viewport size from the current window and input.
-func (m *Model) relayout() {
-	inputH := m.textarea.Height() + 2 // rounded border
-	// header line + rule + status + help; the popup carves out its own
-	// rows from the viewport while it is open.
-	vh := m.height - inputH - 4 - m.popupHeight()
-	if vh < 3 {
-		vh = 3
+// liveBlocks renders the not-yet-printed blocks — the in-flight turn.
+// Sealed blocks have already moved into the terminal's scrollback
+// (flush), so this stays small; a long streaming answer outgrowing the
+// budget scrolls off the top and is not lost: the full text prints when
+// the block seals.
+func (m Model) liveBlocks() string {
+	blocks := make([]string, 0, len(m.messages)-m.printed)
+	for i := m.printed; i < len(m.messages); i++ {
+		blocks = append(blocks, strings.TrimSpace(m.block(i, m.printWidth())))
 	}
-	m.viewport.SetWidth(m.width)
-	m.viewport.SetHeight(vh)
+	if len(blocks) == 0 {
+		return ""
+	}
+	out := viewportStyle.Render(strings.Join(blocks, "\n\n"))
+	lines := strings.Split(out, "\n")
+	if budget := m.liveBudget(); len(lines) > budget {
+		lines = lines[len(lines)-budget:]
+	}
+	return strings.Join(lines, "\n")
 }
 
-// syncInputLayout re-fits the chat viewport after the input's height
-// changed. The textarea sizes itself (DynamicHeight resizes on content
-// edits); callers capture Height() before mutating it.
-func (m *Model) syncInputLayout(before int) {
-	if m.textarea.Height() != before {
-		m.relayout()
-	}
+// liveBudget caps the chat-block rows of the live region. The whole
+// view must stay at least two rows short of the terminal: bubbletea's
+// Println garbles a frame that fills the screen, and the renderer drops
+// the top of taller frames anyway.
+func (m Model) liveBudget() int {
+	return max(1, m.height-2-m.liveChrome())
+}
+
+// liveChrome is the fixed row cost around the chat blocks: the status
+// line, the input box (textarea + 2 border rows), the help line, and
+// the completion popup while it is open.
+func (m Model) liveChrome() int {
+	return 1 + m.textarea.Height() + 2 + 1 + m.popupHeight()
 }
 
 // --- helpers -----------------------------------------------------------------

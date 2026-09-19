@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,8 +43,10 @@ func TestDumpViews(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, strings.TrimSuffix(name, ".txt")+".plain.txt"), []byte(plain), 0o644)
 	}
 
-	// --- main chat with a bit of history ---
-	chat := resize(newTestModel(t))
+	// --- main chat: history printed into scrollback, live region below ---
+	// The fixture is appended BEFORE the resize so the first flush
+	// carries the banner and the whole history as one tea.Println chunk.
+	chat := newTestModel(t)
 	chat.messages = append(chat.messages,
 		uiMessage{role: llm.RoleUser, raw: "summarize what this repo does", history: true},
 		uiMessage{role: llm.RoleAssistant, kind: kindThinking, raw: "scanning the layout first", history: true},
@@ -53,18 +56,20 @@ func TestDumpViews(t *testing.T) {
 		uiMessage{role: llm.RoleAssistant, raw: "This is **khode** — a terminal coding agent with:\n\n- provider-agnostic streaming\n- tool use behind permissions", history: true},
 		uiMessage{role: "system", raw: "mode → accept-edits · file changes run freely; commands still ask"},
 	)
-	chat.renderAll()
-	write("chat.txt", chat.View().Content)
+	chat = resize(chat)
+	write("scrollback.txt", chat.lastPrint) // what tea.Println hands the terminal
+	write("chat.txt", chat.View().Content)  // the live region: status + input
 
-	// streaming state: elapsed timer + cursor + live border
-	st := resize(newTestModel(t))
+	// streaming state: elapsed timer + cursor + live border; the banner
+	// prints, the streaming block stays in the live region.
+	st := newTestModel(t)
 	st.streaming = true
 	st.turnStart = time.Now().Add(-65 * time.Second)
-	st.messages = append(st.messages, uiMessage{role: llm.RoleAssistant, kind: kindText, streaming: true, history: true})
 	st.partial.WriteString("working on it, one delta at a")
-	st.messages[len(st.messages)-1].raw = st.partial.String()
+	st.messages = append(st.messages, uiMessage{role: llm.RoleAssistant, kind: kindText,
+		streaming: true, history: true, raw: st.partial.String()})
 	st.ctxIn, st.ctxOut = 120_000, 8_000
-	st.renderAll()
+	st = resize(st)
 	write("chat-streaming.txt", st.View().Content)
 
 	// --- walkthrough ---
@@ -92,6 +97,20 @@ func TestDumpViews(t *testing.T) {
 		{Name: "refactor-llm", Messages: 7, Path: "/tmp/y", ModTime: time.Now().Add(-26 * time.Hour)},
 	})
 	write("picker.txt", km.View().Content)
+
+	// long list: the sliding window with its cut markers
+	lm := newTestModel(t)
+	entries := make([]agent.Info, 0, 15)
+	for i := range 15 {
+		entries = append(entries, agent.Info{
+			Name:     fmt.Sprintf("session-%02d", i),
+			Messages: i + 1, Path: "/tmp/x", ModTime: time.Now().Add(-time.Duration(i) * time.Hour),
+		})
+	}
+	lm.OpenPicker(entries)
+	lm.picker.cursor = 7
+	lm = resize(lm)
+	write("picker-many.txt", lm.View().Content)
 
 	// --- tools panel ---
 	tm := resize(newTestModel(t))
@@ -132,8 +151,15 @@ func TestDumpViews(t *testing.T) {
 	if !strings.Contains(string(raw), "38;2;") {
 		t.Error("chat frame has no truecolor escapes")
 	}
-	if !strings.Contains(string(plain(t, dir, "chat.txt")), "─") {
-		t.Error("chat frame missing the header rule")
+	// The banner (with the header rule) lives in the scrollback chunk now.
+	if !strings.Contains(string(plain(t, dir, "scrollback.txt")), "─") {
+		t.Error("scrollback chunk missing the header rule")
+	}
+	if !strings.Contains(string(plain(t, dir, "scrollback.txt")), "khode") {
+		t.Error("scrollback chunk missing the banner wordmark")
+	}
+	if got := plain(t, dir, "chat.txt"); !strings.Contains(got, "❯") {
+		t.Errorf("chat frame missing the input prompt: %q", got)
 	}
 
 	// the wordmark must come out gradient-styled, not passed through

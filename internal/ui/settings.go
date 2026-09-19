@@ -819,7 +819,6 @@ func (m *Model) applyMCPResult(msg mcpApplyMsg) {
 		m.settings.savedMsg = strings.Join(notes, " · ")
 	}
 	m.messages = append(m.messages, uiMessage{role: "system", raw: "mcp: " + strings.Join(notes, " · ")})
-	m.renderAll()
 }
 
 // --- views -------------------------------------------------------------------
@@ -863,7 +862,7 @@ func (m *Model) settingsView() string {
 
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
 		title, "", strings.Join(body, "\n"), "", footer))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 }
 
 func (s *settings) rowsView(m *Model) []string {
@@ -1000,7 +999,7 @@ func (m *Model) mcpListView() []string {
 			out = append(out, "  "+line)
 		}
 	}
-	return out
+	return listWindow(out, cur, listMaxRows(m.height))
 }
 
 func (m *Model) hookListView() []string {
@@ -1027,7 +1026,7 @@ func (m *Model) hookListView() []string {
 			out = append(out, "  "+line)
 		}
 	}
-	return out
+	return listWindow(out, cur, listMaxRows(m.height))
 }
 
 // formView renders the open form: label + live input per text row, then
@@ -1213,7 +1212,7 @@ func (m *Model) providerListView() []string {
 			out = append(out, "  "+line)
 		}
 	}
-	return out
+	return listWindow(out, cur, listMaxRows(m.height))
 }
 
 // openProviderForm edits the named custom provider, or a new one when

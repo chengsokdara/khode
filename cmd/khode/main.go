@@ -190,11 +190,11 @@ func main() {
 		m.OpenWelcome()
 	}
 
-	// Alt screen and mouse capture are declared on the model's View
-	// (tea.View fields) in v2: the app owns the whole window and the
-	// terminal's scrollback is suspended, so pgup/pgdn and the captured
-	// wheel scroll the chat, while shift+drag still selects text
-	// terminal-side.
+	// The program runs inline (no alt screen, no mouse capture — nothing
+	// is declared on the View): sealed turns are tea.Println'd into the
+	// terminal's real scrollback, so the native scrollbar, wheel, and
+	// text selection cover history while khode redraws only the live
+	// region at the bottom.
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fatal(err)
