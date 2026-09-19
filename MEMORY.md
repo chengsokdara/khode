@@ -161,6 +161,13 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-18 | `/tools` toggles are session-scoped state on the Registry (`disabled` map, `SetEnabled`/`Enabled`), never config: `Definitions()` filters disabled tools and `execCall` rejects calls with "the user turned it off in /tools" | config.json must stay shareable, and the panel is a runtime control like Claude Code's; filtering Definitions alone isn't enough because a hallucinated call to a hidden-but-registered tool would still execute |
 | 2026-09-18 | Input newline is labeled shift+enter (the standard) and the binding lists both shift+enter and alt+enter; on terminals that don't report modified keys (bubbletea v1 parses no kitty/CSI-u) a physical shift+enter still submits and alt+enter does the newline | the user asked to follow the standard; the label is honest for anyone whose terminal maps shift+enter → ESC+CR (Claude Code's /terminal-setup does this for Terminal.app/iTerm2, one line in kitty/Ghostty config), and the extra binding fires for free the day bubbletea v2 lands. The mechanics live in the comment at the binding |
 | 2026-09-18 | Mouse capture is permanently on (WithMouseCellMotion at program start; wheel → viewport). The wheel-scroll-away "trapdoor" is what consuming wheel events fixes, and the reference TUIs (Claude Code, opencode — user-verified) enable mouse tracking for exactly that. Text selection survives everywhere via shift+drag, the terminals' override for mouse-reporting apps; Terminal.app also has View > Allow Mouse Reporting (⌘R) | capture and native drag-select are mutually exclusive — consuming the wheel is the more valuable half, and the shift override keeps selection reachable; a user toggle was tried twice and removed both times (bad keys, redundant with pgup/pgdn) |
+| 2026-09-19 | Inline rendering: sealed blocks print via one `tea.Println` chunk **the moment they seal** (user msg at submit, tool call/result as they land, thinking at the thinking→text switch, answer + error notice at `finishStream`); the live region renders only `messages[printed:]` (in-flight streaming blocks), tail-clipped to the budget | a long agentic turn must not pile up in the redrawn region (the renderer clips frames taller than the terminal), and streaming tool activity out mid-turn is the Claude-Code behavior; flush replaces renderAll mechanically at every former append site |
+| 2026-09-19 | Banner-in-scrollback: `header()` prints once via the `printBannerNext` flag on the first flush after `New`/`useSession`; the status line absorbs the mode chip + model (yielding model, then token counts, on narrow terminals); the in-frame header is gone | user choice between banner and persistent header; mode visibility survives via the status line because a mode the user can't see is a safety hazard |
+| 2026-09-19 | The restored transcript prints on the **first WindowSizeMsg**, not at boot | glamour/markdown blocks need the real wrap width before rendering; `flush()` no-ops at width 0 and the first resize returns the flush cmd |
+| 2026-09-19 | Mouse capture is retired outright and wheel/pgup/pgdn forwarding with it | inline history IS terminal scrollback — with no viewport there is no consumer for captured wheel events, so the three-iteration capture saga dissolved with the alt screen; wheel/scrollbar/selection are native |
+| 2026-09-19 | `useSession` now replays the transcript (`replayTranscript`, extracted from `New`) and its callers flush | picked sessions showed only a banner with no history — the inline print path fixes the gap for free |
+| 2026-09-19 | Live region budget: whole frame ≤ `height−2` (`liveBudget`/`liveChrome`; popup rows clamp inside `popupHeight`, overlays are bounded boxes via `listWindow`/`listMaxRows`, perm preview capped at 20) | bubbletea v2's `insertAbove` garbles a frame that fills the terminal exactly, and the renderer drops the top of taller frames; the −2 slack keeps printing safe at any budget floor |
+| 2026-09-19 | `flush()` clears `rendered` caches of printed blocks and never re-renders them; the chunk goes into `lastPrint` (test seam) | printed history is terminal-owned (a resize can't re-wrap it), so caching it is wasted memory; tests assert `lastPrint`/`printed` instead of scraping terminal output |
 
 ## Gotchas & lessons learned
 
@@ -346,6 +353,32 @@ If you are starting a session, or recovering after an interrupt:
   WITHOUT capturing the returned model (`m = next.(Model)`) leaves
   `m.width` at 0 and `View()` returns "starting…" — the same value-
   receiver trap as the gotcha above, one level up.
+- **bubbletea v2 `tea.Println` facts (verified in v2.0.9 source, the
+  inline rework depends on all of them):** each `printLineMessage`
+  becomes `insertAbove` — ONE immediate write that scrolls the screen,
+  `InsertLine`s blank rows above the frame, writes the lines, and
+  resets cursor tracking to frame-relative. The renderer keeps no
+  buffer of printed lines (the terminal owns them; frame repaints never
+  erase them, and they scroll away naturally). The doc comment says
+  "if the altscreen is active no output will be printed" but v2.0.9 has
+  no altscreen guard — under altscreen the math would garble, so treat
+  Println+AltScreen as unsupported. If the frame fills the terminal
+  exactly, the scroll pushes the frame's own top lines into scrollback
+  (transient garble until the next repaint) — hence khode's height−2
+  budget. Println batches: one joined chunk per flush, not one println
+  per line.
+- **v2 inline (no AltScreen) rendering:** the frame is exactly the
+  `View.Content` line count (a trailing `\n` adds a blank row — v2
+  counts it, v1 stripped it); frames taller than the terminal get their
+  top lines DROPPED (`cellbuf.Lines = Lines[frameHeight-height:]`), and
+  view lines wider than the terminal are truncated, not wrapped
+  (`NewStyledString` has Wrap=false) — pre-wrap everything, which
+  khode's explicit `Width()` styles already did. There is no
+  WithAltScreen program option in v2 (declare `View.AltScreen`), no
+  scroll commands (`ScrollUp`/`ScrollToEnd` don't exist), and no
+  renderer-side trimming of printed lines. Quit leaves the final frame
+  plus all printed scrollback on screen (graceful shutdown flushes one
+  last render).
 
 ## Session log (append one entry per session)
 
@@ -380,3 +413,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-19 | Bubble Tea v2 migration (planned via ExitPlanMode, executed in one atomic code commit + docs): import swaps to charm.land/*, tea.View declaration, KeyPressMsg dispatch, wheel-only mouse case, textarea styles/default-dark + InsertNewline without "enter", "space" matches, PasteMsg → textarea, dump harness drops termenv. Verified all uncertain APIs against module source before coding; smoke test via expect-pty (sized pty → boots, renders, ctrl+c exits; exit sequence shows the kitty `[<1u` pop proving protocol negotiation). Full gate green + dump frames eyeballed | e40738c |
 | 2026-09-19 | User hit the first real-world v2 bug: after shift+enter the input showed two empty prompt rows (typed text scrolled out of view). Reproduced with a render-assertion test, root-caused to external SetHeight racing the textarea's internal scroll-follow, fixed with native DynamicHeight + syncInputLayout; pty smoke test typed "hi" + real kitty ESC[13;2u and the frame kept the typed row visible | d6ba85a |
 | 2026-09-19 | User verified Claude Code/opencode get shift+enter for free in iTerm2 → root cause: they run Bubble Tea v2, which enables the kitty keyboard protocol (iTerm2 3.5+ reports modified keys); v1 could never. Chose the v2 migration over a hand-rolled shim (research: v2 stable since Feb 2026; opencode on v2; Terminal.app lacks protocol support even for Claude — same caveat stays for khode). Key insight for the terminal-mapping workaround era: ESC+CR still works as alt+enter, so nothing breaks on legacy terminals | e40738c |
+| 2026-09-19 | Inline transcript rendering (backlog 1, planned via ExitPlanMode, v2 insertAbove facts verified from module source before coding): viewport/wheel/pgup deleted, watermark `printed` + `flush()` print model, banner-in-scrollback (user choice via question), live-budget height−2, overlays as bounded centered boxes (`listWindow`), status line absorbs mode+model, `useSession` transcript replay. One real bug caught by tests mid-rework: `ensureStreamingBlock`'s kind-switch returned before appending the new streaming block (answer text vanished). Verified: full gate green, dump frames (scrollback chunk + live region), expect-pty smoke showing `[6L`/`[L` scrollback inserts above the frame, zero `[?1049h` | (this commit) |

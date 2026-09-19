@@ -62,6 +62,32 @@ One-glance project state. Update at the end of **every** task (see
 ## Now
 
 Phase 7 complete — nothing in khode needs hand-editing config.json.
+
+**Inline transcript rendering (2026-09-19):** khode no longer runs in the
+alt screen. Sealed chat blocks are `tea.Println`'d into the terminal's
+real scrollback the moment they seal — the user message at submit, tool
+activity as it lands, thinking when the answer starts, the final answer
+at turn end — so the native scrollbar, wheel, and text selection cover
+history (mouse capture is gone for good; with no viewport left there is
+nothing for captured wheel events to scroll). The redrawn live region
+holds only the in-flight turn: the streaming block (tail-clipped to the
+height budget, never lost — the full text prints when it seals), the
+status line (now carrying the mode chip + model that used to live in
+the header), the completion popup, and the input. The whole frame stays
+≤ terminal height − 2 because bubbletea v2's Println garbles a
+full-height frame. The gradient header prints once into scrollback at
+startup and on session switches (banner-in-scrollback, user choice);
+a restored transcript prints in the same chunk on the first
+WindowSizeMsg (wrap width must exist first), and switching sessions
+re-prints it — picked sessions show their history for the first time.
+Overlays render as bounded, horizontally centered boxes instead of
+covering the screen: the session picker and the settings provider/MCP/
+hooks lists gained sliding windows (`listWindow`), the perm preview cap
+tightened, and the popup yields rows on short terminals so the live
+region always fits. Verified in a real pty: banner + transcript insert
+above the frame, no `[?1049h` altscreen escape anywhere, pre-flight
+notice prints to scrollback after submit.
+
 First run (no credentials anywhere) opens a walkthrough overlay, not
 settings: intro card → pick provider (←/→, saved live) → paste the API
 key (masked, into auth.json) → a ready card ending in an explicit
@@ -84,9 +110,7 @@ custom-provider, models, model-choice, and auth-key lookups fall back
 to case-insensitive matching, and Load snaps the active name to the
 stored custom-provider key; a protocol that still doesn't resolve
 warns at startup and falls back to the anthropic client instead of
-exiting. The chat input drops bubbles' hard black cursor-line
-background, which rendered as a black strip inside the input box on
-dark terminal themes. Keys live in `~/.khode/auth.json` (0600, atomic
+exiting. Keys live in `~/.khode/auth.json` (0600, atomic
 rename) with env vars keeping precedence. MCP changes apply live via
 `applyMCPCmd`; hook edits apply next turn. The registry has an RWMutex
 (agent loop reads it while the overlay mutates it); `Model.partial` is
@@ -109,11 +133,10 @@ protocol terminals (iTerm2 3.5+, kitty, Ghostty, WezTerm) and inserts
 a newline, plain enter submits, and alt+enter remains the fallback on
 legacy terminals (Apple Terminal has no protocol support — the
 terminal-mapping workaround still applies there, same as Claude Code).
-Mouse capture went through three
-iterations in two days: toggle off by default (alt+m, then ctrl+o) →
-dropped entirely → permanently on (ebec1a7) once the user verified
-Claude Code/opencode consume wheel events, which is exactly how they
-prevent the terminal from scrolling out of the TUI.
+Mouse capture went through three iterations in two days under the alt
+screen (toggle → dropped → permanently on) and is now gone entirely:
+inline rendering (2026-09-19) made history real scrollback, so the
+wheel, scrollbar, and selection are the terminal's own again.
 
 **Slash-command completion (2026-09-18):** typing `/` in the chat
 input floats a completion popup just above it — input-box width, a
@@ -212,16 +235,12 @@ its model-fetch state. Frames can be eyeballed off a tty with
 
 Backlog (no committed order):
 
-1. Inline (Claude-Code-style) transcript rendering: completed turns
-   print into the terminal's real scrollback (`tea.Println` over an
-   inline program) so native scrollbar/wheel/selection cover history,
-   with only the live turn + input in the redrawn region; overlays
-   shrink into that live region. Big rendering rework — needs its own
-   plan.
-2. Stream subagent activity into the TUI instead of hiding it.
-3. MCP: re-list tools on `tools/list_changed`; resources/prompts.
-4. Hooks: feed post_tool output to the model as feedback.
-5. OpenAI tool-call unit parity for MCP edge cases as they surface.
+1. Stream subagent activity into the TUI instead of hiding it.
+2. MCP: re-list tools on `tools/list_changed`; resources/prompts.
+3. Hooks: feed post_tool output to the model as feedback.
+4. OpenAI tool-call unit parity for MCP edge cases as they surface.
+5. Khode /terminal-setup: write the Terminal.app/iTerm2 shift+enter
+   mapping khode's alt+enter fallback already picks up.
 
 ## Changelog
 
@@ -273,3 +292,4 @@ Backlog (no committed order):
 | 2026-09-18 | Regression test pinning the modifier-enter wiring: ESC+CR (what a terminal-mapped shift+enter sends) parses to alt+enter and inserts a newline without submitting | 36c428a |
 | 2026-09-19 | Bubble Tea/Bubbles/Lip Gloss v2 migration (v2.0.9/v2.2.1/v2.0.6): kitty protocol on → shift+enter works out of the box in iTerm2/kitty/Ghostty/WezTerm; tea.View declarative altscreen+mouse, KeyPressMsg (Code/Text/Mod), MouseWheelMsg forwarding, textarea SetStyles+InsertNewline rebinding, "space" matches, PasteMsg passthrough, dump harness drops termenv; pty smoke test boots+exits clean | e40738c |
 | 2026-09-19 | Fix: after shift+enter the input box showed two empty prompt rows (typed line scrolled above, reachable only by arrowing up) — khode's external SetHeight raced the textarea's cursor-follow scroll. Fixed with v2's native DynamicHeight (Min/MaxHeight + large MaxContentHeight so input is never blocked, matching v1), maybeGrowInput deleted, syncInputLayout gives height changes back to the chat viewport; render-assertion regression test | d6ba85a |
+| 2026-09-19 | Inline transcript rendering (backlog 1): alt screen + mouse capture retired; sealed turns tea.Println into real scrollback as they seal; live region = streaming turn + status (mode chip + model) + popup + input within a height−2 budget; banner-in-scrollback on startup/switch with transcript reprint (picked sessions show history now); overlays become bounded centered boxes with sliding windows (picker, settings lists); wheel/scrollbar/selection native; pty-verified (no 1049h, scrollback inserts above frame) | (this commit) |
