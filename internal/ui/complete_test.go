@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // matchNames renders the popup's current matches for assertions.
@@ -180,20 +180,20 @@ func TestRelayoutCarvesRowsForPopup(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	before := m.viewport.Height
+	before := m.viewport.Height()
 	if before <= 0 {
 		t.Fatalf("baseline viewport height = %d", before)
 	}
 
 	m = pressKeys(m, "/")
 	want := before - m.popupHeight()
-	if m.viewport.Height != want {
-		t.Errorf("viewport height with popup = %d, want %d (%d minus popup rows)", m.viewport.Height, want, before)
+	if m.viewport.Height() != want {
+		t.Errorf("viewport height with popup = %d, want %d (%d minus popup rows)", m.viewport.Height(), want, before)
 	}
 
 	m = pressKeys(m, "esc")
-	if m.viewport.Height != before {
-		t.Errorf("viewport height after esc = %d, want the original %d", m.viewport.Height, before)
+	if m.viewport.Height() != before {
+		t.Errorf("viewport height after esc = %d, want the original %d", m.viewport.Height(), before)
 	}
 }
 
@@ -203,7 +203,7 @@ func TestPopupViewRendersAboveInput(t *testing.T) {
 	m = next.(Model)
 	m = pressKeys(m, "/", "t", "o")
 
-	out := m.View()
+	out := m.View().Content
 	if !strings.Contains(out, "/tools") {
 		t.Error("popup view does not show the matched command")
 	}

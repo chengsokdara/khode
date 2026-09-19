@@ -11,7 +11,7 @@ import (
 	"khode/internal/config"
 	"khode/internal/llm"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"charm.land/bubbles/v2/textinput"
 )
 
 // newModelListServer serves an OpenAI-style model list and records the

@@ -11,7 +11,7 @@ import (
 	"khode/internal/llm"
 	"khode/internal/perm"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // startDialog asks a permission through the model's bridge the way the
@@ -48,12 +48,12 @@ func TestApprovalDialogAllowAndDeny(t *testing.T) {
 	approved := startDialog(&m, call)
 
 	m = pumpUntilDialog(t, m)
-	if v := m.View(); !strings.Contains(v, "permission") || !strings.Contains(v, "a.go") {
+	if v := m.View().Content; !strings.Contains(v, "permission") || !strings.Contains(v, "a.go") {
 		t.Errorf("dialog view missing title/target: %q", v)
 	}
 
 	// y allows: the answer reaches the waiting Approver and closes the dialog.
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	m = next.(Model)
 	if m.perm != nil {
 		t.Error("dialog still open after allow")
@@ -65,7 +65,7 @@ func TestApprovalDialogAllowAndDeny(t *testing.T) {
 	// esc denies a second request.
 	approved = startDialog(&m, call)
 	m = pumpUntilDialog(t, m)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = next.(Model)
 	if m.perm != nil {
 		t.Error("dialog still open after deny")
@@ -103,7 +103,7 @@ func TestPermViewRendersDiff(t *testing.T) {
 	}
 	m.perm = &req
 
-	v := m.View()
+	v := m.View().Content
 	if !strings.Contains(v, "write") || !strings.Contains(v, "docs/x.md") {
 		t.Errorf("view missing tool/target: %q", v)
 	}
@@ -170,11 +170,11 @@ func TestPlanApprovalSwitchesMode(t *testing.T) {
 	if m.perm == nil || m.perm.Kind != agent.KindPlan {
 		t.Fatalf("dialog kind = %v, want KindPlan", m.perm)
 	}
-	if v := m.View(); !strings.Contains(v, "plan") || !strings.Contains(v, "do things") {
+	if v := m.View().Content; !strings.Contains(v, "plan") || !strings.Contains(v, "do things") {
 		t.Errorf("plan dialog view = %q", v)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	m = next.(Model)
 	if m.perm != nil {
 		t.Error("plan dialog still open after approval")

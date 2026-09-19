@@ -17,7 +17,7 @@ import (
 	"khode/internal/tools"
 	"khode/internal/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // sortedServerNames lists MCP server names in order, so startup output
@@ -190,12 +190,12 @@ func main() {
 		m.OpenWelcome()
 	}
 
-	// Alt screen: the app owns the whole window and the terminal's
-	// scrollback is suspended, so pgup/pgdn scroll the chat. Mouse
-	// capture rides along (Claude Code and opencode do the same): the
-	// wheel scrolls the chat instead of the dead pre-launch scrollback,
-	// and terminals still let shift+drag select text over the app.
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Alt screen and mouse capture are declared on the model's View
+	// (tea.View fields) in v2: the app owns the whole window and the
+	// terminal's scrollback is suspended, so pgup/pgdn and the captured
+	// wheel scroll the chat, while shift+drag still selects text
+	// terminal-side.
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fatal(err)
 	}

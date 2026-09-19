@@ -22,13 +22,13 @@ import (
 	"khode/internal/perm"
 	"khode/internal/tools"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 )
 
 const (
@@ -130,29 +130,29 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.MaxHeight = maxInputHeight
-	// bubbles paints the focused cursor line with a hard black
-	// background, which renders as a black strip inside the input box on
-	// dark terminal themes; drop it so the line keeps the theme's colors.
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	// The defaults paint the focused cursor line with a hard background,
+	// which renders as a strip inside the input box on dark terminal
+	// themes; drop it so the line keeps the theme's colors.
+	styles := textarea.DefaultDarkStyles()
+	styles.Focused.CursorLine = lipgloss.NewStyle()
+	styles.Blurred.CursorLine = lipgloss.NewStyle()
 	promptStyle := lipgloss.NewStyle().Foreground(colGreen)
-	ta.FocusedStyle.Prompt = promptStyle
-	ta.BlurredStyle.Prompt = promptStyle
+	styles.Focused.Prompt = promptStyle
+	styles.Blurred.Prompt = promptStyle
 	phStyle := lipgloss.NewStyle().Foreground(colDim)
-	ta.FocusedStyle.Placeholder = phStyle
-	ta.BlurredStyle.Placeholder = phStyle
+	styles.Focused.Placeholder = phStyle
+	styles.Blurred.Placeholder = phStyle
+	ta.SetStyles(styles)
 
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	sp.Style = lipgloss.NewStyle().Foreground(colCyan)
-	// Newline shows the standard shift+enter and binds it for terminals
-	// that report modified keys, with alt+enter as the modifier that
-	// arrives everywhere: bubbletea v1 parses no kitty-protocol/CSI-u
-	// sequences, and terminals without one send plain CR for physical
-	// shift+enter — mapping that key to ESC+CR in terminal config (or
-	// Claude Code's /terminal-setup) makes it work; ESC+CR is already
-	// alt+enter here.
+	// Plain enter stays khode's submit (Update handles it before the
+	// textarea ever sees it), so the newline binding carries only the
+	// modified enters. v2 speaks the kitty keyboard protocol, so
+	// shift+enter arrives as a real key on protocol terminals (iTerm2,
+	// kitty, Ghostty, WezTerm); alt+enter covers the rest.
 	ta.KeyMap.InsertNewline = key.NewBinding(
-		key.WithKeys("alt+enter", "shift+enter"),
+		key.WithKeys("shift+enter", "alt+enter"),
 		key.WithHelp("shift+enter", "newline"),
 	)
 	ta.Focus()
@@ -169,7 +169,7 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 		workdir:      workdir,
 		textarea:     ta,
 		spinner:      sp,
-		viewport:     viewport.New(60, 10),
+		viewport:     viewport.New(viewport.WithWidth(60), viewport.WithHeight(10)),
 		partial:      new(strings.Builder),
 		partialThink: new(strings.Builder),
 		approvals:    agent.NewBridge(),
@@ -305,13 +305,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderAll()
 		return m, nil
 
-	case tea.MouseMsg:
-		// Mouse capture is on (main.go), so the wheel arrives here and
+	case tea.MouseWheelMsg:
+		// Mouse capture is on (View), so the wheel arrives here and
 		// scrolls the chat instead of the terminal's dead pre-launch
 		// scrollback. Everything else (clicks, drags) is ignored;
 		// shift+drag still selects text terminal-side.
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case tea.PasteMsg:
+		// Bracketed paste: v2 enables it by default, and multi-line
+		// pastes arrive as one message instead of a rune flood.
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 
 	case spinner.TickMsg:
@@ -357,7 +364,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
-	case tea.KeyMsg:
+	// Key releases are ignored outright: only presses drive the app.
+	case tea.KeyPressMsg:
 		if m.perm != nil {
 			return m, m.permKey(msg)
 		}
@@ -381,20 +389,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch {
-		case msg.Type == tea.KeyCtrlC:
+		case msg.String() == "ctrl+c":
 			m.stopStream()
 			return m, tea.Quit
-		case msg.Type == tea.KeyEsc && m.streaming:
+		case msg.String() == "esc" && m.streaming:
 			m.stopStream()
 			return m, nil
-		// Modified enters fall through to the textarea, whose
-		// InsertNewline binding turns them into newlines.
-		case msg.Type == tea.KeyEnter && !msg.Alt:
+		// Exactly plain enter submits; modified enters ("shift+enter",
+		// "alt+enter") fall through to the textarea, whose InsertNewline
+		// binding turns them into newlines.
+		case msg.String() == "enter":
 			if m.streaming {
 				return m, nil
 			}
 			return m, m.submit()
-		case msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown:
+		case msg.String() == "pgup" || msg.String() == "pgdown":
 			// In alt screen the terminal's own scrollback is suspended,
 			// so these are the only way back through the chat.
 			var cmd tea.Cmd
@@ -411,26 +420,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	var content string
 	if m.width == 0 {
-		return "starting…"
+		content = "starting…"
+	} else if m.perm != nil {
+		content = m.permView()
+	} else if m.welcome != nil {
+		content = m.welcomeView()
+	} else if m.settings != nil {
+		content = m.settingsView()
+	} else if m.toolsPanel != nil {
+		content = m.toolsView()
+	} else if m.picker != nil {
+		content = m.pickerView()
+	} else {
+		content = m.chatView()
 	}
-	if m.perm != nil {
-		return m.permView()
-	}
-	if m.welcome != nil {
-		return m.welcomeView()
-	}
-	if m.settings != nil {
-		return m.settingsView()
-	}
-	if m.toolsPanel != nil {
-		return m.toolsView()
-	}
-	if m.picker != nil {
-		return m.pickerView()
-	}
+	v := tea.NewView(content)
+	// The app owns the whole window; the wheel scrolls the chat while
+	// shift+drag still selects text terminal-side. Cursors stay virtual:
+	// the bubbles paint their own block cursors into the content.
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
 
+func (m Model) chatView() string {
 	header := m.header()
 	status := m.statusLine()
 	border := inputBorder
@@ -1022,7 +1038,7 @@ func (m *Model) renderAll() {
 	}
 	blocks := make([]string, 0, len(m.messages))
 	for i := range m.messages {
-		blocks = append(blocks, strings.TrimSpace(m.block(i, m.viewport.Width-2)))
+		blocks = append(blocks, strings.TrimSpace(m.block(i, m.viewport.Width()-2)))
 	}
 	m.viewport.SetContent(strings.Join(blocks, "\n\n"))
 	m.viewport.GotoBottom()
@@ -1043,8 +1059,8 @@ func (m *Model) relayout() {
 	if vh < 3 {
 		vh = 3
 	}
-	m.viewport.Width = m.width
-	m.viewport.Height = vh
+	m.viewport.SetWidth(m.width)
+	m.viewport.SetHeight(vh)
 }
 
 func (m *Model) maybeGrowInput() {

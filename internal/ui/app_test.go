@@ -11,7 +11,7 @@ import (
 	"khode/internal/llm"
 	"khode/internal/tools"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // nameOnlyProvider satisfies Provider for tests that never stream.
@@ -42,16 +42,16 @@ func TestMouseWheelScrollsChat(t *testing.T) {
 	// Content far taller than the viewport, so both directions can move.
 	m.viewport.SetContent(strings.Repeat("line\n", 60))
 
-	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = next.(Model)
-	if m.viewport.YOffset == 0 {
+	if m.viewport.YOffset() == 0 {
 		t.Fatal("wheel down did not scroll the chat")
 	}
 
-	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	m = next.(Model)
-	if m.viewport.YOffset != 0 {
-		t.Errorf("wheel up left YOffset at %d, want 0", m.viewport.YOffset)
+	if m.viewport.YOffset() != 0 {
+		t.Errorf("wheel up left YOffset at %d, want 0", m.viewport.YOffset())
 	}
 }
 
@@ -59,19 +59,40 @@ func TestModifierEnterInsertsNewline(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 	m = next.(Model)
 
-	// alt+enter is what bubbletea makes of ESC+CR — the bytes a
-	// terminal-mapped shift+enter sends. It must insert a newline, not
-	// submit.
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	// shift+enter arrives as a real key on kitty-protocol terminals
+	// (bubbletea v2 enables the protocol automatically). It must insert
+	// a newline, not submit.
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	m = next.(Model)
 	if got := m.textarea.Value(); got != "hi\n" {
-		t.Fatalf("alt+enter produced %q, want \"hi\\n\"", got)
+		t.Fatalf("shift+enter produced %q, want \"hi\\n\"", got)
 	}
 	if m.streaming {
-		t.Error("modifier enter submitted the turn")
+		t.Error("shift+enter submitted the turn")
+	}
+}
+
+func TestPlainEnterSubmits(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m = next.(Model)
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("plain enter did not submit: input = %q", got)
+	}
+	// This fixture has no credentials, so submit stops at the pre-flight
+	// notice instead of appending a user message.
+	if n := len(m.messages); n == 0 || !strings.Contains(m.messages[n-1].raw, "no API key") {
+		t.Errorf("expected the pre-flight key notice, got %+v", m.messages)
 	}
 }
 

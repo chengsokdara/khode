@@ -20,9 +20,9 @@ import (
 	"khode/internal/perm"
 	"khode/internal/tools"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // settingsRow enumerates the top-level rows.
@@ -282,7 +282,7 @@ func (m *Model) rebuildProvider() {
 func (m *Model) openEditor(row settingsRow) {
 	in := textinput.New()
 	in.Prompt = ""
-	in.Width = 52
+	in.SetWidth(52)
 	var hint string
 	switch row {
 	case rowAPIKey:
@@ -407,7 +407,7 @@ func (m *Model) openMCPForm(name string) {
 	for i := range inputs {
 		inputs[i] = textinput.New()
 		inputs[i].Prompt = ""
-		inputs[i].Width = 52
+		inputs[i].SetWidth(52)
 	}
 	inputs[0].SetValue(name)
 	inputs[0].Placeholder = "unique name"
@@ -508,7 +508,7 @@ func (m *Model) openHookForm(pre bool, idx int) {
 	for i := range inputs {
 		inputs[i] = textinput.New()
 		inputs[i].Prompt = ""
-		inputs[i].Width = 52
+		inputs[i].SetWidth(52)
 	}
 	inputs[0].SetValue(h.Command)
 	inputs[0].Placeholder = "shell command (tool call JSON on stdin)"
@@ -551,7 +551,7 @@ func (m *Model) formKey(msg tea.KeyMsg) tea.Cmd {
 	// The save row: enter commits, up walks back.
 	if f.field == len(f.inputs)+1 {
 		switch key {
-		case "enter", " ":
+		case "enter", "space":
 			return m.commitForm()
 		case "up", "k", "ctrl+p":
 			f.field--
@@ -566,7 +566,7 @@ func (m *Model) formKey(msg tea.KeyMsg) tea.Cmd {
 		switch key {
 		case "left", "h":
 			f.cycleEnum(-1)
-		case "right", "l", "enter", " ":
+		case "right", "l", "enter", "space":
 			f.cycleEnum(1)
 		case "up", "k", "ctrl+p":
 			f.field--
@@ -1224,7 +1224,7 @@ func (m *Model) openProviderForm(name string) {
 	for i := range inputs {
 		inputs[i] = textinput.New()
 		inputs[i].Prompt = ""
-		inputs[i].Width = 52
+		inputs[i].SetWidth(52)
 	}
 	inputs[0].SetValue(name)
 	inputs[0].Placeholder = "unique name (e.g. groq, ollama)"
@@ -1269,7 +1269,7 @@ func (m *Model) openModelRow() tea.Cmd {
 	}
 	p := &modelPicker{provider: m.cfg.Provider, list: choices, input: textinput.New()}
 	p.input.Prompt = ""
-	p.input.Width = 40
+	p.input.SetWidth(40)
 	p.input.Placeholder = "model name"
 	p.cursor = p.index(activeModel(m.cfg))
 	p.fetching = dynamic && len(p.list) == 0

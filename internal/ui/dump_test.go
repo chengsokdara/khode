@@ -13,9 +13,7 @@ import (
 	"khode/internal/llm"
 	"khode/internal/perm"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestDumpViews renders every surface at a fixed size into the ui dump
@@ -26,9 +24,9 @@ func TestDumpViews(t *testing.T) {
 	if dir == "" {
 		t.Skip("DUMP_DIR not set")
 	}
-	// go test output is not a tty, so lipgloss would strip all color;
-	// force truecolor for the frames.
-	lipgloss.SetColorProfile(termenv.TrueColor)
+	// lipgloss v2 renders truecolor escapes unconditionally; color
+	// downsampling happens at write time through a colorprofile.Writer,
+	// so raw View() content keeps full truecolor regardless of tty.
 
 	// resize runs the real Update chain so width/height land on the
 	// returned model.
@@ -56,7 +54,7 @@ func TestDumpViews(t *testing.T) {
 		uiMessage{role: "system", raw: "mode → accept-edits · file changes run freely; commands still ask"},
 	)
 	chat.renderAll()
-	write("chat.txt", chat.View())
+	write("chat.txt", chat.View().Content)
 
 	// streaming state: elapsed timer + cursor + live border
 	st := resize(newTestModel(t))
@@ -67,25 +65,25 @@ func TestDumpViews(t *testing.T) {
 	st.messages[len(st.messages)-1].raw = st.partial.String()
 	st.ctxIn, st.ctxOut = 120_000, 8_000
 	st.renderAll()
-	write("chat-streaming.txt", st.View())
+	write("chat-streaming.txt", st.View().Content)
 
 	// --- walkthrough ---
 	wm := resize(newSettingsModel(t))
 	wm.OpenWelcome()
-	write("welcome-intro.txt", wm.View())
+	write("welcome-intro.txt", wm.View().Content)
 	wm = pressKeys(wm, "enter")
-	write("welcome-provider.txt", wm.View())
+	write("welcome-provider.txt", wm.View().Content)
 
 	// --- settings rows ---
 	sm := resize(newSettingsModel(t))
 	sm.OpenSettings(rowProvider)
-	write("settings.txt", sm.View())
+	write("settings.txt", sm.View().Content)
 
 	// --- provider list ---
 	pm := resize(newSettingsModel(t))
 	pm.OpenSettings(rowProvider)
 	pm = pressKeys(pm, "enter")
-	write("settings-providers.txt", pm.View())
+	write("settings-providers.txt", pm.View().Content)
 
 	// --- session picker ---
 	km := resize(newTestModel(t))
@@ -93,24 +91,24 @@ func TestDumpViews(t *testing.T) {
 		{Name: "khode-fixes", Messages: 42, Path: "/tmp/x", ModTime: time.Now().Add(-3 * time.Minute)},
 		{Name: "refactor-llm", Messages: 7, Path: "/tmp/y", ModTime: time.Now().Add(-26 * time.Hour)},
 	})
-	write("picker.txt", km.View())
+	write("picker.txt", km.View().Content)
 
 	// --- tools panel ---
 	tm := resize(newTestModel(t))
 	tm.openTools()
-	write("tools.txt", tm.View())
+	write("tools.txt", tm.View().Content)
 	tm = pressKeys(tm, "down", "down", "down", "down", "down") // bash
 	tm = pressKeys(tm, "enter")                                // toggle off
-	write("tools-off.txt", tm.View())
+	write("tools-off.txt", tm.View().Content)
 
 	// --- slash-command completion popup ---
 	cp := resize(newTestModel(t))
 	cp = pressKeys(cp, "/")
-	write("popup.txt", cp.View())
+	write("popup.txt", cp.View().Content)
 	cp = pressKeys(cp, "m", "o")
-	write("popup-filtered.txt", cp.View())
+	write("popup-filtered.txt", cp.View().Content)
 	cp = pressKeys(cp, "down")
-	write("popup-filtered-cursor.txt", cp.View())
+	write("popup-filtered-cursor.txt", cp.View().Content)
 
 	// --- permission dialog ---
 	dm := resize(newTestModel(t))
@@ -120,13 +118,13 @@ func TestDumpViews(t *testing.T) {
 		Preview: "@@ -12,7 +12,9 @@\n-important line\n+changed line\n+added line\n context line",
 	}
 	dm.perm = &req
-	write("perm.txt", dm.View())
+	write("perm.txt", dm.View().Content)
 
 	// --- plan dialog ---
 	pl := resize(newTestModel(t))
 	preq := agent.Request{Kind: agent.KindPlan, Preview: "# the plan\n\n1. add the design system\n2. restyle the chat\n3. restyle overlays\n4. verify"}
 	pl.perm = &preq
-	write("plan.txt", pl.View())
+	write("plan.txt", pl.View().Content)
 
 	// sanity: the chat frame carries truecolor styling (lipgloss rounds
 	// the hex values by a step, so exact channels aren't asserted).

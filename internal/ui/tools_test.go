@@ -7,7 +7,7 @@ import (
 
 	"khode/internal/tools"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func newToolsModel(t *testing.T, reg *tools.Registry) Model {
@@ -36,7 +36,7 @@ func TestToolsPanelToggleAndClose(t *testing.T) {
 	if m.tools.Enabled(name) {
 		t.Errorf("%s still enabled after enter", name)
 	}
-	if view := m.View(); !strings.Contains(view, fmt.Sprintf("1/%d off", n)) {
+	if view := m.View().Content; !strings.Contains(view, fmt.Sprintf("1/%d off", n)) {
 		t.Errorf("view missing off-count after toggle: %q", view)
 	}
 
@@ -64,7 +64,7 @@ func TestToolsPanelToggleAndClose(t *testing.T) {
 
 func TestToolsPanelEmptyRegistry(t *testing.T) {
 	m := newToolsModel(t, tools.NewRegistry())
-	if view := m.View(); !strings.Contains(view, "no tools registered") {
+	if view := m.View().Content; !strings.Contains(view, "no tools registered") {
 		t.Errorf("empty registry view = %q", view)
 	}
 }

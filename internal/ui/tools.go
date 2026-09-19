@@ -6,8 +6,8 @@ import (
 
 	"khode/internal/perm"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // toolsMaxRows caps the visible list; further rows scroll a window
@@ -42,7 +42,7 @@ func (m *Model) toolsKey(msg tea.KeyMsg) tea.Cmd {
 		if p.cursor < len(p.names)-1 {
 			p.cursor++
 		}
-	case "enter", " ":
+	case "enter", "space":
 		if len(p.names) > 0 {
 			name := p.names[p.cursor]
 			m.tools.SetEnabled(name, !m.tools.Enabled(name))

@@ -13,9 +13,9 @@ import (
 
 	"khode/internal/config"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // welcome steps, in order. The model step is skipped entirely when the
@@ -60,17 +60,17 @@ func (m *Model) OpenWelcome() {
 	in.Prompt = ""
 	in.EchoMode = textinput.EchoPassword
 	in.EchoCharacter = '•'
-	in.Width = 52
+	in.SetWidth(52)
 	in.Placeholder = "paste your API key · enter saves"
 	in.Focus()
 
 	name := textinput.New()
 	name.Prompt = ""
-	name.Width = 40
+	name.SetWidth(40)
 	name.Placeholder = "unique name (e.g. groq, ollama)"
 	url := textinput.New()
 	url.Prompt = ""
-	url.Width = 40
+	url.SetWidth(40)
 	url.Placeholder = "http://localhost:11434/v1"
 
 	w := &welcome{input: in, cName: name, cURL: url}
