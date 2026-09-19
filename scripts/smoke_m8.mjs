@@ -253,6 +253,23 @@ async function cleanup({ restoreSignup }) {
   });
   check('streamed debit lands after the stream (tee watcher)', after2 != null, String(after2));
 
+  // --- M16: client /api/v1 key + credit endpoints -----------------------------
+  {
+    const k = await fetch(base + '/api/v1/auth/key', { headers: { authorization: `Bearer ${rawKey}` } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+    check(
+      'M16 /api/v1/auth/key (user key) → accrued usage',
+      k.status === 200 && k.body?.data?.label === KEY_NAME && Math.abs(k.body.data.usage - (2 * DEBIT_MICROS_PER_CALL) / 1e6) < 1e-9,
+      JSON.stringify(k.body),
+    );
+    const cr = await fetch(base + '/api/v1/credits', { headers: { authorization: `Bearer ${rawKey}` } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+    const want = 5 - (2 * DEBIT_MICROS_PER_CALL) / 1e6;
+    check(
+      'M16 /api/v1/credits (user key) → balance + account-wide usage',
+      cr.status === 200 && cr.body?.data?.scope === 'user' && Math.abs(cr.body.data.total_credits - want) < 1e-9 && Math.abs(cr.body.data.total_usage - (2 * DEBIT_MICROS_PER_CALL) / 1e6) < 1e-9,
+      JSON.stringify(cr.body),
+    );
+  }
+
   const ledger = await api('/app/api/billing', {}, 'portal');
   const usageEntries = (ledger.body?.entries ?? []).filter((e) => e.kind === 'usage');
   check(

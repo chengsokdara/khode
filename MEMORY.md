@@ -247,6 +247,40 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
 
 ## Decisions already made (do not re-litigate without asking)
 
+- **M16 parity-pack contract (session 21, do not regress)**:
+  - **/v1/models pricing is per-token decimal strings** derived from
+    USD-per-1M via `usdPerMillionToPerToken` (toFixed(12) + trailing-zero
+    trim — exponent notation like 1.5e-7 breaks client parsers). Both sides
+    null → `pricing: null` (unknown ≠ free); one side unset → that member
+    null. `supported_parameters` = union over the provider's declared
+    adapters of `ADAPTER_SUPPORTED_PARAMS` (gateway.ts) — extend per adapter
+    when new canonical options land (M17 adds nothing there; M18 will).
+  - **/api/v1 requires a real key even under the keyless default** (the
+    answers describe that key). `/auth/key` + `/key` aliases, `/credits`
+    scopes to user OR org by the key; admin-managed keys (no user/org) →
+    404 `no_balance`. In-memory `client-api` bucket 60/min/IP — move it
+    through the DO together with the login buckets when that polish lands.
+  - **/v1/completions never passes through raw** — even openai→openai is
+    rewritten chat→text_completion (that's the face's whole point). The
+    route feeds `chatPipeline` a `preParsed` canonical request
+    (dialect 'openai'); errors keep the openai envelope; log rows carry
+    `dialect='completions'`. Prompt arrays and echo/suffix/best_of/logprobs/
+    logit_bias → explicit 400. Stream rewriter: comments consumed,
+    usage-only chunk preserved, `[DONE]` synthesized ONLY when the upstream
+    never sent one (never double).
+  - **x-ratelimit success headers** (`x-ratelimit-limit/remaining/reset-
+    requests`) render from the BINDING bucket (max count/limit — same pick
+    as the 429 message) whenever limiting ran; no headers when disabled or
+    limiter fail-open. No DO protocol change was needed — decisions already
+    carried count/limit/resetAfterMs.
+  - **Keep-alives**: `withSseKeepAlive` (sse.ts) wraps every TRANSLATED SSE
+    response, the passthrough SSE client branch, and the completions output;
+    the usage-watch tee branches stay raw. `usage: {include:true}` maps onto
+    canonical `streamIncludeUsage` and is stripped from extras.
+  - **Attribution**: request_logs.http_referer (≤300 chars) + x_title
+    (≤120 chars), read from `HTTP-Referer`/`X-Title` on /v1; cache keys do
+    NOT include attribution (same prompt from two apps shares one entry).
+
 - **M15 hardening + deploy contract (session 21, do not regress)**:
   - **Webhook record+credit is ATOMIC**: `webhook_events` INSERT rides the
     same D1 batch as the ledger insert + balance bump. Never split the

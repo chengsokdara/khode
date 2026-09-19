@@ -54,6 +54,20 @@ the REAL gateway with a session-scoped client key (`api_keys.playground_session`
 mints — raw key returned once — hidden from the keys list, deleted at logout,
 swept when the session row dies); model picker, SSE streaming render,
 resulting log rows shown per request. The stated post-MVP order is exhausted.
+**M15 done (2026-09-19)** — pre-launch hardening: atomic Lemon Squeezy webhook
+credit (webhook_events rides the credit batch; only genuine unique-violations
+answer duplicate — everything else 5xx so LS retries), `request_logs.api_key_id`
+index + SQL usage sums, PATCH validation ordering, generic root onError, README
+drift — and the REAL DEPLOY (khateway.chengsokdara.workers.dev: remote D1,
+secrets, migrations) + git init. **M16 done** — OpenRouter client-parity pack:
+/v1/models `pricing` (per-token decimal strings) + `supported_parameters`,
+client `/api/v1` key/credit endpoints, legacy `POST /v1/completions`
+(requests ride the chat pipeline pre-parsed, responses REWRITTEN to
+`text_completion` — never raw passthrough), `HTTP-Referer`/`X-Title`
+attribution persisted on request_logs (migration 0010), success-path
+`x-ratelimit-*` headers from the binding rate-limit bucket,
+`usage:{include:true}` → `streamIncludeUsage`, SSE keep-alive comments
+(`withSseKeepAlive`).
 **Keyless-native default** (khode integration): /v1 is served
 anonymously unless `client_key_enforcement` is switched on (admin settings).
 
@@ -127,12 +141,16 @@ src/worker/
 │   ├── openaiEmbeddings.ts  — M13 client Embeddings dialect (/v1/embeddings): parse→canonical
 │   │                          (input string|string[], dimensions, encoding_format; token
 │   │                          arrays rejected), the first non-chat client face
+│   ├── openaiCompletions.ts — M16 legacy text-completions face (/v1/completions): prompt→canonical
+│   │                          user message (arrays + echo/suffix/best_of/logprobs rejected),
+│   │                          chat-completion JSON/SSE → text_completion rewriters
 │   ├── gemini.ts            — M12 upstream Gemini vocabulary: gemini JSON/SSE → openai shapes
 │   │                          (the gateway reuses the openai→X translators from there) +
 │   │                          Google error-envelope mapping; M13 adds embeddings normalization
 │   │                          (geminiEmbeddingsToOpenAi + floatsToBase64)
 │   ├── options.ts           — shared option validators for the dialect parsers
 │   ├── sse.ts               — generic text/event-stream framing shared by SSE translators
+│   │                          (+ M16 withSseKeepAlive: `: keep-alive` comments during silence)
 │   └── usage.ts             — M7 usage extraction from upstream JSON/SSE (tee-branch watcher for
 │                              logs; M12 adds gemini usageMetadata — thoughts bill as output)
 ├── adapters/
@@ -159,11 +177,20 @@ src/worker/
     ├── gateway.ts  — /v1 pipeline: client-key auth middleware + spend cap + allowed-models (M7)
     │                 + prepaid-balance gate + usage debit (M8 personal / M9 org balance),
     │                 + rate limits after routing (M10: per-key / per-IP anonymous / per-model,
-    │                 429 + Retry-After in the caller's dialect),
+    │                 429 + Retry-After in the caller's dialect; M16 success-path
+    │                 x-ratelimit-limit/remaining/reset-requests from the binding bucket),
     │                 dialect×adapter matrix (/chat/completions, /responses, /messages),
     │                 M13 embeddings branch (/embeddings — shared gates via enforceSpendCap +
-    │                 enforcePostRoutingGates helpers), request_logs writes with user/org
-    │                 attribution + tee-based usage capture, /models(/:id), 404 wildcard
+    │                 enforcePostRoutingGates helpers), M16 legacy /completions (preParsed
+    │                 into the chat pipeline, responses rewritten to text_completion),
+    │                 request_logs writes with user/org attribution + M16 HTTP-Referer/X-Title
+    │                 + tee-based usage capture, /models(/:id) with M16 pricing +
+    │                 supported_parameters, 404 wildcard
+    ├── clientapi.ts — /api/v1 client-facing key/credit API (M16, OpenRouter parity):
+    │                 GET /auth/key + /key (label/limit/usage/limit_remaining) + /credits
+    │                 (user balance / org balance / 404 no_balance for admin keys) — a real
+    │                 client key REQUIRED even under the keyless default; in-memory
+    │                 client-api bucket 60/min/IP
     ├── portal.ts   — /app/api user portal (M8): signup/login/logout/me (public signup flag),
     │                 PERSONAL keys CRUD (+usage/billing — org keys excluded via isNull(orgId)),
     │                 balance + ledger entries, LS checkout URLs
@@ -172,7 +199,10 @@ src/worker/
     │                 (owner-any / member-own), org usage, org billing + owner-only LS checkout
     └── webhooks.ts — /webhooks/lemonsqueezy (M8): HMAC-verified MoR callbacks, two-layer
                        idempotent balance credit (webhook_events + balance_entries.ref unique;
-                       M9: custom_data.org_id credits the org, wins over user_id)
+                       M9: custom_data.org_id credits the org, wins over user_id; M15: the
+                       events row rides the SAME atomic batch as the credit, and only
+                       isUniqueViolation errors answer duplicate — everything else 5xx so LS
+                       retries into a clean state)
 
 src/web/
 ├── main.tsx        — QueryClient + root render (+ Toaster)
@@ -200,16 +230,17 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             + a native gemini face (self-cleaning fixtures; asserts the cross-dialect
                             matrix incl. the M5 /v1/responses cells + dual-adapter providers + model
                             discovery/import + the M12 native-gemini matrix + the M13 embeddings
-                            branch — 176 checks as of 2026-09-19)
+                            branch + the M16 parity cells (models pricing, legacy /v1/completions
+                            incl. attribution headers, /api/v1) — 190 checks as of 2026-09-19)
 scripts/smoke_m8.mjs       — accounts/balance/webhook e2e vs wrangler dev :8787 (signup → credit →
-                            debit math → 429 → signed LS webhook → idempotency; 42 checks)
+                            debit math → 429 → signed LS webhook → idempotency; 42 checks + 2 M16 /api/v1 checks = 45)
 scripts/smoke_m9.mjs       — orgs/teams e2e vs wrangler dev :8787 (2 orgs coexist, join codes,
                             roles + last-owner guards, key scoping, org debits at the gateway,
                             log attribution, org webhook credit, admin succession; 74 checks)
 scripts/smoke_m10.mjs      — rate limiting e2e vs wrangler dev :8787 (concurrent bursts per
                             bucket: anonymous IP, key default/override/independence, global
                             model cap, Retry-After + both dialect 429 envelopes, disabled
-                            bypass, 429 log rows; settings restored off; 33 checks)
+                            bypass, 429 log rows; settings restored off; 33 checks + 4 M16 x-ratelimit-header checks = 37)
 scripts/smoke_m11.mjs      — semantic cache e2e vs wrangler dev :8787 (call-counting mock upstream:
                             miss→hit, cross-dialect hits on one entry, streams/tools/non-opted
                             bypass, key opt-in + shared cache, master off, TTL expiry, flush,
@@ -226,7 +257,8 @@ drizzle/            — generated SQL migrations (applied with wrangler d1 migra
                       0007_m11_cache adds models/api_keys.cache_enabled, request_logs.cache_hit,
                       the cache_entries table + expires/model indexes;
                       0008_m14_playground adds api_keys.playground_session;
-                      0009_m15_log_indexes adds request_logs_api_key_idx)
+                      0009_m15_log_indexes adds request_logs_api_key_idx;
+                      0010_m16_attribution adds request_logs.http_referer + x_title)
 
 tests/              — offline golden-fixture suite (vitest; no server needed)
 ├── fixtures/       — arrays of {name, …input, expected} cases per wire-format area

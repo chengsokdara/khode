@@ -79,3 +79,43 @@ export function translateSseStream(
     }),
   );
 }
+
+const SSE_KEEP_ALIVE = new TextEncoder().encode(': keep-alive\n\n');
+
+/**
+ * M16: injects `: keep-alive` comment lines into an SSE stream during
+ * silence, so slow upstreams don't look dead to clients/intermediaries
+ * (OpenRouter does the same). The timer races the next upstream chunk; when
+ * it wins, a comment is enqueued and the wait continues — comments are
+ * ignored by every SSE consumer and stripped by translateSseStream's parser.
+ * Backpressure-friendly: upstream is only read when the client pulls.
+ */
+export function withSseKeepAlive(src: ReadableStream<Uint8Array>, intervalMs = 15_000): ReadableStream<Uint8Array> {
+  const reader = src.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        for (;;) {
+          let chunk: ReadableStreamReadResult<Uint8Array>;
+          const timer = setTimeout(() => controller.enqueue(SSE_KEEP_ALIVE), intervalMs);
+          try {
+            chunk = await reader.read();
+          } finally {
+            clearTimeout(timer);
+          }
+          if (chunk.done) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(chunk.value);
+          return;
+        }
+      } catch (e) {
+        controller.error(e);
+      }
+    },
+    cancel() {
+      void reader.cancel().catch(() => {});
+    },
+  });
+}

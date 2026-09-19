@@ -134,7 +134,7 @@ export interface LogRow {
   provider_id: string | null;
   provider_name: string | null;
   upstream_model: string | null;
-  dialect: 'chat' | 'responses' | 'messages' | 'embeddings';
+  dialect: 'chat' | 'responses' | 'messages' | 'embeddings' | 'completions';
   status: number;
   latency_ms: number | null;
   tokens_in: number | null;
@@ -142,6 +142,9 @@ export interface LogRow {
   cost_usd: number | null;
   /** M11: response was served from the semantic cache (no upstream call). */
   cache_hit: boolean;
+  /** M16 client attribution (OpenRouter-style headers). */
+  http_referer: string | null;
+  x_title: string | null;
   error: string | null;
   created_at: number;
 }

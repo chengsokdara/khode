@@ -1,0 +1,225 @@
+[
+  {
+    "name": "parse: minimal string prompt → canonical user message",
+    "body": { "model": "llama-3", "prompt": "Once upon a time" },
+    "expected": {
+      "ok": true,
+      "model": "llama-3",
+      "request": {
+        "messages": [{ "role": "user", "content": "Once upon a time", "extra": {} }],
+        "stream": false,
+        "options": {},
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "parse: generation options map onto canonical",
+    "body": {
+      "model": "llama-3",
+      "prompt": "Write a haiku",
+      "max_tokens": 64,
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "stop": ["END"],
+      "stream": true
+    },
+    "expected": {
+      "ok": true,
+      "model": "llama-3",
+      "request": {
+        "messages": [{ "role": "user", "content": "Write a haiku", "extra": {} }],
+        "stream": true,
+        "options": {
+          "temperature": 0.7,
+          "topP": 0.9,
+          "maxTokens": 64,
+          "maxTokensField": "max_tokens",
+          "stop": ["END"]
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "parse: legacy penalties ride extras",
+    "body": { "model": "llama-3", "prompt": "hi", "presence_penalty": 0.5, "frequency_penalty": -0.2 },
+    "expected": {
+      "ok": true,
+      "model": "llama-3",
+      "request": {
+        "messages": [{ "role": "user", "content": "hi", "extra": {} }],
+        "stream": false,
+        "options": {},
+        "extras": { "presence_penalty": 0.5, "frequency_penalty": -0.2 }
+      }
+    }
+  },
+  {
+    "name": "parse: prompt arrays rejected (n>1 semantics)",
+    "body": { "model": "llama-3", "prompt": ["a", "b"] },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "prompt arrays (n>1 semantics) are not supported on /v1/completions — send one prompt per request.",
+      "param": "prompt",
+      "code": null
+    }
+  },
+  {
+    "name": "parse: echo rejected explicitly",
+    "body": { "model": "llama-3", "prompt": "hi", "echo": true },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "'echo' is not supported on /v1/completions.",
+      "param": "echo",
+      "code": null
+    }
+  },
+  {
+    "name": "parse: missing prompt rejected",
+    "body": { "model": "llama-3" },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Missing parameter: 'prompt' must be a string",
+      "param": "prompt",
+      "code": "missing_required_parameter"
+    }
+  },
+  {
+    "name": "parse: invalid JSON body rejected",
+    "invalidJson": true,
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Request body must be valid JSON",
+      "param": null,
+      "code": "invalid_json"
+    }
+  },
+  {
+    "name": "json: chat completion → text_completion",
+    "payload": {
+      "id": "chatcmpl-123",
+      "object": "chat.completion",
+      "created": 1700000000,
+      "model": "llama-3",
+      "choices": [
+        { "index": 0, "message": { "role": "assistant", "content": "The rest of the story" }, "finish_reason": "stop" }
+      ],
+      "usage": { "prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10 }
+    },
+    "fallbackModel": "llama-3",
+    "expected": {
+      "id": "chatcmpl-123",
+      "object": "text_completion",
+      "created": 1700000000,
+      "model": "llama-3",
+      "choices": [
+        { "index": 0, "text": "The rest of the story", "finish_reason": "stop", "logprobs": null }
+      ],
+      "usage": { "prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10 }
+    }
+  },
+  {
+    "name": "json: tool_calls finish maps to stop, content folds parts",
+    "payload": {
+      "id": "chatcmpl-9",
+      "object": "chat.completion",
+      "created": 1700000001,
+      "model": "llama-3",
+      "choices": [
+        {
+          "index": 0,
+          "message": { "role": "assistant", "content": [{ "type": "text", "text": "line1" }, { "type": "text", "text": "line2" }] },
+          "finish_reason": "tool_calls"
+        }
+      ]
+    },
+    "fallbackModel": "fallback-model",
+    "expected": {
+      "id": "chatcmpl-9",
+      "object": "text_completion",
+      "created": 1700000001,
+      "model": "llama-3",
+      "choices": [
+        { "index": 0, "text": "line1\nline2", "finish_reason": "stop", "logprobs": null }
+      ]
+    }
+  },
+  {
+    "name": "json: unreadable payload → null (route answers 502)",
+    "payload": { "error": { "message": "boom" } },
+    "fallbackModel": "llama-3",
+    "expected": null
+  },
+  {
+    "name": "sse: content deltas + finish + usage chunk + DONE",
+    "input": "data: {\"id\":\"chatcmpl-s1\",\"object\":\"chat.completion.chunk\",\"created\":1700000002,\"model\":\"llama-3\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-s1\",\"object\":\"chat.completion.chunk\",\"created\":1700000002,\"model\":\"llama-3\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-s1\",\"object\":\"chat.completion.chunk\",\"created\":1700000002,\"model\":\"llama-3\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: {\"id\":\"chatcmpl-s1\",\"object\":\"chat.completion.chunk\",\"created\":1700000002,\"model\":\"llama-3\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\ndata: [DONE]\n\n",
+    "fallbackModel": "llama-3",
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-s1",
+          "object": "text_completion",
+          "created": 1700000002,
+          "model": "llama-3",
+          "choices": [{ "index": 0, "text": "Hel", "finish_reason": null, "logprobs": null }]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-s1",
+          "object": "text_completion",
+          "created": 1700000002,
+          "model": "llama-3",
+          "choices": [{ "index": 0, "text": "lo", "finish_reason": null, "logprobs": null }]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-s1",
+          "object": "text_completion",
+          "created": 1700000002,
+          "model": "llama-3",
+          "choices": [{ "index": 0, "text": "", "finish_reason": "length", "logprobs": null }]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-s1",
+          "object": "text_completion",
+          "created": 1700000002,
+          "model": "llama-3",
+          "choices": [],
+          "usage": { "prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5 }
+        }
+      },
+      { "event": "", "data": "[DONE]" }
+    ]
+  },
+  {
+    "name": "sse: keep-alive comments skipped, missing DONE synthesized",
+    "input": ": upstream processing\n\ndata: {\"id\":\"chatcmpl-s2\",\"object\":\"chat.completion.chunk\",\"created\":1700000003,\"model\":\"llama-3\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hey\"},\"finish_reason\":\"stop\"}]}\n\n",
+    "fallbackModel": "llama-3",
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-s2",
+          "object": "text_completion",
+          "created": 1700000003,
+          "model": "llama-3",
+          "choices": [{ "index": 0, "text": "hey", "finish_reason": "stop", "logprobs": null }]
+        }
+      },
+      { "event": "", "data": "[DONE]" }
+    ]
+  }
+]

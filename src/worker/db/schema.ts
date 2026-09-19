@@ -259,6 +259,10 @@ export const requestLogs = sqliteTable(
     // M11: 1 when the response was served from the semantic cache (no upstream
     // call) — the logs UI marks these and usage views aggregate the savings.
     cacheHit: integer('cache_hit', { mode: 'boolean' }).notNull().default(false),
+    // M16 client attribution (OpenRouter HTTP-Referer/X-Title headers) — the
+    // app a request came from. Never auth headers; audit trail only.
+    httpReferer: text('http_referer'),
+    xTitle: text('x_title'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [

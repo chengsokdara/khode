@@ -113,7 +113,16 @@ const chat = async (slug, key, path = '/v1/chat/completions') => {
   } catch {
     // no JSON body
   }
-  return { status: res.status, body, retryAfter: res.headers.get('retry-after') };
+  return {
+    status: res.status,
+    body,
+    retryAfter: res.headers.get('retry-after'),
+    rateLimit: {
+      limit: res.headers.get('x-ratelimit-limit-requests'),
+      remaining: res.headers.get('x-ratelimit-remaining-requests'),
+      reset: res.headers.get('x-ratelimit-reset-requests'),
+    },
+  };
 };
 
 /** Fires `n` concurrent requests; returns {allowed, denied} counts + the last denial. */
@@ -216,6 +225,17 @@ async function burst(n, fn) {
     const [rB, rD] = await Promise.all([burst(4, () => chat(SLUG_A, keyB)), burst(4, () => chat(SLUG_A, keyD))]);
     check('two keys burst together: each allows ≤ 5 independently', rB.allowed <= 5 && rD.allowed <= 5, `B=${rB.allowed} D=${rD.allowed}`);
     check('two keys burst together: both served (fresh buckets)', rB.allowed === 4 && rD.allowed === 4, `B=${rB.allowed} D=${rD.allowed}`);
+  }
+
+  // --- 4b. M16 success-path x-ratelimit-* headers -----------------------------
+  {
+    // keyE's key bucket is untouched so far: one request → limit 5, remaining 4.
+    const r = await chat(SLUG_A, keyE);
+    check('M16 success headers: limit reflects the key bucket (5/min)', r.status === 200 && r.rateLimit?.limit === '5', JSON.stringify(r.rateLimit));
+    check('M16 success headers: remaining = limit − count', r.rateLimit?.remaining === '4', JSON.stringify(r.rateLimit));
+    check('M16 success headers: reset is a positive seconds value', /^\d+s$/.test(r.rateLimit?.reset ?? ''), r.rateLimit?.reset);
+    const anon = await chat(SLUG_A, null);
+    check('M16: 429 responses do not carry success-path ratelimit headers', anon.status !== 429 || anon.rateLimit?.limit === null, JSON.stringify(anon.rateLimit));
   }
 
   // --- 5. global model cap ---------------------------------------------------

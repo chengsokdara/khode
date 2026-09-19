@@ -1678,6 +1678,8 @@ function logDto(r: LogRow, keyName: string | null, providerName: string | null, 
     tokens_out: r.tokensOut,
     cost_usd: r.costUsd,
     cache_hit: Boolean(r.cacheHit),
+    http_referer: r.httpReferer ?? null,
+    x_title: r.xTitle ?? null,
     error: r.error,
     created_at: r.createdAt,
   };

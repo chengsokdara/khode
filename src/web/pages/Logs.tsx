@@ -19,11 +19,12 @@ function statusTone(status: number): 'ok' | 'warn' | 'bad' {
   return 'bad';
 }
 
-const DIALECT_LABELS: Record<LogRow['dialect'], string> = {
+const DIALECT_LABELS: Record<string, string> = {
   chat: '/chat/completions',
   responses: '/responses',
   messages: '/messages',
   embeddings: '/embeddings',
+  completions: '/completions',
 };
 
 function LogErrorCell({ log }: { log: LogRow }) {
@@ -33,6 +34,19 @@ function LogErrorCell({ log }: { log: LogRow }) {
       {log.error.length > 60 ? `${log.error.slice(0, 60)}…` : log.error}
     </span>
   );
+}
+
+/** M16 attribution: X-Title, else the referer's host — shown under the key. */
+function appLabel(log: LogRow): string | null {
+  if (log.x_title) return log.x_title;
+  if (log.http_referer) {
+    try {
+      return new URL(log.http_referer).host;
+    } catch {
+      return log.http_referer;
+    }
+  }
+  return null;
 }
 
 export function Logs() {
@@ -108,6 +122,7 @@ export function Logs() {
             <Select value={dialectFilter} onChange={(e) => setDialectFilter(e.target.value)} className="h-8 text-xs">
               <option value="">All endpoints</option>
               <option value="chat">/chat/completions</option>
+              <option value="completions">/completions</option>
               <option value="responses">/responses</option>
               <option value="messages">/messages</option>
               <option value="embeddings">/embeddings</option>
@@ -177,7 +192,14 @@ export function Logs() {
                 {logs.map((log) => (
                   <tr key={log.id} className="transition-colors hover:bg-zinc-900/40">
                     <td className="px-4 py-2.5 font-mono text-[11px] whitespace-nowrap text-zinc-500">{fmtTime(log.created_at)}</td>
-                    <td className="px-4 py-2.5 text-xs text-zinc-300">{log.key_name ?? <span className="text-zinc-600">(deleted)</span>}</td>
+                    <td className="px-4 py-2.5 text-xs text-zinc-300">
+                      {log.key_name ?? <span className="text-zinc-600">(deleted)</span>}
+                      {appLabel(log) ? (
+                        <div className="mt-0.5 text-[10px] text-zinc-600" title={log.http_referer ?? appLabel(log) ?? undefined}>
+                          {appLabel(log)}
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-zinc-200">
                       {log.model_slug}
                       {log.cache_hit ? (

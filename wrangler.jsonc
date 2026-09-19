@@ -12,6 +12,8 @@
     "run_worker_first": [
       "/v1",
       "/v1/*",
+      "/api/v1",
+      "/api/v1/*",
       "/admin",
       "/admin/*",
       "/app/api",

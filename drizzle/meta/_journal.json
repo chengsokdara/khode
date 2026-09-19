@@ -71,6 +71,13 @@
       "when": 1789832800465,
       "tag": "0009_m15_log_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789833832539,
+      "tag": "0010_m16_attribution",
+      "breakpoints": true
     }
   ]
 }

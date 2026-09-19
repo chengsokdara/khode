@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-19 (session 21 — M15 hardening + real deploy)
+Last updated: 2026-09-19 (session 21 — M15 hardening/deploy + M16 parity pack)
 
 ## How to use this file
 
@@ -11,6 +11,49 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **M16 — OpenRouter client-parity pack ✅ complete (session 21, 2026-09-19)**
+  (after M15 hardening + real deploy, same session). Shipped:
+  - **`GET /v1/models` enrichment** (additive DTO): `pricing` as OpenRouter-
+    style per-token decimal strings derived from USD-per-1M (`usdPerMillionTo
+    PerToken` — toFixed(12) + trim so 1.5e-7 never renders as exponent; null
+    when unset — unknown ≠ free), plus `supported_parameters` derived from the
+    provider's declared adapters (what the gateway can express end-to-end).
+  - **Client `/api/v1` endpoints** (`routes/clientapi.ts`, mounted at
+    `/api/v1`; run_worker_first + vite proxy updated): `GET /auth/key` +
+    `/key` (key info: label/limit/usage/limit_remaining/is_disabled) and
+    `GET /credits` (user key → user balance, org key → org balance, admin key
+    → 404 `no_balance`; account-wide usage + per-key usage). A client API key
+    IS the credential here (Bearer or x-api-key) — anonymous/`anonymous`
+    calls 401 even under the keyless default. In-memory `client-api` bucket
+    60/min/IP (login-limiter pattern; DO migration stays queued).
+  - **Legacy `POST /v1/completions`** (`dialects/openaiCompletions.ts`):
+    prompt → canonical user message; rides the FULL chat pipeline via a
+    `preParsed` passthrough into `chatPipeline` (gates/fallbacks/cache/log/
+    debit identical); responses REWRITTEN chat→`text_completion` (JSON +
+    SSE; never raw passthrough). `request_logs.dialect='completions'`;
+    prompt arrays (n>1) and echo/suffix/best_of/logprobs/logit_bias rejected
+    explicitly; penalties ride extras; missing [DONE] synthesized, doubles
+    prevented.
+  - **Attribution**: `HTTP-Referer` + `X-Title` read on /v1, persisted
+    (migration `0010_m16_attribution`: request_logs.http_referer/x_title,
+    applied local), exposed in admin logDto + Logs UI key cell (X-Title, else
+    referer host). Never auth headers; length-capped.
+  - **Success-path `x-ratelimit-limit/remaining/reset-requests`** headers
+    from the BINDING rate-limit bucket on every /v1 response when limiting
+    ran (the DO decisions already carried count/limit/reset — no protocol
+    change); 429s keep retry-after only.
+  - **`usage: {include: true}`** (OpenRouter accounting param) parsed onto
+    canonical `streamIncludeUsage` and stripped from extras (never 400s
+    upstreams).
+  - **SSE keep-alives**: `withSseKeepAlive` injects `: keep-alive` comments
+    during silence (backpressure-safe timer racing reads) on every translated
+    stream + the passthrough SSE branch + the completions output; comments
+    never break the usage watchers (parser skips them).
+  - Tests: +14 vitest (parse/JSON/SSE goldens + keep-alive timing) → 284;
+    smoke_gateway +14 M16 checks → 190; smoke_m10 +4 header checks → 37;
+    smoke_m8 +2 /api/v1 checks → 45.
+- **Next: M17 — reasoning/thinking end-to-end** (per the user's chosen
+  sequence), then M18 structured outputs.
 - **M15 — pre-launch hardening + REAL DEPLOY ✅ complete (session 21,
   2026-09-19)** — user picked all four queued packages (M15 hardening+deploy →
   M16 parity pack → M17 reasoning → M18 structured outputs) after a
@@ -50,26 +93,20 @@ If something is claimed ✅ but not verified, it says so.
   - **git initialized** (was unversioned!): repo on `main`, .gitignore covers
     node_modules/.wrangler/web-dist/.dev.vars/.video_agent/.zcode; commits:
     initial (M1–M14) + M15 hardening.
-- **Next: M16 — OpenRouter client-parity pack** (per the user's chosen
-  sequence): /v1/models pricing + supported_parameters, client /api/v1
-  key+credits endpoints, legacy /v1/completions, attribution headers, DO
-  count/limit/reset exposure + x-ratelimit success headers, usage:{include},
-  SSE keep-alives. Then M17 reasoning/thinking, M18 structured outputs.
-- **MVP M1–M7 ✅**; **M8 ✅ (session 13)**; **M9 ✅ (session 14)**; **M10 ✅
-  (session 15)**; **M11 ✅ (session 17)**; **M12 ✅ (session 18)**; **M13 ✅
-  (session 19)**; **M14 ✅ (session 20)**.
 
 ## Verification baseline (2026-09-19, session 21)
 
 - `npm run check` — clean (worker + web + test tsconfigs)
-- `npm test` — **270/270** (+4: webhook unique-violation discrimination)
+- `npm test` — **284/284** (+14 completions: parse/JSON/SSE goldens + keep-alive)
 - `npm run build:web` — clean (408.3 KB js / 112.4 KB gzip)
-- `npm run migrate:local` — `0009_m15_log_indexes` applied
-- All seven smokes re-run post-M15: `npm run smoke` green (exit 0),
-  `smoke:gateway` **176/176**, `smoke:m8` **43**, `smoke:m9` **75**,
-  `smoke:m10` **33**, `smoke:m11` **ALL PASS (30)**, `smoke:m14` **ALL PASS (24)**
-- Deploy verification: see the M15 block above (remote /health, /v1/models,
-  chat 404 envelope, admin login, SPA — all green)
+- `npm run migrate:local` — 0009_m15_log_indexes + 0010_m16_attribution applied
+- Smokes post-M16: `npm run smoke` green (exit 0), `smoke:gateway` **190/190**
+  (+14 M16), `smoke:m8` **45** (+2 /api/v1), `smoke:m9` **75**,
+  `smoke:m10` **37** (+4 x-ratelimit), `smoke:m11` **ALL PASS (30)**,
+  `smoke:m14` **ALL PASS (24)**
+- Deploy verification (M15): see the M15 block above (remote /health,
+  /v1/models, chat 404 envelope, admin login, SPA — all green). The remote
+  worker predates M16 — redeploy when you want the parity pack live.
 
 - **M14 — playground UI ✅ complete (session 20, 2026-09-19)** — "Let's go
   M14"; scope per ROADMAP.md's M14 row: in-admin chat tester hitting the

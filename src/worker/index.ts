@@ -9,6 +9,7 @@ import { gatewayApp } from './routes/gateway';
 import { portalApp } from './routes/portal';
 import { orgApp } from './routes/orgs';
 import { webhookApp } from './routes/webhooks';
+import { clientApiApp } from './routes/clientapi';
 import { RateLimiterDO } from './ratelimit/do';
 
 // Durable Object classes MUST be exported from the entry module (wrangler
@@ -21,6 +22,7 @@ app.get('/health', (c) => c.json({ ok: true, name: 'khateway', time: new Date().
 
 app.route('/admin', adminApp);
 app.route('/v1', gatewayApp);
+app.route('/api/v1', clientApiApp);
 app.route('/app/api', portalApp);
 app.route('/app/api', orgApp);
 app.route('/webhooks', webhookApp);

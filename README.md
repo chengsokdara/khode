@@ -10,6 +10,7 @@ gemini (native generateContent or OpenAI-compat) …
                  │ register providers + models (admin dashboard)
                  ▼
   POST /v1/chat/completions      ← OpenAI Chat dialect
+  POST /v1/completions           ← Legacy OpenAI text completions
   POST /v1/responses             ← OpenAI Responses API
   POST /v1/messages              ← Anthropic Messages
   POST /v1/embeddings            ← OpenAI Embeddings API (openai/gemini upstreams)
@@ -61,14 +62,21 @@ automatically. `npm run dev:prod` serves the production-style built bundle on
 By default the gateway is **keyless**: any OpenAI or Anthropic SDK works with
 the base URL alone (clients that insist on a key can send any placeholder —
 the literal `anonymous` is the convention, and unknown values are treated the
-same). Model listing (`GET /v1/models`) and all chat endpoints are served
-anonymously.
+same). Model listing (`GET /v1/models` — includes per-model `pricing` and
+`supported_parameters`) and all chat endpoints are served anonymously.
 
 To require client keys instead (spend caps, model allow-lists, per-key logs),
 flip **Client-key enforcement** on the API Keys page (or `PATCH
 /admin/settings {"client_key_enforcement":"on"}`) and give clients a `khat-…`
 key: `Authorization: Bearer <key>` (OpenAI SDKs) or `x-api-key: <key>`
 (Anthropic SDKs). Requests without a valid key then get 401.
+
+**Client APIs (M16):** `GET /api/v1/auth/key` (aliases: `/api/v1/key`) returns
+a key's label, spend limit and accrued usage; `GET /api/v1/credits` returns
+the prepaid balance behind the key (personal or org). Both require a real
+client key. Send `HTTP-Referer`/`X-Title` headers on `/v1` calls to have your
+app attributed in the request logs; streaming responses carry keep-alive
+comments and success responses carry `x-ratelimit-*` headers.
 
 ## Rate limiting (M10)
 

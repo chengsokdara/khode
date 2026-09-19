@@ -2046,6 +2046,102 @@ const mock = await startMockUpstream();
   }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
   check('keyless again after toggle-back: no-auth chat → 200', chatKeylessAgain.status === 200, String(chatKeylessAgain.status));
 
+  // ==================================================================
+  // M16 — OpenRouter client-parity pack: /v1/models pricing +
+  // supported_parameters, legacy /v1/completions (JSON + SSE + log row +
+  // attribution headers), and the client /api/v1 key/credit endpoints.
+  // ==================================================================
+
+  // -- /v1/models pricing + supported_parameters ---------------------------
+  const m16models = await j('/v1/models');
+  const m16entry = m16models.body?.data?.find((m) => m.id === 'mock-chat');
+  check(
+    'M16 /v1/models pricing strings (per-token decimal, no exponent)',
+    m16entry?.pricing?.prompt === '0.000002' && m16entry?.pricing?.completion === '0.000008',
+    JSON.stringify(m16entry?.pricing),
+  );
+  check(
+    'M16 /v1/models supported_parameters derived from provider adapters',
+    Array.isArray(m16entry?.supported_parameters) && m16entry.supported_parameters.includes('temperature') && m16entry.supported_parameters.includes('tools') && m16entry.supported_parameters.includes('stream'),
+    JSON.stringify(m16entry?.supported_parameters),
+  );
+
+  // -- legacy /v1/completions ----------------------------------------------
+  const compRes = await fetchOrPost('/v1/completions', JSON.stringify({ model: 'mock-chat', prompt: 'Say hi', max_tokens: 16 }), undefined, { 'x-title': 'SmokeApp', 'http-referer': 'https://smoke.example/app' });
+  check(
+    'M16 /v1/completions non-stream → 200 text_completion shape',
+    compRes.status === 200 && compRes.body?.object === 'text_completion' && typeof compRes.body?.choices?.[0]?.text === 'string' && compRes.body?.choices?.[0]?.finish_reason === 'stop',
+    JSON.stringify(compRes.body),
+  );
+  check('M16 /v1/completions usage rides through', compRes.body?.usage?.total_tokens > 0, JSON.stringify(compRes.body?.usage));
+
+  const compPromptArray = await fetchOrPost('/v1/completions', JSON.stringify({ model: 'mock-chat', prompt: ['a', 'b'] }));
+  check(
+    'M16 /v1/completions prompt array → 400 explicit',
+    compPromptArray.status === 400 && /prompt arrays/.test(compPromptArray.body?.error?.message ?? ''),
+    JSON.stringify(compPromptArray.body),
+  );
+
+  const compEcho = await fetchOrPost('/v1/completions', JSON.stringify({ model: 'mock-chat', prompt: 'x', echo: true }));
+  check('M16 /v1/completions echo → 400 unsupported', compEcho.status === 400 && /echo/.test(compEcho.body?.error?.message ?? ''), JSON.stringify(compEcho.body));
+
+  const compStream = await fetch(base + '/v1/completions', {
+    method: 'POST',
+    headers: v1Headers(),
+    body: JSON.stringify({ model: 'mock-chat', prompt: 'Count', stream: true }),
+  });
+  const compStreamText = await compStream.text();
+  const compChunks = parseDataLines(compStreamText);
+  check(
+    'M16 /v1/completions stream → text deltas (no delta objects) + [DONE]',
+    compStream.status === 200 && compChunks.some((ch) => typeof ch?.choices?.[0]?.text === 'string' && ch.choices[0].text.length > 0) && compStreamText.includes('data: [DONE]') && !compStreamText.includes('"delta"'),
+    JSON.stringify(compChunks?.slice(0, 2)),
+  );
+
+  // Cross-dialect: anthropic upstream served through the completions face.
+  const compClaude = await fetchOrPost('/v1/completions', JSON.stringify({ model: 'mock-claude', prompt: 'Say hi in french', max_tokens: 16 }));
+  check(
+    'M16 /v1/completions × anthropic upstream → translated text_completion',
+    compClaude.status === 200 && compClaude.body?.object === 'text_completion' && typeof compClaude.body?.choices?.[0]?.text === 'string' && compClaude.body.choices[0].text.length > 0,
+    JSON.stringify(compClaude.body),
+  );
+
+  // Log row + attribution (log writes land in waitUntil after the response).
+  // Logs list is newest-first; the x_title pins THE attributed call's row.
+  await new Promise((r) => setTimeout(r, 400));
+  const m16logs = await j('/admin/logs?limit=200');
+  const compLog = m16logs.body?.find((r) => r.dialect === 'completions' && r.x_title === 'SmokeApp');
+  check(
+    'M16 completions log row: dialect completions + usage + exact cost',
+    compLog && compLog.tokens_in === 3 && compLog.tokens_out === 5 && Math.abs(compLog.cost_usd - 0.000046) < 1e-9,
+    JSON.stringify(compLog),
+  );
+  check(
+    'M16 log row carries attribution (x_title + http_referer)',
+    compLog?.x_title === 'SmokeApp' && compLog?.http_referer === 'https://smoke.example/app',
+    JSON.stringify({ x_title: compLog?.x_title, http_referer: compLog?.http_referer }),
+  );
+
+  // -- client /api/v1 endpoints ---------------------------------------------
+  const keyInfo = await fetch(base + '/api/v1/auth/key', { headers: { authorization: `Bearer ${apiKey}` } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  check(
+    'M16 GET /api/v1/auth/key → key data envelope',
+    keyInfo.status === 200 && keyInfo.body?.data?.label === 'Smoke Key (smoke)' && keyInfo.body?.data?.limit === null && typeof keyInfo.body?.data?.usage === 'number',
+    JSON.stringify(keyInfo.body),
+  );
+  const keyInfoAlias = await fetch(base + '/api/v1/key', { headers: { 'x-api-key': apiKey } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  check('M16 GET /api/v1/key (x-api-key alias) → same data', keyInfoAlias.status === 200 && keyInfoAlias.body?.data?.label === 'Smoke Key (smoke)', JSON.stringify(keyInfoAlias.body));
+
+  const creditsAnon = await fetch(base + '/api/v1/credits').then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  check('M16 /api/v1/credits without key → 401 openai envelope', creditsAnon.status === 401 && creditsAnon.body?.error?.type === 'authentication_error', JSON.stringify(creditsAnon.body));
+
+  const creditsAdminKey = await fetch(base + '/api/v1/credits', { headers: { authorization: `Bearer ${apiKey}` } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  check(
+    'M16 /api/v1/credits with admin-managed key → 404 no_balance',
+    creditsAdminKey.status === 404 && creditsAdminKey.body?.error?.code === 'no_balance',
+    JSON.stringify(creditsAdminKey.body),
+  );
+
   // -- unknown /v1 endpoint -------------------------------------------------
   const unknownEndpoint = await fetchOrPost('/v1/zzz', null);
   check('unknown /v1 endpoint → 404 openai envelope', unknownEndpoint.status === 404 && unknownEndpoint.body?.error?.type === 'invalid_request_error', JSON.stringify(unknownEndpoint.body));
@@ -2060,10 +2156,10 @@ const mock = await startMockUpstream();
     if (failures > 0) process.exitCode = 1;
   });
 
-function fetchOrPost(path, rawBody, keyOverride) {
+function fetchOrPost(path, rawBody, keyOverride, extraHeaders = {}) {
   return fetch(base + path, {
     method: rawBody === null ? 'GET' : 'POST',
-    headers: { ...v1Headers(), ...(keyOverride ? { authorization: `Bearer ${keyOverride}` } : {}) },
+    headers: { ...v1Headers(), ...(keyOverride ? { authorization: `Bearer ${keyOverride}` } : {}), ...extraHeaders },
     body: rawBody,
   }).then(async (res) => {
     let body = null;

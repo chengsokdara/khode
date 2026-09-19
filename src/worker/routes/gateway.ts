@@ -60,11 +60,13 @@ import { cors } from 'hono/cors';
 import { and, asc, eq, sql, sum } from 'drizzle-orm';
 import type { Env } from '../env';
 import { getDb } from '../db';
+import type { CanonicalChatRequest } from '../canonical';
 import { apiKeys, balanceEntries, models, orgs, providers, requestLogs, users } from '../db/schema';
 import { resolveModelChain, type RoutingCandidate } from '../routing';
 import { verifyClientKey, type ApiKeyRow } from '../auth';
 import { getClientKeyEnforcement, getCacheSettings, getRateLimitSettings } from '../db/settings';
 import { buildGatewayRateChecks, checkRateLimits } from '../ratelimit/client';
+import type { RateLimitDecision } from '../ratelimit/do';
 import { buildCacheKey, evaluateCacheEligibility } from '../cache/key';
 import { lookupCacheEntry, storeCacheEntry } from '../cache/store';
 import { invokeUpstream, UpstreamMisconfigError, UnsupportedTranslationError, type UpstreamOutcome, type UpstreamRequest } from '../adapters/base';
@@ -74,6 +76,12 @@ import { buildGeminiEmbeddingsRequest, buildGeminiGenerateContentRequest } from 
 import { costUsd, usageFromJsonBody, watchUpstreamJsonUsage, watchUpstreamSseUsage, type TokenUsage } from '../dialects/usage';
 import { geminiCompletionToOpenAi, geminiEmbeddingsToOpenAi, geminiErrorToOpenAi, transformGeminiSseToOpenAi } from '../dialects/gemini';
 import { parseOpenAiEmbeddingsRequest } from '../dialects/openaiEmbeddings';
+import {
+  completionFromChatCompletion,
+  parseOpenAiCompletionsRequest,
+  transformChatSseToTextCompletionSse,
+} from '../dialects/openaiCompletions';
+import { withSseKeepAlive } from '../dialects/sse';
 import {
   anthropicMessageToOpenAiCompletion,
   openAiError,
@@ -173,11 +181,63 @@ gatewayApp.use('*', async (c, next) => {
 gatewayApp.get('/', (c) =>
   c.json({
     service: 'khateway',
-    endpoints: ['/v1/chat/completions', '/v1/responses', '/v1/messages', '/v1/embeddings', '/v1/models', '/v1/models/{id}'],
+    endpoints: ['/v1/chat/completions', '/v1/completions', '/v1/responses', '/v1/messages', '/v1/embeddings', '/v1/models', '/v1/models/{id}'],
   }),
 );
 
 // ------------------------------------------------------------------ models
+
+/**
+ * USD-per-1M pricing → OpenRouter-style per-token decimal string. toFixed(12)
+ * + trailing-zero trim avoids exponent notation (0.15/1e6 must render as
+ * "0.00000015", not "1.5e-7" — clients parse these).
+ */
+function usdPerMillionToPerToken(price: number | null | undefined): string | null {
+  if (price == null || !Number.isFinite(price) || price < 0) return null;
+  if (price === 0) return '0';
+  let s = (price / 1e6).toFixed(12);
+  s = s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return s;
+}
+
+/** What each upstream adapter can express end-to-end (M16 client parity —
+ * served as `supported_parameters` on /v1/models). Conservative: only params
+ * the gateway actually forwards or translates for that adapter. */
+const ADAPTER_SUPPORTED_PARAMS: Record<UpstreamAdapter, string[]> = {
+  openai: [
+    'temperature', 'top_p', 'max_tokens', 'max_completion_tokens', 'stop', 'stream', 'stream_options',
+    'n', 'tools', 'tool_choice', 'parallel_tool_calls', 'response_format', 'seed',
+    'presence_penalty', 'frequency_penalty', 'logprobs', 'logit_bias',
+  ],
+  anthropic: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'metadata'],
+  gemini: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'reasoning_effort'],
+};
+
+/** Parses providers.adapters JSON defensively (shared with routing's parser contract). */
+function parseProviderAdapters(json: string | null): UpstreamAdapter[] {
+  if (!json) return [];
+  try {
+    const v: unknown = JSON.parse(json);
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is UpstreamAdapter => x === 'openai' || x === 'anthropic' || x === 'gemini');
+  } catch {
+    return [];
+  }
+}
+
+function supportedParametersFor(providerAdapters: string | null): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const a of parseProviderAdapters(providerAdapters)) {
+    for (const p of ADAPTER_SUPPORTED_PARAMS[a]) {
+      if (!seen.has(p)) {
+        seen.add(p);
+        out.push(p);
+      }
+    }
+  }
+  return out;
+}
 
 function modelListDto(r: {
   slug: string;
@@ -185,9 +245,14 @@ function modelListDto(r: {
   displayName: string | null;
   contextWindow: number | null;
   maxOutputTokens: number | null;
+  pricingInput: number | null;
+  pricingOutput: number | null;
   createdAt: number;
   providerName: string;
+  providerAdapters: string | null;
 }) {
+  const prompt = usdPerMillionToPerToken(r.pricingInput);
+  const completion = usdPerMillionToPerToken(r.pricingOutput);
   return {
     id: r.slug,
     object: 'model',
@@ -197,6 +262,10 @@ function modelListDto(r: {
     upstream_model: r.upstreamModel || r.slug,
     context_window: r.contextWindow,
     max_output_tokens: r.maxOutputTokens,
+    // M16 OpenRouter parity: per-token pricing strings (unknown ≠ free — null
+    // when no pricing is set, members null when one side is unset).
+    pricing: prompt == null && completion == null ? null : { prompt, completion },
+    supported_parameters: supportedParametersFor(r.providerAdapters),
   };
 }
 
@@ -206,8 +275,11 @@ const listFields = {
   displayName: models.displayName,
   contextWindow: models.contextWindow,
   maxOutputTokens: models.maxOutputTokens,
+  pricingInput: models.pricingInput,
+  pricingOutput: models.pricingOutput,
   createdAt: models.createdAt,
   providerName: providers.name,
+  providerAdapters: providers.adapters,
 };
 
 gatewayApp.get('/models', async (c) => {
@@ -269,6 +341,8 @@ interface ChatMeta {
   streamIncludeUsage?: boolean;
   /** M11: set only when the request was cache-eligible (header reporting). */
   cacheState?: 'hit' | 'miss';
+  /** M16: OpenAI-style success-path x-ratelimit-* headers from the binding bucket. */
+  rateHeaders?: Record<string, string> | null;
 }
 
 /**
@@ -339,7 +413,7 @@ interface LogDraft {
   /** Owning org (M9) for org-scoped keys — org keys debit the org balance. */
   orgId: string | null;
   /** request_logs.dialect vocabulary (see LOG_DIALECT). */
-  dialect: 'chat' | 'responses' | 'messages' | 'embeddings';
+  dialect: 'chat' | 'responses' | 'messages' | 'embeddings' | 'completions';
   modelSlug: string;
   providerId: string | null;
   upstreamModel: string | null;
@@ -351,6 +425,9 @@ interface LogDraft {
   /** M11: response came from the semantic cache (no upstream call). */
   cacheHit: boolean;
   error: string | null;
+  /** M16 client attribution: OpenRouter-style HTTP-Referer / X-Title headers. */
+  httpReferer: string | null;
+  xTitle: string | null;
 }
 
 /** request_logs.dialect vocabulary (schema contract): chat | responses | messages | embeddings. */
@@ -359,6 +436,14 @@ const LOG_DIALECT: Record<ClientDialect, 'chat' | 'responses' | 'messages'> = {
   responses: 'responses',
   anthropic: 'messages',
 };
+
+/** M16 client attribution — OpenRouter-style app headers (never auth headers). */
+function attributionFrom(c: Context<GatewayEnv>): { httpReferer: string | null; xTitle: string | null } {
+  const ref = c.req.header('http-referer')?.trim();
+  const title = c.req.header('x-title')?.trim();
+  // Bound the stored length — a referer URL is metadata, not free storage.
+  return { httpReferer: ref ? ref.slice(0, 300) : null, xTitle: title ? title.slice(0, 120) : null };
+}
 
 /**
  * Debits a request's cost from the prepaid balance behind the key (M8 personal
@@ -429,6 +514,8 @@ async function writeRequestLog(
       tokensOut: draft.usage?.tokensOut ?? null,
       costUsd: cost,
       cacheHit: draft.cacheHit,
+      httpReferer: draft.httpReferer,
+      xTitle: draft.xTitle,
       error: draft.error ? truncateError(draft.error) : null,
       createdAt: Date.now(),
     });
@@ -465,6 +552,7 @@ function khatewayHeaders(meta: ChatMeta): Record<string, string> {
     'x-khateway-upstream-model': meta.candidate.model.upstreamModel,
     'x-khateway-attempts': String(meta.attempts),
     'x-khateway-latency-ms': String(meta.latencyMs),
+    ...(meta.rateHeaders ?? {}),
   };
   // Only cache-eligible requests advertise cache state (HIT/MISS); everyone
   // else sees no header rather than a meaningless MISS.
@@ -488,7 +576,9 @@ function passthrough(res: Response, meta: ChatMeta, draft: LogDraft): Response {
       stream: toWatch,
       sse: (res.headers.get('content-type') ?? '').includes('text/event-stream'),
     };
-    body = toClient;
+    // M16: silent upstream streams get keep-alive comments on the client
+    // branch (the watcher branch stays raw — its parser skips comments).
+    body = draft.usageWatch.sse ? withSseKeepAlive(toClient) : toClient;
   }
   return new Response(body, { status: res.status, headers });
 }
@@ -507,7 +597,7 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
       const normalized = transformGeminiSseToOpenAi(res.body, meta.requested, {
         includeUsage: meta.streamIncludeUsage === true,
       });
-      res = new Response(normalized, { status: res.status, headers: { 'content-type': 'text/event-stream' } });
+      res = new Response(withSseKeepAlive(normalized), { status: res.status, headers: { 'content-type': 'text/event-stream' } });
     } else {
       const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
       if (!payload) {
@@ -543,7 +633,7 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
         meta.upstream === 'anthropic'
           ? transformAnthropicSseToResponses(toClient, meta.requested)
           : transformOpenAiSseToResponses(toClient, meta.requested);
-      return new Response(stream, { status: 200, headers: { ...headers, 'content-type': 'text/event-stream' } });
+      return new Response(withSseKeepAlive(stream), { status: 200, headers: { ...headers, 'content-type': 'text/event-stream' } });
     }
     const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!payload) {
@@ -564,7 +654,9 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
       const [toClient, toWatch] = res.body.tee();
       draft.usageWatch = { upstream: meta.upstream, stream: toWatch, sse: true };
       return new Response(
-        transformAnthropicSseToOpenAi(toClient, meta.requested, { includeUsage: meta.streamIncludeUsage === true }),
+        withSseKeepAlive(
+          transformAnthropicSseToOpenAi(toClient, meta.requested, { includeUsage: meta.streamIncludeUsage === true }),
+        ),
         {
           status: 200,
           headers: { ...headers, 'content-type': 'text/event-stream' },
@@ -584,7 +676,7 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
   if (isSse && res.body) {
     const [toClient, toWatch] = res.body.tee();
     draft.usageWatch = { upstream: meta.upstream, stream: toWatch, sse: true };
-    return new Response(transformOpenAiSseToAnthropic(toClient, meta.requested), {
+    return new Response(withSseKeepAlive(transformOpenAiSseToAnthropic(toClient, meta.requested)), {
       status: 200,
       headers: { ...headers, 'content-type': 'text/event-stream' },
     });
@@ -615,6 +707,7 @@ async function serveCachedResponse(
   resolved: { candidate: RoutingCandidate },
   t0: number,
   draft: LogDraft,
+  rateHeaders: Record<string, string> | null = null,
 ): Promise<Response | null> {
   let payload: unknown;
   try {
@@ -638,6 +731,7 @@ async function serveCachedResponse(
     upstream,
     attempts: 1,
     cacheState: 'hit',
+    rateHeaders,
   };
   draft.providerId = entry.providerId;
   draft.upstreamModel = entry.upstreamModel;
@@ -681,13 +775,23 @@ function makeWaitUntil(c: Context<GatewayEnv>): (p: Promise<unknown>) => void {
   };
 }
 
-async function runChatPipeline(c: Context<GatewayEnv>, dialect: ClientDialect): Promise<Response> {
+async function runChatPipeline(
+  c: Context<GatewayEnv>,
+  dialect: ClientDialect,
+  opts: {
+    /** request_logs.dialect override (M16: 'completions' for the legacy face). */
+    dialectLabel?: LogDraft['dialect'];
+    /** M16 /v1/completions: the request was parsed by the legacy-completions
+     * parser into a canonical chat request — skip the dialect parse. */
+    preParsed?: { model: string; request: CanonicalChatRequest };
+  } = {},
+): Promise<Response> {
   const t0 = Date.now();
   const draft: LogDraft = {
     apiKeyId: c.get('clientKey')?.id ?? null,
     userId: c.get('clientKey')?.userId ?? null,
     orgId: c.get('clientKey')?.orgId ?? null,
-    dialect: LOG_DIALECT[dialect],
+    dialect: opts.dialectLabel ?? LOG_DIALECT[dialect],
     modelSlug: '',
     providerId: null,
     upstreamModel: null,
@@ -697,8 +801,9 @@ async function runChatPipeline(c: Context<GatewayEnv>, dialect: ClientDialect): 
     usageWatch: null,
     cacheHit: false,
     error: null,
+    ...attributionFrom(c),
   };
-  const res = await chatPipeline(c, dialect, draft, t0);
+  const res = await chatPipeline(c, dialect, draft, t0, opts.preParsed);
   await writeRequestLog(c.env, draft, res, Date.now() - t0, makeWaitUntil(c));
   return res;
 }
@@ -729,11 +834,27 @@ async function enforceSpendCap(
 }
 
 /**
+ * M16: OpenAI-style success-path rate-limit headers from the BINDING bucket
+ * (max count/limit — the same pick the 429 path names). Headers appear only
+ * when limiting actually ran (settings on, limiter healthy).
+ */
+function rateLimitHeaders(decisions: RateLimitDecision[]): Record<string, string> | null {
+  if (decisions.length === 0) return null;
+  const binding = decisions.reduce((a, b) => (b.count / b.limit > a.count / a.limit ? b : a));
+  return {
+    'x-ratelimit-limit-requests': String(binding.limit),
+    'x-ratelimit-remaining-requests': String(Math.max(0, binding.limit - binding.count)),
+    'x-ratelimit-reset-requests': `${Math.max(1, Math.ceil(binding.resetAfterMs / 1000))}s`,
+  };
+}
+
+/**
  * Gates that need the resolved model, shared by the chat and embeddings
  * pipelines (M13 extraction — behavior identical to the inline originals):
  * M10 rate limits (per-key / per-IP anonymous / per-model), the M7 per-key
  * allow-list, and the M8/M9 prepaid balance gate. Returns the error Response
- * when a gate refuses, null to proceed.
+ * when a gate refuses (response: null otherwise); rateHeaders carries the M16
+ * success-path x-ratelimit-* values for the eventual response.
  */
 async function enforcePostRoutingGates(
   c: Context<GatewayEnv>,
@@ -741,7 +862,7 @@ async function enforcePostRoutingGates(
   dialect: ClientDialect,
   draft: LogDraft,
   resolved: { candidate: RoutingCandidate },
-): Promise<Response | null> {
+): Promise<{ response: Response | null; rateHeaders: Record<string, string> | null }> {
   // M10 rate limits: per-key (deployment default or the key's override) /
   // per-IP for anonymous (keyless-native traffic is the abuse surface), plus
   // the model's optional global per-minute cap. One DO round-trip; a denied
@@ -758,6 +879,7 @@ async function enforcePostRoutingGates(
       modelRpm: resolved.candidate.model.rateLimitRpm,
     }),
   );
+  const rateHeaders = decisions ? rateLimitHeaders(decisions) : null;
   if (decisions) {
     const deniedList = decisions.filter((d) => !d.allowed);
     if (deniedList.length > 0) {
@@ -772,14 +894,17 @@ async function enforcePostRoutingGates(
             ? `API key '${key?.name}'`
             : 'Your IP address';
       draft.error = `Rate limit exceeded: ${binding.limit} requests/minute for this ${binding.kind} bucket (${binding.scope}).`;
-      return errorJson(
-        dialect,
-        429,
-        dialectError(dialect, 429, `${what} has exceeded its rate limit of ${binding.limit} requests per minute — retry in ${retryAfterSec}s.`, {
-          code: 'rate_limit_exceeded',
-        }),
-        { 'retry-after': String(retryAfterSec) },
-      );
+      return {
+        response: errorJson(
+          dialect,
+          429,
+          dialectError(dialect, 429, `${what} has exceeded its rate limit of ${binding.limit} requests per minute — retry in ${retryAfterSec}s.`, {
+            code: 'rate_limit_exceeded',
+          }),
+          { 'retry-after': String(retryAfterSec) },
+        ),
+        rateHeaders,
+      };
     }
   }
 
@@ -787,7 +912,10 @@ async function enforcePostRoutingGates(
   const allowed = parseAllowedModels(key?.allowedModels);
   if (key && allowed.length > 0 && !allowed.includes(resolved.candidate.model.slug)) {
     draft.error = `API key '${key.name}' is not allowed to use model '${resolved.candidate.model.slug}'.`;
-    return errorJson(dialect, 403, dialectError(dialect, 403, draft.error, { code: 'model_not_allowed', type: 'permission_error' }));
+    return {
+      response: errorJson(dialect, 403, dialectError(dialect, 403, draft.error, { code: 'model_not_allowed', type: 'permission_error' })),
+      rateHeaders,
+    };
   }
 
   // M8 prepaid balance: user-owned keys draw down their account's credit.
@@ -800,11 +928,14 @@ async function enforcePostRoutingGates(
       .where(eq(orgs.id, key.orgId));
     if (!org || !org.enabled || org.balance <= 0) {
       draft.error = `Prepaid balance exhausted for the organization owning key '${key.name}' — ask an org owner to top up in the Khateway portal to continue.`;
-      return errorJson(
-        dialect,
-        429,
-        dialectError(dialect, 429, draft.error, { code: 'insufficient_quota', type: 'insufficient_quota' }),
-      );
+      return {
+        response: errorJson(
+          dialect,
+          429,
+          dialectError(dialect, 429, draft.error, { code: 'insufficient_quota', type: 'insufficient_quota' }),
+        ),
+        rateHeaders,
+      };
     }
   } else if (key?.userId) {
     const [acct] = await getDb(c.env)
@@ -813,20 +944,30 @@ async function enforcePostRoutingGates(
       .where(eq(users.id, key.userId));
     if (!acct || !acct.enabled || acct.balance <= 0) {
       draft.error = `Prepaid balance exhausted for the account owning key '${key.name}' — top up in the Khateway portal to continue.`;
-      return errorJson(
-        dialect,
-        429,
-        dialectError(dialect, 429, draft.error, { code: 'insufficient_quota', type: 'insufficient_quota' }),
-      );
+      return {
+        response: errorJson(
+          dialect,
+          429,
+          dialectError(dialect, 429, draft.error, { code: 'insufficient_quota', type: 'insufficient_quota' }),
+        ),
+        rateHeaders,
+      };
     }
   }
-  return null;
+  return { response: null, rateHeaders };
 }
 
-async function chatPipeline(c: Context<GatewayEnv>, dialect: ClientDialect, draft: LogDraft, t0: number): Promise<Response> {
+async function chatPipeline(
+  c: Context<GatewayEnv>,
+  dialect: ClientDialect,
+  draft: LogDraft,
+  t0: number,
+  preParsed?: { model: string; request: CanonicalChatRequest },
+): Promise<Response> {
   try {
-    const parsed =
-      dialect === 'anthropic'
+    const parsed = preParsed
+      ? { ok: true as const, model: preParsed.model, request: preParsed.request }
+      : dialect === 'anthropic'
         ? await parseAnthropicMessagesRequest(c.req)
         : dialect === 'responses'
           ? await parseOpenAiResponsesRequest(c.req)
@@ -848,7 +989,8 @@ async function chatPipeline(c: Context<GatewayEnv>, dialect: ClientDialect, draf
     }
 
     const gated = await enforcePostRoutingGates(c, key, dialect, draft, resolved);
-    if (gated) return gated;
+    if (gated.response) return gated.response;
+    const rateHeaders = gated.rateHeaders;
 
     // M11 semantic cache: opt-in per model (models.cache_enabled) OR per key
     // (api_keys.cache_enabled) while the deployment master switch is on, and
@@ -866,7 +1008,7 @@ async function chatPipeline(c: Context<GatewayEnv>, dialect: ClientDialect, draf
         cacheKey = await buildCacheKey(parsed.request, resolved.candidate.model.slug);
         const entry = await lookupCacheEntry(c.env, cacheKey);
         if (entry) {
-          const hit = await serveCachedResponse(entry, dialect, parsed, resolved, t0, draft);
+          const hit = await serveCachedResponse(entry, dialect, parsed, resolved, t0, draft, rateHeaders);
           if (hit) {
             draft.cacheHit = true;
             return hit;
@@ -912,6 +1054,7 @@ async function chatPipeline(c: Context<GatewayEnv>, dialect: ClientDialect, draf
           upstream,
           attempts,
           streamIncludeUsage: parsed.request.streamIncludeUsage,
+          rateHeaders,
         };
         // The last candidate tried owns the log row (matches the last-failure-wins mapping).
         draft.providerId = cand.provider.id;
@@ -1046,6 +1189,80 @@ gatewayApp.post('/chat/completions', (c) => runChatPipeline(c, 'openai'));
 gatewayApp.post('/messages', (c) => runChatPipeline(c, 'anthropic'));
 gatewayApp.post('/responses', (c) => runChatPipeline(c, 'responses'));
 
+// --------------------------------------------------------- legacy completions
+
+/**
+ * M16: the legacy OpenAI text-completions face (`POST /v1/completions`) —
+ * the OpenRouter-parity endpoint older tools still call. The prompt is parsed
+ * onto a canonical chat request (prompt → user message) and the request rides
+ * the FULL chat pipeline (preParsed skips only the dialect parse), so keys,
+ * gates, fallbacks, cache and logging behave identically. The chat-shaped
+ * response is then REWRITTEN into `text_completion` shape — JSON and SSE —
+ * which is why this face never takes the raw passthrough path even for
+ * openai upstreams. Errors keep the OpenAI envelope (same as the chat face).
+ */
+async function runCompletionsPipeline(c: Context<GatewayEnv>): Promise<Response> {
+  const t0 = Date.now();
+  const draft: LogDraft = {
+    apiKeyId: c.get('clientKey')?.id ?? null,
+    userId: c.get('clientKey')?.userId ?? null,
+    orgId: c.get('clientKey')?.orgId ?? null,
+    dialect: 'completions',
+    modelSlug: '',
+    providerId: null,
+    upstreamModel: null,
+    usage: null,
+    pricingInput: null,
+    pricingOutput: null,
+    usageWatch: null,
+    cacheHit: false,
+    error: null,
+    ...attributionFrom(c),
+  };
+  const res = await completionsPipeline(c, draft, t0);
+  await writeRequestLog(c.env, draft, res, Date.now() - t0, makeWaitUntil(c));
+  return res;
+}
+
+async function completionsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: number): Promise<Response> {
+  const parsed = await parseOpenAiCompletionsRequest(c.req);
+  if (!parsed.ok) {
+    draft.error = parsed.message;
+    return errorJson('openai', parsed.status, openAiError(parsed.status, parsed.message, { param: parsed.param, code: parsed.code }));
+  }
+  draft.modelSlug = parsed.model;
+
+  const inner = await chatPipeline(c, 'openai', draft, t0, { model: parsed.model, request: parsed.request });
+  if (inner.status !== 200) return inner; // already OpenAI-envelope shaped
+
+  const isSse = (inner.headers.get('content-type') ?? '').includes('text/event-stream');
+  if (isSse && inner.body) {
+    // Keep-alives ride the OUTPUT here: the inner stream's comments are
+    // consumed (never re-emitted) by the chunk rewriter.
+    const rewritten = transformChatSseToTextCompletionSse(inner.body, parsed.model);
+    return new Response(withSseKeepAlive(rewritten), {
+      status: 200,
+      headers: { ...inner.headers, 'content-type': 'text/event-stream' },
+    });
+  }
+  const payload = (await inner.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!payload) {
+    draft.error = 'Upstream provider returned a non-JSON body.';
+    return errorJson('openai', 502, openAiError(502, draft.error, { code: 'upstream_invalid_response' }));
+  }
+  const body = completionFromChatCompletion(payload, parsed.model);
+  if (!body) {
+    draft.error = 'Upstream provider returned an unreadable completion payload.';
+    return errorJson('openai', 502, openAiError(502, draft.error, { code: 'upstream_invalid_response' }));
+  }
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+gatewayApp.post('/completions', (c) => runCompletionsPipeline(c));
+
 // ------------------------------------------------------------- embeddings
 
 /**
@@ -1079,6 +1296,7 @@ async function runEmbeddingsPipeline(c: Context<GatewayEnv>): Promise<Response> 
     usageWatch: null,
     cacheHit: false,
     error: null,
+    ...attributionFrom(c),
   };
   const res = await embeddingsPipeline(c, draft, t0);
   await writeRequestLog(c.env, draft, res, Date.now() - t0, makeWaitUntil(c));
@@ -1108,7 +1326,8 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
     }
 
     const gated = await enforcePostRoutingGates(c, key, dialect, draft, resolved);
-    if (gated) return gated;
+    if (gated.response) return gated.response;
+    const rateHeaders = gated.rateHeaders;
 
     const chain = [resolved.candidate, ...resolved.fallbacks];
 
@@ -1151,6 +1370,7 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
           dialect,
           upstream,
           attempts,
+          rateHeaders,
         };
         // The last candidate tried owns the log row (matches the last-failure-wins mapping).
         draft.providerId = cand.provider.id;

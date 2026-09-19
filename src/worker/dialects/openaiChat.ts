@@ -244,6 +244,20 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
     }
   }
 
+  // M16 OpenRouter parity: `usage: {include: true}` asks for usage accounting
+  // on streaming requests — same canonical slot as include_usage. Parsed out
+  // so the object never rides extras to upstreams (they would 400 on it).
+  if (raw.usage !== undefined && raw.usage !== null) {
+    if (!raw.usage || typeof raw.usage !== 'object' || Array.isArray(raw.usage)) {
+      return parseErr('usage must be an object', 'usage');
+    }
+    const include = (raw.usage as Record<string, unknown>).include;
+    if (include !== undefined) {
+      if (typeof include !== 'boolean') return parseErr('usage.include must be a boolean', 'usage.include');
+      if (include) streamIncludeUsage = true;
+    }
+  }
+
   const temperature = floatOption(raw.temperature, 'temperature', 0, 2);
   if (temperature.err) return parseErr(temperature.err, 'temperature');
   options.temperature = temperature.val;
@@ -275,7 +289,7 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
 
   // Everything we did not consume above rides along untouched.
   const {
-    model: _m, messages: _msgs, stream: _s, stream_options: _so, temperature: _t, top_p: _tp, max_tokens: _mt, max_completion_tokens: _mct,
+    model: _m, messages: _msgs, stream: _s, stream_options: _so, usage: _usage, temperature: _t, top_p: _tp, max_tokens: _mt, max_completion_tokens: _mct,
     stop: _st, n: _n, tools: _tools, tool_choice: _tch, parallel_tool_calls: _ptc, ...extras
   } = raw;
 
