@@ -144,14 +144,16 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	sp.Style = lipgloss.NewStyle().Foreground(colCyan)
-	// Newline rides alt+enter only. shift+enter would be the standard,
-	// but bubbletea v1 has no kitty-protocol key parsing, so no terminal
-	// sequence for it is representable; alt is the only modifier enter
-	// every terminal distinguishes. Users on kitty-protocol terminals
-	// can remap shift+enter to send ESC+CR in their terminal config.
+	// Newline shows the standard shift+enter and binds it for terminals
+	// that report modified keys, with alt+enter as the modifier that
+	// arrives everywhere: bubbletea v1 parses no kitty-protocol/CSI-u
+	// sequences, and terminals without one send plain CR for physical
+	// shift+enter — mapping that key to ESC+CR in terminal config (or
+	// Claude Code's /terminal-setup) makes it work; ESC+CR is already
+	// alt+enter here.
 	ta.KeyMap.InsertNewline = key.NewBinding(
-		key.WithKeys("alt+enter"),
-		key.WithHelp("alt+enter", "newline"),
+		key.WithKeys("alt+enter", "shift+enter"),
+		key.WithHelp("shift+enter", "newline"),
 	)
 	ta.Focus()
 	ta.SetWidth(60)
@@ -385,8 +387,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.Type == tea.KeyEsc && m.streaming:
 			m.stopStream()
 			return m, nil
-		// alt+enter falls through to the textarea, whose InsertNewline
-		// binding turns it into a newline.
+		// Modified enters fall through to the textarea, whose
+		// InsertNewline binding turns them into newlines.
 		case msg.Type == tea.KeyEnter && !msg.Alt:
 			if m.streaming {
 				return m, nil
@@ -471,7 +473,7 @@ func (m Model) header() string {
 func (m Model) helpLine() string {
 	hints := []struct{ k, v string }{
 		{"enter", "send"},
-		{"alt+enter", "newline"},
+		{"shift+enter", "newline"},
 		{"pgup/pgdn", "scroll"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
