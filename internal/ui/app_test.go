@@ -55,6 +55,26 @@ func TestMouseWheelScrollsChat(t *testing.T) {
 	}
 }
 
+func TestModifierEnterInsertsNewline(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")})
+	m = next.(Model)
+
+	// alt+enter is what bubbletea makes of ESC+CR — the bytes a
+	// terminal-mapped shift+enter sends. It must insert a newline, not
+	// submit.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m = next.(Model)
+	if got := m.textarea.Value(); got != "hi\n" {
+		t.Fatalf("alt+enter produced %q, want \"hi\\n\"", got)
+	}
+	if m.streaming {
+		t.Error("modifier enter submitted the turn")
+	}
+}
+
 // pumpModel feeds scripted events through the real Update loop the same
 // way waitForEvents delivers them, until the turn finishes.
 func pumpModel(t *testing.T, m Model, evs []llm.Event) Model {
