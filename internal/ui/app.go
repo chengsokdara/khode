@@ -303,6 +303,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderAll()
 		return m, nil
 
+	case tea.MouseMsg:
+		// Mouse capture is on (main.go), so the wheel arrives here and
+		// scrolls the chat instead of the terminal's dead pre-launch
+		// scrollback. Everything else (clicks, drags) is ignored;
+		// shift+drag still selects text terminal-side.
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)

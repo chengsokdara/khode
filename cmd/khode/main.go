@@ -191,10 +191,11 @@ func main() {
 	}
 
 	// Alt screen: the app owns the whole window and the terminal's
-	// scrollback is suspended, so pgup/pgdn scroll the chat and the
-	// mouse stays with the terminal (native select/copy). The mouse is
-	// never captured.
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// scrollback is suspended, so pgup/pgdn scroll the chat. Mouse
+	// capture rides along (Claude Code and opencode do the same): the
+	// wheel scrolls the chat instead of the dead pre-launch scrollback,
+	// and terminals still let shift+drag select text over the app.
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fatal(err)
 	}

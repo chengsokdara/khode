@@ -35,6 +35,26 @@ func newTestModel(t *testing.T) Model {
 		tools.Default(t.TempDir()), nil, t.TempDir())
 }
 
+func TestMouseWheelScrollsChat(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	// Content far taller than the viewport, so both directions can move.
+	m.viewport.SetContent(strings.Repeat("line\n", 60))
+
+	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	m = next.(Model)
+	if m.viewport.YOffset == 0 {
+		t.Fatal("wheel down did not scroll the chat")
+	}
+
+	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	m = next.(Model)
+	if m.viewport.YOffset != 0 {
+		t.Errorf("wheel up left YOffset at %d, want 0", m.viewport.YOffset)
+	}
+}
+
 // pumpModel feeds scripted events through the real Update loop the same
 // way waitForEvents delivers them, until the turn finishes.
 func pumpModel(t *testing.T, m Model, evs []llm.Event) Model {
