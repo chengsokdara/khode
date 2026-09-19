@@ -102,10 +102,13 @@ set — nothing touches config.json): `Definitions()` stops advertising
 disabled tools so the model can't see them, and the agent loop rejects
 calls to them with an error result the model can recover from.
 Removing an MCP server purges its tools' toggles, so re-adding starts
-fully enabled. The alt+enter newline binding stays the only modifier
-enter: bubbletea v1 has no kitty-protocol key parsing, so shift+enter
-is unrepresentable (kitty-protocol terminals can remap shift+enter to
-send ESC+CR in terminal config). Mouse capture went through three
+fully enabled. The input newline hint follows the standard
+(shift+enter): the binding lists shift+enter and alt+enter, but
+bubbletea v1 parses no modified-key sequences, so on default terminals
+alt+enter does the newline and a physical shift+enter lands as plain
+CR (send) until the terminal maps it to ESC+CR — Claude Code's
+/terminal-setup or one config line in kitty/Ghostty/iTerm2 does it.
+Mouse capture went through three
 iterations in two days: toggle off by default (alt+m, then ctrl+o) →
 dropped entirely → permanently on (ebec1a7) once the user verified
 Claude Code/opencode consume wheel events, which is exactly how they
@@ -265,3 +268,4 @@ Backlog (no committed order):
 | 2026-09-18 | Fix: mouse capture toggles with ctrl+o — alt+m never fired on default macOS (option composes µ, no alt key event); alt+m kept as meta-terminal alias, footer/notes/comment updated, toggle test | 44193ac |
 | 2026-09-18 | Mouse capture removed entirely (Claude Code parity: never grab the mouse) — footer hint, toggle, MouseMsg forward, and tests dropped; pgup/pgdn scroll, selection/copy native; inline-scrollback rendering added to the backlog | bef8b9b |
 | 2026-09-18 | Mouse capture restored permanently: WithMouseCellMotion at startup, wheel feeds the viewport (Claude Code/opencode consume wheel the same way — user-verified in Apple Terminal); selection via shift+drag override, ⌘R escape hatch; wheel test | ebec1a7 |
+| 2026-09-18 | Footer follows the standard: newline hint is shift+enter, binding lists both shift+enter and alt+enter; physical shift+enter still submits on unmapped terminals (bubbletea v1 parses no modified keys) | bc7e4e9 |
