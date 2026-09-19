@@ -87,6 +87,13 @@ type Model struct {
 	printBannerNext bool
 	lastPrint       string
 
+	// top is the screen row (0-based) the frame's first row occupies and
+	// hModel the frame height as last rendered — together the state
+	// flush's bottom-pinning math needs (see flush). hModel is refreshed
+	// by Update after every pass, top advances in flush.
+	top    int
+	hModel int
+
 	picker     *picker     // session chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
 	toolsPanel *toolsPanel // /tools overlay; nil when closed
@@ -325,6 +332,44 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	m2, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	// Mirror uv's asymmetric re-anchoring as the frame's height changes
+	// between renders. Growth scrolls the screen (the bottom stays
+	// glued); shrink leaves the frame's bottom high with dead rows
+	// below, which the delayed refill fills. Either way hModel becomes
+	// the height uv last saw — flush's pin math needs it.
+	if m2.width > 0 {
+		newH := lipgloss.Height(m2.View().Content)
+		if newH > m2.hModel && m2.top+m2.hModel == m2.height {
+			m2.top = m2.height - newH
+		}
+		var refill tea.Cmd
+		if newH < m2.hModel && m2.hModel > 0 {
+			refill = tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return pinTick{} })
+		}
+		m2.hModel = newH
+		if refill != nil {
+			if cmd == nil {
+				return m2, refill
+			}
+			return m2, tea.Sequence(cmd, refill)
+		}
+	}
+	return m2, cmd
+}
+
+// pinTick arrives one render tick after a flush or a frame shrink so
+// the refill runs against the frame uv actually painted (see flush).
+type pinTick struct{}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(pinTick); ok {
+		return m, m.flush()
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		first := m.width == 0
@@ -1111,9 +1156,9 @@ func (m *Model) flush() tea.Cmd {
 	for end < len(m.messages) && !m.messages[end].streaming {
 		end++
 	}
-	if end == m.printed && !m.printBannerNext {
-		return nil
-	}
+	// Nothing new to seal is NOT an early out: the bottom-pinning refill
+	// below may still owe blank rows (pinTick arrives with nothing to
+	// print). The final chunk=="" check decides.
 
 	var chunk string
 	if m.printBannerNext {
@@ -1133,6 +1178,64 @@ func (m *Model) flush() tea.Cmd {
 		}
 	}
 	chunk = strings.TrimRight(chunk, "\n")
+
+	// Bottom-pinning: the input stays glued to the terminal's bottom
+	// edge, the way Claude Code's inline UI is. The screen is the
+	// transcript — content accumulates above the frame and the terminal
+	// scrolls only once the screen is full. uv's renderer re-anchors the
+	// frame with its LAST row at a tracked cursor, so after an
+	// insertAbove of K rows the frame lands pinned iff the chunk ended
+	// exactly one row short of the terminal bottom: then
+	// bottom = top + K + frameHeight = H. Two regimes:
+	//
+	//   - no scroll (K fits the dead space below the frame): the fill
+	//     below tops the chunk up to exactly that size.
+	//   - scroll (K exceeds it): the scroll removes what the insert
+	//     adds, so the frame re-pins by itself — but only when the
+	//     rendered height matches the height uv last saw; a mismatch
+	//     (a seal that closed the completion popup, say) drifts by the
+	//     delta, and the delayed refill below heals it one tick later.
+	//
+	// The fill rides the same insertAbove as the chunk: one atomic
+	// write that can never race another print. Blank rows are invisible
+	// in scrollback and get displaced by real content as it seals.
+	//
+	// Order matters: the seal bookkeeping below runs BEFORE the height
+	// is measured — the view must be the one this chunk leaves behind
+	// (a sealed banner hint, say, is already gone from it).
+	for i := m.printed; i < end; i++ {
+		m.messages[i].rendered = "" // printed blocks never render again
+	}
+	m.printed = end
+
+	newH := lipgloss.Height(m.View().Content)
+	contentRows := 0
+	if chunk != "" {
+		for _, l := range strings.Split(chunk, "\n") {
+			contentRows += 1 + lipgloss.Width(l)/m.width // matches uv's insertAbove scroll math
+		}
+	}
+	need := m.height - m.top - newH     // chunk size that lands the frame bottom on H
+	dead := m.height - m.top - m.hModel // rows of dead space below the rendered frame
+	if dead < 0 {
+		dead = 0
+	}
+	fill := 0
+	if contentRows > need || contentRows > dead {
+		// Scroll regime: excess rows scroll off the top; the frame
+		// re-pins on its own when heights match, else pinTick heals.
+		fill = 0
+	} else {
+		fill = need - contentRows
+	}
+	if fill > 0 {
+		blanks := strings.Repeat("\n", fill-1) // fill newlines short one: fill blank rows
+		if chunk == "" {
+			chunk = blanks
+		} else {
+			chunk += "\n" + blanks
+		}
+	}
 	if chunk == "" {
 		return nil
 	}
@@ -1144,11 +1247,18 @@ func (m *Model) flush() tea.Cmd {
 		lines[i] = " " + l
 	}
 	m.lastPrint = strings.Join(lines, "\n")
-	for i := m.printed; i < end; i++ {
-		m.messages[i].rendered = "" // printed blocks never render again
+	// Advance the tracked frame top: the insert pushes it down by the
+	// chunk size, minus whatever the scroll consumed.
+	K := contentRows + fill
+	if scroll := K - dead; scroll > 0 {
+		m.top -= scroll
 	}
-	m.printed = end
-	return tea.Println(m.lastPrint)
+	m.top += K
+	if m.top < 0 {
+		m.top = 0
+	}
+	refill := tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return pinTick{} })
+	return tea.Sequence(tea.Println(m.lastPrint), refill)
 }
 
 // flushIf flushes only when a seal actually happened, saving an empty
