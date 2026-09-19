@@ -171,13 +171,19 @@ If you are starting a session, or recovering after an interrupt:
   `ev.Delta.AsAny().(anthropic.TextDelta)`).
 - **glamour v1.0.0**: `glamour.NewRenderer` was removed → use
   `glamour.NewTermRenderer(...)` with the same option names.
-- **bubbles v1.0.0 / bubbletea v1.3.10**: textarea `MaxHeight` exists;
-  `KeyMsg.Alt` distinguishes plain Enter (send) from alt+enter (newline).
-  There is no `Shift` field on `KeyMsg` and no kitty-protocol/CSI-u key
-  parsing in v1, so a received key can never stringify as
-  "shift+enter" (binding the string is harmless and future-proofs v2);
-  space arrives as `KeySpace` with `String()` `" "` (match `" "`, not
-  `"space"`).
+- **bubbles v2 / bubbletea v2 (charm.land/*, migrated 2026-09-19)**:
+  `View()` returns `tea.View` (alt screen + `MouseModeCellMotion` are
+  declared on it, not program options); keys are `tea.KeyPressMsg` with
+  `Code`/`Text`/`Mod` — no `KeyRunes`/`KeyCtrlC`; match via `String()`,
+  where space is `"space"`, pgdn is `"pgdown"`, and `"enter"` never
+  matches a modified enter; v2 speaks the kitty keyboard protocol
+  automatically (shift+enter arrives as a real key on supporting
+  terminals); `Style.Render()` emits truecolor unconditionally —
+  downsampling happens at write time through a colorprofile.Writer (the
+  dump harness needs no profile override); textarea/textinput default
+  to a *virtual* painted cursor (`Cursor()` returns nil unless you opt
+  into a real one); field reads became methods (`Width()`,
+  `Height()`, `YOffset()`).
 - macOS terminals compose characters with option by default — option+m
   types µ and no alt key event is generated — so alt+letter bindings
   never fire on default Terminal.app/Ghostty/kitty/iTerm2 setups. Any
@@ -362,3 +368,5 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-18 | User verified in Apple Terminal that Claude Code and opencode DO consume wheel events (mouse tracking) — the earlier premise was wrong, and web sources confirm recent Claude Code hijacks mouse clicks/wheel with shift as the selection bypass. Re-enabled capture permanently (WithMouseCellMotion + MouseMsg→viewport, wheel test added); shift+drag selects natively, ⌘R toggles Terminal's reporting. Lesson: verify reference-app behavior before citing it as the reason for a removal | ebec1a7 |
 | 2026-09-18 | Footer label switched to the standard shift+enter (user request) with both modifier enters bound; the physical key still submits on unmapped terminals — pointed the user at Claude Code's /terminal-setup (writes the Terminal.app/iTerm2 shift+enter→ESC+CR mapping khode then picks up as alt+enter) and floated a khode /terminal-setup equivalent as future work | bc7e4e9 |
 | 2026-09-18 | User reported shift+enter not working in iTerm2 — expected: with no key mapping iTerm2 sends plain Return, identical to enter. Fix is terminal-side (Key Mappings → Shift↩ → Send Hex Codes 1b 0d); khode-side ESC+CR→newline wiring pinned by a regression test (TestModifierEnterInsertsNewline) | 36c428a |
+| 2026-09-19 | Bubble Tea v2 migration (planned via ExitPlanMode, executed in one atomic code commit + docs): import swaps to charm.land/*, tea.View declaration, KeyPressMsg dispatch, wheel-only mouse case, textarea styles/default-dark + InsertNewline without "enter", "space" matches, PasteMsg → textarea, dump harness drops termenv. Verified all uncertain APIs against module source before coding; smoke test via expect-pty (sized pty → boots, renders, ctrl+c exits; exit sequence shows the kitty `[<1u` pop proving protocol negotiation). Full gate green + dump frames eyeballed | e40738c |
+| 2026-09-19 | User verified Claude Code/opencode get shift+enter for free in iTerm2 → root cause: they run Bubble Tea v2, which enables the kitty keyboard protocol (iTerm2 3.5+ reports modified keys); v1 could never. Chose the v2 migration over a hand-rolled shim (research: v2 stable since Feb 2026; opencode on v2; Terminal.app lacks protocol support even for Claude — same caveat stays for khode). Key insight for the terminal-mapping workaround era: ESC+CR still works as alt+enter, so nothing breaks on legacy terminals | e40738c |

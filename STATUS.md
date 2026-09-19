@@ -102,12 +102,13 @@ set — nothing touches config.json): `Definitions()` stops advertising
 disabled tools so the model can't see them, and the agent loop rejects
 calls to them with an error result the model can recover from.
 Removing an MCP server purges its tools' toggles, so re-adding starts
-fully enabled. The input newline hint follows the standard
-(shift+enter): the binding lists shift+enter and alt+enter, but
-bubbletea v1 parses no modified-key sequences, so on default terminals
-alt+enter does the newline and a physical shift+enter lands as plain
-CR (send) until the terminal maps it to ESC+CR — Claude Code's
-/terminal-setup or one config line in kitty/Ghostty/iTerm2 does it.
+fully enabled. khode runs on Bubble Tea / Bubbles / Lip Gloss **v2**
+(charm.land/*, migrated 2026-09-19), which enables the kitty keyboard
+protocol automatically: shift+enter is a real key out of the box on
+protocol terminals (iTerm2 3.5+, kitty, Ghostty, WezTerm) and inserts
+a newline, plain enter submits, and alt+enter remains the fallback on
+legacy terminals (Apple Terminal has no protocol support — the
+terminal-mapping workaround still applies there, same as Claude Code).
 Mouse capture went through three
 iterations in two days: toggle off by default (alt+m, then ctrl+o) →
 dropped entirely → permanently on (ebec1a7) once the user verified
@@ -270,3 +271,4 @@ Backlog (no committed order):
 | 2026-09-18 | Mouse capture restored permanently: WithMouseCellMotion at startup, wheel feeds the viewport (Claude Code/opencode consume wheel the same way — user-verified in Apple Terminal); selection via shift+drag override, ⌘R escape hatch; wheel test | ebec1a7 |
 | 2026-09-18 | Footer follows the standard: newline hint is shift+enter, binding lists both shift+enter and alt+enter; physical shift+enter still submits on unmapped terminals (bubbletea v1 parses no modified keys) | bc7e4e9 |
 | 2026-09-18 | Regression test pinning the modifier-enter wiring: ESC+CR (what a terminal-mapped shift+enter sends) parses to alt+enter and inserts a newline without submitting | 36c428a |
+| 2026-09-19 | Bubble Tea/Bubbles/Lip Gloss v2 migration (v2.0.9/v2.2.1/v2.0.6): kitty protocol on → shift+enter works out of the box in iTerm2/kitty/Ghostty/WezTerm; tea.View declarative altscreen+mouse, KeyPressMsg (Code/Text/Mod), MouseWheelMsg forwarding, textarea SetStyles+InsertNewline rebinding, "space" matches, PasteMsg passthrough, dump harness drops termenv; pty smoke test boots+exits clean | e40738c |
