@@ -41,3 +41,16 @@ func TestParse(t *testing.T) {
 		}
 	}
 }
+
+func TestNext(t *testing.T) {
+	// The full ladder wraps: cycling from any mode reaches every other.
+	modes := Modes()
+	for i, m := range modes {
+		if got := Next(m); got != modes[(i+1)%len(modes)] {
+			t.Errorf("Next(%q) = %q, want %q", m, got, modes[(i+1)%len(modes)])
+		}
+	}
+	if got := Next("yolo"); got != DefaultMode {
+		t.Errorf("Next(unknown) = %q, want default", got)
+	}
+}

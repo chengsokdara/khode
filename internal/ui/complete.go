@@ -26,7 +26,7 @@ var slashCommands = []slashCommand{
 	{"settings", "", "configure keys, provider, model, MCP, hooks"},
 	{"config", "", "alias of /settings"},
 	{"model", "<name>", "switch model (persisted)"},
-	{"mode", "[name]", "permission mode: plan · ask · accept-edits · auto"},
+	{"mode", "[name]", "permission mode picker · shift+tab cycles"},
 	{"compact", "", "summarize older turns to shrink the context"},
 	{"tools", "", "browse and toggle tools the model can call"},
 	{"mcp", "", "MCP server status"},

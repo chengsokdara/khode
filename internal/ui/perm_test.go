@@ -118,14 +118,22 @@ func TestPermViewRendersDiff(t *testing.T) {
 func TestModeCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := newTestModel(t)
-	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
 
-	// Bare /mode lists the modes with the current one marked.
+	// Bare /mode opens the picker with the cursor on the active mode
+	// (ask, the default).
 	m.command("/mode")
-	last := m.messages[len(m.messages)-1].raw
-	if !strings.Contains(last, "plan") || !strings.Contains(last, "accept-edits") || !strings.Contains(last, "ask") {
-		t.Errorf("/mode list = %q", last)
+	if m.modePick == nil {
+		t.Fatal("bare /mode did not open the mode picker")
 	}
+	if v := m.modePickView(); !strings.Contains(v, "plan") || !strings.Contains(v, "accept-edits") {
+		t.Errorf("/mode picker view = %q", v)
+	}
+	if m.modePick.cursor != 1 {
+		t.Errorf("picker cursor = %d, want 1 (on ask)", m.modePick.cursor)
+	}
+	m.closeModePicker()
 
 	m.command("/mode plan")
 	if m.mode() != perm.ModePlan {
@@ -142,7 +150,7 @@ func TestModeCommand(t *testing.T) {
 	}
 
 	m.command("/mode yolo")
-	last = m.messages[len(m.messages)-1].raw
+	last := m.messages[len(m.messages)-1].raw
 	if !strings.Contains(last, "unknown mode") {
 		t.Errorf("invalid mode response = %q", last)
 	}

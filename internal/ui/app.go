@@ -92,6 +92,7 @@ type Model struct {
 	toolsPanel *toolsPanel // /tools overlay; nil when closed
 	welcome    *welcome    // first-run walkthrough; nil when closed
 	popup      *cmdPopup   // slash-command completion above the input; nil when hidden
+	modePick   *modePicker // /mode chooser above the input; nil when closed
 
 	streaming bool
 	cancel    context.CancelFunc
@@ -405,6 +406,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
+		if m.modePick != nil {
+			// The mode picker answers first; keys it skips fall through,
+			// so ctrl+c still reaches the base switch below.
+			if cmd, done := m.modePickKey(msg); done {
+				return m, cmd
+			}
+		}
 		if m.popup != nil {
 			// The completion list answers first; keys it skips fall
 			// through to the textarea below.
@@ -427,6 +435,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.submit()
+		// shift+tab walks the permission modes. It only lands here when
+		// no overlay is open — welcome and settings use it for their own
+		// navigation — and cycling mid-turn is fine: the in-flight turn
+		// keeps its mode snapshot, the next one picks the new mode up.
+		case msg.String() == "shift+tab":
+			m.cycleMode()
+			return m, nil
 		}
 		// History is the terminal's real scrollback now (inline program,
 		// no mouse capture): wheel, scrollbar, and selection are native,
@@ -466,8 +481,9 @@ func (m Model) View() tea.View {
 }
 
 // chatView assembles the live region: the unprinted (streaming) blocks,
-// the status line, the completion popup while it is open, and the input.
-// Finished conversation lives in the terminal's scrollback above.
+// the status line, the completion popup while it is open, the mode line
+// while a non-default mode is active, and the input. Finished
+// conversation lives in the terminal's scrollback above.
 func (m Model) chatView() string {
 	status := m.statusLine()
 	border := inputBorder
@@ -484,6 +500,12 @@ func (m Model) chatView() string {
 	parts = append(parts, status)
 	if m.popup != nil {
 		parts = append(parts, m.popupView()) // floats just above the input
+	}
+	if hint := m.modeHint(); hint != "" {
+		parts = append(parts, hint) // permission-mode reminder, Claude-Code style
+	}
+	if m.modePick != nil {
+		parts = append(parts, m.modePickView()) // floats just above the input
 	}
 	parts = append(parts, inputBox, help)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -517,6 +539,7 @@ func (m Model) helpLine() string {
 	hints := []struct{ k, v string }{
 		{"enter", "send"},
 		{"shift+enter", "newline"},
+		{"shift+tab", "mode"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
 	}
@@ -772,6 +795,17 @@ func (m *Model) setMode(want perm.Mode) {
 		raw: fmt.Sprintf("mode → %s · %s", want, modeDescription(want))})
 }
 
+// cycleMode advances to the next permission mode (shift+tab). It
+// persists like setMode but stays quiet: the mode line above the input
+// is the feedback, and one notice per press would spam the scrollback
+// (the same reasoning as the settings overlay's applyMode).
+func (m *Model) cycleMode() {
+	m.cfg.PermissionMode = string(perm.Next(m.mode()))
+	if err := m.cfg.Save(); err != nil {
+		m.lastErr = err.Error()
+	}
+}
+
 // mcpStatus reports every configured MCP server and how many of its
 // tools made it into the registry; a configured server with zero tools
 // failed to start or to answer tools/list at launch.
@@ -840,16 +874,7 @@ func (m *Model) command(input string) tea.Cmd {
 
 	case "/mode":
 		if len(parts) < 2 {
-			var lines []string
-			lines = append(lines, fmt.Sprintf("usage: /mode <name> (current: %s)", m.mode()))
-			for _, mo := range perm.Modes() {
-				marker := "  "
-				if m.mode() == mo {
-					marker = "❯ "
-				}
-				lines = append(lines, marker+string(mo)+" — "+modeDescription(mo))
-			}
-			m.messages = append(m.messages, uiMessage{role: "system", raw: strings.Join(lines, "\n")})
+			m.openModePicker()
 			break
 		}
 		want := perm.Parse(parts[1])
@@ -1171,10 +1196,11 @@ func (m Model) liveBudget() int {
 }
 
 // liveChrome is the fixed row cost around the chat blocks: the status
-// line, the input box (textarea + 2 border rows), the help line, and
-// the completion popup while it is open.
+// line, the input box (textarea + 2 border rows), the help line, the
+// completion popup while it is open, the mode picker while it is open,
+// and the mode line while a non-default mode is active.
 func (m Model) liveChrome() int {
-	return 1 + m.textarea.Height() + 2 + 1 + m.popupHeight()
+	return 1 + m.textarea.Height() + 2 + 1 + m.popupHeight() + m.modePickHeight() + m.modeHintRows()
 }
 
 // --- helpers -----------------------------------------------------------------

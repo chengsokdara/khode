@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"khode/internal/perm"
+
 	"charm.land/lipgloss/v2"
 )
 
@@ -68,6 +70,23 @@ var (
 	dialogBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colCyan).Padding(1, 2)
 	viewportStyle   = lipgloss.NewStyle().Padding(0, 1)
 )
+
+// modeAccent styles the mode line and the /mode picker rows by what the
+// mode lets the agent do, staying inside the palette's fixed semantics:
+// cyan is khode inspecting (plan), green is the good middle
+// (accept-edits), amber is caution (auto runs everything). ask never
+// reaches it — the mode line hides in the default mode.
+func modeAccent(mo perm.Mode) lipgloss.Style {
+	switch mo {
+	case perm.ModePlan:
+		return lipgloss.NewStyle().Foreground(colCyan)
+	case perm.ModeAcceptEdits:
+		return lipgloss.NewStyle().Foreground(colGreen)
+	case perm.ModeAuto:
+		return lipgloss.NewStyle().Foreground(colWarn)
+	}
+	return dimStyle
+}
 
 // gradient blends s from one hex color to another across its runes,
 // letting lipgloss degrade the intermediate colors to whatever the

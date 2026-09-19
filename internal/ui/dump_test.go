@@ -129,6 +129,15 @@ func TestDumpViews(t *testing.T) {
 	cp = pressKeys(cp, "down")
 	write("popup-filtered-cursor.txt", cp.View().Content)
 
+	// --- mode picker (bare /mode) and the mode line above the input ---
+	mp := resize(newTestModel(t))
+	mp.command("/mode")
+	write("mode-picker.txt", mp.View().Content)
+
+	mh := resize(newTestModel(t))
+	mh.cfg.PermissionMode = string(perm.ModeAcceptEdits)
+	write("mode-hint.txt", mh.View().Content)
+
 	// --- permission dialog ---
 	dm := resize(newTestModel(t))
 	req := agent.Request{

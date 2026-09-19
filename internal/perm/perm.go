@@ -26,6 +26,19 @@ const DefaultMode = ModeAsk
 // Modes lists the valid mode names in switch order.
 func Modes() []Mode { return []Mode{ModePlan, ModeAsk, ModeAcceptEdits, ModeAuto} }
 
+// Next returns the mode after m in Modes() order, wrapping to the
+// start; shift+tab cycling and the settings row both walk this ladder.
+// An unrecognized mode falls back to the default.
+func Next(m Mode) Mode {
+	modes := Modes()
+	for i, known := range modes {
+		if known == m {
+			return modes[(i+1)%len(modes)]
+		}
+	}
+	return DefaultMode
+}
+
 // Parse normalizes s into a Mode, mapping unknown values to DefaultMode.
 func Parse(s string) Mode {
 	m := Mode(strings.ToLower(strings.TrimSpace(s)))

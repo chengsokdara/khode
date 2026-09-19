@@ -63,6 +63,22 @@ One-glance project state. Update at the end of **every** task (see
 
 Phase 7 complete — nothing in khode needs hand-editing config.json.
 
+**shift+tab mode cycling (2026-09-19):** shift+tab walks the permission
+modes (plan → ask → accept-edits → auto, wrapping via `perm.Next`)
+whenever no overlay is open — welcome and settings keep the key for
+their own navigation. Cycling persists to config.json but stays quiet
+(no chat notice per press): the feedback is a Claude-Code-style mode
+line just above the input — `⏵⏵ accept-edits · file changes run
+freely; commands still ask · shift+tab to cycle`, tinted per mode
+(plan cyan / accept-edits green / auto amber) and hidden in the default
+ask mode; its row is counted in `liveChrome`. Bare `/mode` opens an
+interactive picker above the input in the command-popup grammar (↑/↓ +
+enter applies via `setMode` with the usual notice, esc dismisses, the
+active mode is marked "(current)"); `/mode <name>` and the /settings
+mode row are unchanged. Cycling mid-turn is allowed — the in-flight
+turn keeps its Runner mode snapshot and the next turn picks the new
+mode up.
+
 **Inline transcript rendering (2026-09-19):** khode no longer runs in the
 alt screen. Sealed chat blocks are `tea.Println`'d into the terminal's
 real scrollback the moment they seal — the user message at submit, tool
@@ -292,4 +308,5 @@ Backlog (no committed order):
 | 2026-09-18 | Regression test pinning the modifier-enter wiring: ESC+CR (what a terminal-mapped shift+enter sends) parses to alt+enter and inserts a newline without submitting | 36c428a |
 | 2026-09-19 | Bubble Tea/Bubbles/Lip Gloss v2 migration (v2.0.9/v2.2.1/v2.0.6): kitty protocol on → shift+enter works out of the box in iTerm2/kitty/Ghostty/WezTerm; tea.View declarative altscreen+mouse, KeyPressMsg (Code/Text/Mod), MouseWheelMsg forwarding, textarea SetStyles+InsertNewline rebinding, "space" matches, PasteMsg passthrough, dump harness drops termenv; pty smoke test boots+exits clean | e40738c |
 | 2026-09-19 | Fix: after shift+enter the input box showed two empty prompt rows (typed line scrolled above, reachable only by arrowing up) — khode's external SetHeight raced the textarea's cursor-follow scroll. Fixed with v2's native DynamicHeight (Min/MaxHeight + large MaxContentHeight so input is never blocked, matching v1), maybeGrowInput deleted, syncInputLayout gives height changes back to the chat viewport; render-assertion regression test | d6ba85a |
-| 2026-09-19 | Inline transcript rendering (backlog 1): alt screen + mouse capture retired; sealed turns tea.Println into real scrollback as they seal; live region = streaming turn + status (mode chip + model) + popup + input within a height−2 budget; banner-in-scrollback on startup/switch with transcript reprint (picked sessions show history now); overlays become bounded centered boxes with sliding windows (picker, settings lists); wheel/scrollbar/selection native; pty-verified (no 1049h, scrollback inserts above frame) | (this commit) |
+| 2026-09-19 | Inline transcript rendering (backlog 1): alt screen + mouse capture retired; sealed turns tea.Println into real scrollback as they seal; live region = streaming turn + status (mode chip + model) + popup + input within a height−2 budget; banner-in-scrollback on startup/switch with transcript reprint (picked sessions show history now); overlays become bounded centered boxes with sliding windows (picker, settings lists); wheel/scrollbar/selection native; pty-verified (no 1049h, scrollback inserts above frame) | d52f53d |
+| 2026-09-19 | Mode switching UI: shift+tab cycles permission modes (`perm.Next` + quiet `cycleMode`, no chat notice), Claude-Code-style mode line above the input (per-mode accent, hidden in ask, liveChrome-accounted), bare `/mode` opens an interactive picker (`modepicker.go`) replacing the printed list; `/mode <name>` + settings row unchanged; tests + dump frames | (this commit) |

@@ -57,7 +57,8 @@ internal/agent/      conversation machinery
   plan.go              plan tool: present a plan, approval switches to accept-edits
 internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands
-  perm.go              approval dialog (diff preview) + plan dialog + /mode
+  modepicker.go        shift+tab mode cycling, /mode picker, mode line above the input
+  perm.go              approval dialog (diff preview) + plan dialog
   picker.go            session picker overlay
   settings.go          /settings overlay: keys, provider, model, mode, MCP, hooks
   welcome.go           first-run walkthrough: intro → provider → key → ready
