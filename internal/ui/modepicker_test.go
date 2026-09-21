@@ -126,8 +126,9 @@ func TestModeHint(t *testing.T) {
 	if hint := m.modeHint(); !strings.Contains(hint, "accept-edits") || !strings.Contains(hint, "shift+tab") {
 		t.Errorf("hint = %q", hint)
 	}
-	if n := len(m.transientBand()); n != transientBandRows {
-		t.Errorf("transient band = %d rows, want %d", n, transientBandRows)
+	band := m.transientBand()
+	if n := len(band); n < 1 || !strings.Contains(band[n-1], "shift+tab to cycle") {
+		t.Errorf("mode hint is not the band's last row: %q", band)
 	}
 
 	// The hint rides the chat view, and liveChrome accounts for it so
@@ -135,7 +136,7 @@ func TestModeHint(t *testing.T) {
 	if v := m.View().Content; !strings.Contains(v, "⏵⏵ accept-edits") {
 		t.Errorf("chat view missing mode hint: %q", v)
 	}
-	if got := m.liveChrome(); got != 1+m.textarea.Height()+2+1+transientBandRows {
-		t.Errorf("liveChrome = %d, band not accounted", got)
+	if got, want := m.liveChrome(), 1+m.textarea.Height()+2+1+len(m.transientBand()); got != want {
+		t.Errorf("liveChrome = %d, want %d (band accounted)", got, want)
 	}
 }

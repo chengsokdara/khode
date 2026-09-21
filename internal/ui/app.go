@@ -88,11 +88,24 @@ type Model struct {
 	lastPrint       string
 
 	// top is the screen row (0-based) the frame's first row occupies and
-	// hModel the frame height as last rendered — together the state
-	// flush's bottom-pinning math needs (see flush). Update refreshes
-	// hModel and advances top; flush prints the seals that fill the span.
+	// hModel the frame height as last rendered (see Update). The frame
+	// floats under its content at boot and pins at the bottom edge once
+	// the conversation fills the screen.
 	top    int
 	hModel int
+
+	// tail is the last transientBandTail printed history lines. The
+	// transient band renders them inside the frame (the popup overlays
+	// them when open), so they show above the input with no gap and are
+	// only printed into scrollback when newer lines displace them.
+	tail []string
+
+	// bandExtra is how many rows the transient band has grown past its
+	// base size to fill dead space an overlay transition left below the
+	// frame — the band shows deeper tail history in it instead of
+	// letting the input float. Update adjusts it every pass from the
+	// freshly measured dead space, so it converges.
+	bandExtra int
 
 	picker     *picker     // session chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
@@ -337,51 +350,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return next, cmd
 	}
-	// Mirror uv's re-anchoring as the frame's height changes between
-	// renders (textarea growth and overlay transitions — the transient
-	// band keeps the chat frame itself constant): growth extends
-	// downward from where the frame was, scrolling only on overflow;
-	// shrink leaves dead rows below. Either way the bottom edge is no
-	// longer guaranteed; the wake tick's refill re-asserts the pin.
-	// hModel becomes the height uv last saw — flush's pin math needs it.
+	// The chat frame is height-stable (the transient band absorbs
+	// transients), so measured height changes come from textarea growth
+	// or overlay transitions. uv renders every frame top-anchored at its
+	// tracked cursor: growth extends downward into dead space first and
+	// scrolls only on overflow; shrink leaves dead rows below. The band
+	// fills dead rows with deeper history (bandExtra) instead of letting
+	// the input float; overflow scrolls and pins.
 	if m2.width > 0 {
-		prevH := m2.hModel
 		newH := lipgloss.Height(m2.View().Content)
-		var wake tea.Cmd
-		if newH != prevH {
-			m2.top = min(m2.top, max(0, m2.height-newH))
-			m2.hModel = newH
-			wake = tea.Tick(pinDelay, func(time.Time) tea.Msg { return pinTick{} })
-		}
-		if wake != nil {
-			if cmd == nil {
-				cmd = wake
+		chat := m2.perm == nil && m2.welcome == nil && m2.settings == nil &&
+			m2.toolsPanel == nil && m2.picker == nil
+		if chat {
+			if dead := m2.height - m2.top - newH; dead < 0 {
+				// Overflow: uv scrolled and the frame is pinned.
+				m2.top = m2.height - newH
+				m2.hModel = newH
+				m2.bandExtra = 0
+			} else if dead > 0 {
+				// Dead rows below the frame: grow the band into them,
+				// bounded by kept tail lines that are not already shown
+				// — otherwise an empty tail would fill the space with
+				// blanks, the very gap this design exists to prevent.
+				allowed := min(maxBandExtra, len(m2.tail)-transientBandTail)
+				m2.bandExtra = max(0, min(dead, allowed))
+				m2.hModel = newH + m2.bandExtra
 			} else {
-				cmd = tea.Batch(cmd, wake)
+				m2.hModel = newH
 			}
+		} else {
+			m2.hModel = newH
 		}
 	}
 	return m2, cmd
 }
 
-// pinTick arrives one render tick after a flush or a frame shrink so
-// the refill runs against the frame uv actually painted (see flush).
-type pinTick struct{}
-
-// pinDelay spaces the pin bookkeeping ticks (refills and pad-drain
-// steps) so the renderer always paints between them.
-const pinDelay = 40 * time.Millisecond
-
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if _, ok := msg.(pinTick); ok {
-		// Quiet-terminal pad drain: while pinned, hand the pad's rows
-		// back to history in ONE step — retiring them all and healing in
-		// the same pass would race the render, and retiring one row per
-		// tick made the frame visibly crawl down line by line. The heal
-		// (the next tick's refill) prints the blanks that re-seat the
-		// frame after the renderer has painted the shrunk one.
-		return m, m.flush()
-	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		first := m.width == 0
@@ -564,8 +568,8 @@ func (m Model) chatView() string {
 	if live := m.liveBlocks(); live != "" {
 		parts = append(parts, live)
 	}
-	parts = append(parts, status)
 	parts = append(parts, m.transientBand()...)
+	parts = append(parts, status)
 	parts = append(parts, inputBox, help)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
@@ -1174,10 +1178,6 @@ func (m *Model) flush() tea.Cmd {
 	for end < len(m.messages) && !m.messages[end].streaming {
 		end++
 	}
-	// Nothing new to seal is NOT an early out: the bottom-pinning refill
-	// below may still owe blank rows (pinTick arrives with nothing to
-	// print). The final chunk=="" check decides.
-
 	var chunk string
 	if m.printBannerNext {
 		m.printBannerNext = false
@@ -1197,86 +1197,42 @@ func (m *Model) flush() tea.Cmd {
 	}
 	chunk = strings.TrimRight(chunk, "\n")
 
-	// Bottom-pinning: the input stays glued to the terminal's bottom
-	// edge, the way Claude Code's inline UI is. The screen is the
-	// transcript — content accumulates above the frame and the terminal
-	// scrolls only once the screen is full. uv's renderer re-anchors the
-	// frame with its LAST row at a tracked cursor, so after an
-	// insertAbove of K rows the frame lands pinned iff the chunk ended
-	// exactly one row short of the terminal bottom: then
-	// bottom = top + K + frameHeight = H. Two regimes:
-	//
-	//   - no scroll (K fits the dead space below the frame): the fill
-	//     below tops the chunk up to exactly that size.
-	//   - scroll (K exceeds it): the scroll removes what the insert
-	//     adds, so the frame re-pins by itself — but only when the
-	//     rendered height matches the height uv last saw; a mismatch
-	//     (a seal that closed the completion popup, say) drifts by the
-	//     delta, and the delayed refill below heals it one tick later.
-	//
-	// The fill rides the same insertAbove as the chunk: one atomic
-	// write that can never race another print. Blank rows are invisible
-	// in scrollback and get displaced by real content as it seals.
-	//
-	// Order matters: the seal bookkeeping below runs BEFORE the height
-	// is measured — the view must be the one this chunk leaves behind
-	// (a sealed banner hint, say, is already gone from it).
+	// Seal bookkeeping runs first: the view must be the one this chunk
+	// leaves behind.
 	for i := m.printed; i < end; i++ {
 		m.messages[i].rendered = "" // printed blocks never render again
 	}
 	m.printed = end
 
-	newH := lipgloss.Height(m.View().Content)
-	contentRows := 0
+	// The transient band renders the last transientBandTail history
+	// lines inside the frame — the popup overlays them when open — so
+	// only lines that fall out of that window are printed into the
+	// terminal's scrollback. The frame drifts down as lines are
+	// displaced and, once it reaches the bottom edge, further prints
+	// scroll history up. No blank filler: while the conversation is
+	// shorter than the screen the frame floats under its content,
+	// exactly like the content does.
+	var lines []string
 	if chunk != "" {
-		for _, l := range strings.Split(chunk, "\n") {
-			contentRows += 1 + lipgloss.Width(l)/m.width // matches uv's insertAbove scroll math
-		}
+		lines = strings.Split(chunk, "\n")
 	}
-	need := m.height - m.top - newH     // chunk size that lands the frame bottom on H
-	dead := m.height - m.top - m.hModel // rows of dead space below the rendered frame
-	if dead < 0 {
-		dead = 0
+	all := append(append([]string{}, m.tail...), lines...)
+	if len(all) <= tailKeep {
+		m.tail = all
+		return nil // the band absorbs the whole chunk; nothing to print
 	}
-	fill := 0
-	if contentRows > need || contentRows > dead {
-		// Scroll regime: excess rows scroll off the top; the frame
-		// re-pins on its own when heights match, else pinTick heals.
-		fill = 0
-	} else {
-		fill = need - contentRows
+	m.tail = all[len(all)-tailKeep:]
+	printed := all[:len(all)-tailKeep]
+	for i, l := range printed {
+		printed[i] = " " + l // one leading space matches the live region's left edge
 	}
-	if fill > 0 {
-		blanks := strings.Repeat("\n", fill-1) // fill newlines short one: fill blank rows
-		if chunk == "" {
-			chunk = blanks // fill==1 leaves "": one empty row, still a print
-		} else {
-			chunk += "\n" + blanks
-		}
+	wrapped := 0
+	for _, l := range printed {
+		wrapped += 1 + lipgloss.Width(l)/m.width // matches uv's insertAbove scroll math
 	}
-	if chunk == "" && fill == 0 {
-		return nil
-	}
-
-	// One leading space per line matches the live region's padding, so
-	// printed history and live blocks share a left edge.
-	lines := strings.Split(chunk, "\n")
-	for i, l := range lines {
-		lines[i] = " " + l
-	}
-	m.lastPrint = strings.Join(lines, "\n")
-	// Advance the tracked frame top: the insert pushes it down by the
-	// chunk size, minus whatever the scroll consumed.
-	K := contentRows + fill
-	if scroll := K - dead; scroll > 0 {
-		m.top -= scroll
-	}
-	m.top += K
-	if m.top < 0 {
-		m.top = 0
-	}
-	refill := tea.Tick(pinDelay, func(time.Time) tea.Msg { return pinTick{} })
-	return tea.Sequence(tea.Println(m.lastPrint), refill)
+	m.lastPrint = strings.Join(printed, "\n")
+	m.top = min(m.top+wrapped, max(0, m.height-m.hModel))
+	return tea.Println(m.lastPrint)
 }
 
 // flushIf flushes only when a seal actually happened, saving an empty
@@ -1327,13 +1283,30 @@ func (m Model) liveBudget() int {
 // line, the input box (textarea + 2 border rows), the help line, the
 // completion popup while it is open, the mode picker while it is open,
 // and the mode line while a non-default mode is active.
-// transientBandRows is the fixed height of the transient band: the
-// widest transient (the full command popup: 8 rows + 2 border + 1
-// footer) plus the mode line.
-const transientBandRows = 12
+// transientBandRows is the band's height with no dead space below the
+// frame: the widest transient (the full command popup: 8 rows + 2
+// border + 1 footer) plus the mode line. transientBandTail is how many
+// history lines the band shows when no transient is open.
+const (
+	transientBandRows = 12 // 11-line popup slot + the mode line
+	transientBandTail = 11 // history lines the band shows at base size
+	tailKeep          = 40 // history lines the tail buffer keeps
+)
+
+// maxBandExtra bounds the band's growth so a huge overlay transition
+// can't demand more deep history than the tail reasonably keeps.
+const maxBandExtra = 20
+
+// bandRows is the band's height for the current render: its base size
+// plus whatever dead space an overlay transition left below the frame —
+// the band fills that space with deeper history instead of letting the
+// input float.
+func (m Model) bandRows() int {
+	return transientBandRows + m.bandExtra
+}
 
 func (m Model) liveChrome() int {
-	return 1 + m.textarea.Height() + 2 + 1 + transientBandRows
+	return 1 + m.textarea.Height() + 2 + 1 + len(m.transientBand())
 }
 
 // --- helpers -----------------------------------------------------------------

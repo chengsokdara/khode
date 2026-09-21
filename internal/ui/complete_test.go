@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // matchNames renders the popup's current matches for assertions.
@@ -181,35 +180,24 @@ func TestPopupShrinksLiveBudget(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	before := m.liveBudget()
-	if before <= 0 {
-		t.Fatalf("baseline live budget = %d", before)
-	}
 
-	// The transient band is fixed-height: opening and closing the popup
-	// changes nothing about the frame's size — the same-size repaint is
-	// what erases the popup's pixels (uv never erases vacated rows), and
-	// nothing moves in either direction.
-	hBefore := lipgloss.Height(m.View().Content)
+	// The popup overlays the history window inside the band: opening it
+	// keeps the tail underneath, closing it repaints the history rows —
+	// nothing lingers and nothing is lost across the cycle.
 	m = pressKeys(m, "/")
 	if m.popup == nil {
 		t.Fatal("popup did not open")
 	}
-	if got := m.liveBudget(); got != before {
-		t.Errorf("live budget with popup = %d, want the original %d", got, before)
-	}
-	if h := lipgloss.Height(m.View().Content); h != hBefore {
-		t.Errorf("frame height with popup = %d, want %d (band is fixed)", h, hBefore)
+	band := strings.Join(m.transientBand(), "\n")
+	if !strings.Contains(band, "enter run") {
+		t.Errorf("band does not show the popup: %q", band)
 	}
 	m = pressKeys(m, "esc")
 	if m.popup != nil {
 		t.Fatal("popup still open after esc")
 	}
-	if got := m.liveBudget(); got != before {
-		t.Errorf("live budget after esc = %d, want the original %d", got, before)
-	}
-	if h := lipgloss.Height(m.View().Content); h != hBefore {
-		t.Errorf("frame height after esc = %d, want %d (band is fixed)", h, hBefore)
+	if got := m.liveBudget(); got <= 0 {
+		t.Errorf("live budget after esc = %d", got)
 	}
 }
 

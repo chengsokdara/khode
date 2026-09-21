@@ -157,34 +157,52 @@ func (m Model) modeHintRows() int {
 	return 1
 }
 
-// transientBand renders the fixed-height slot between the status line
-// and the input: the command popup or the mode picker when one is
-// open, the mode line when a non-default mode is active, blanks
-// otherwise. The band never changes size, so the frame's height is
-// constant across a transient's whole life — uv's diff renderer never
-// erases rows a shrunken frame vacated, and a same-size repaint is the
-// only way to erase them; a constant frame means there is nothing to
-// erase, nothing to drain, and nothing moves when transients come and
-// go.
+// transientBand renders the band between the status line and the
+// input: the conversation's last lines when no transient is open, or
+// the command popup / mode picker overlaying the bottom of that
+// history window, with deeper tail lines filling the band's extension
+// above. The last row is the mode line (or blank). The band grows past
+// its base size after an overlay transition, filling the dead space
+// with deeper history instead of letting the input float (bandRows).
 func (m Model) transientBand() []string {
-	var slot string
+	slot := m.bandRows() - 1 // rows before the mode line
+	rows := []string{}
 	switch {
 	case m.popup != nil:
-		slot = m.popupView()
+		rows = m.overlayWindow(m.popupView(), slot)
 	case m.modePick != nil:
-		slot = m.modePickView()
+		rows = m.overlayWindow(m.modePickView(), slot)
+	default:
+		n := min(slot, len(m.tail))
+		for _, l := range m.tail[len(m.tail)-n:] {
+			rows = append(rows, " "+l)
+		}
 	}
-	rows := []string{}
-	if slot != "" {
-		rows = append(rows, strings.Split(slot, "\n")...)
-	}
-	for len(rows) < transientBandRows-1 {
-		rows = append(rows, "")
-	}
+	// No blind padding: a tail too short to fill the slot means a
+	// shorter band — padding would read as a blank gap.
 	if hint := m.modeHint(); hint != "" {
 		rows = append(rows, hint)
 	} else {
 		rows = append(rows, "")
 	}
 	return rows
+}
+
+// overlayWindow renders view as the bottom of a slot-row history
+// window: the tail lines above it stay visible, the rest is covered.
+func (m Model) overlayWindow(view string, slot int) []string {
+	viewRows := strings.Split(view, "\n")
+	if len(viewRows) > slot {
+		viewRows = viewRows[len(viewRows)-slot:]
+	}
+	pre := slot - len(viewRows)
+	if pre > len(m.tail) {
+		pre = len(m.tail)
+	}
+	rows := make([]string, 0, slot)
+	deep := min(pre, len(m.tail))
+	for _, l := range m.tail[len(m.tail)-deep:] {
+		rows = append(rows, " "+l)
+	}
+	return append(rows, viewRows...)
 }

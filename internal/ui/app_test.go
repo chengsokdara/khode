@@ -407,19 +407,18 @@ func TestFlushPrintsSealedBlocks(t *testing.T) {
 	if cmd := m.flush(); cmd != nil {
 		t.Error("flush printed while the last block was still streaming")
 	}
-	// Sealing it makes it printable; the chunk carries the final text.
+	// Sealing it makes it history; a small chunk is absorbed into the
+	// band's tail (only displaced lines print to scrollback).
 	m.messages[len(m.messages)-1].streaming = false
-	if cmd := m.flush(); cmd == nil {
-		t.Fatal("flush printed nothing after the block sealed")
-	}
-	if got := ansiStrip(m.lastPrint); !strings.Contains(got, "in flight") {
-		t.Errorf("printed chunk = %q, want the sealed block", got)
+	m.flush()
+	if got := ansiStrip(historyOf(m)); !strings.Contains(got, "in flight") {
+		t.Errorf("history = %q, want the sealed block", got)
 	}
 	if m.printed != len(m.messages) {
 		t.Errorf("watermark = %d, want %d", m.printed, len(m.messages))
 	}
-	if got := ansiStrip(m.View().Content); strings.Contains(got, "in flight") {
-		t.Error("printed block still rendered in the live region")
+	if got := ansiStrip(m.liveBlocks()); strings.Contains(got, "in flight") {
+		t.Error("sealed block still rendered as a live block")
 	}
 }
 
@@ -446,22 +445,19 @@ func TestStartupTranscriptPrintsOnResize(t *testing.T) {
 	if m.printed != 0 || m.lastPrint != "" {
 		t.Fatalf("transcript printed before any resize: printed=%d", m.printed)
 	}
-	next, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	if cmd == nil {
-		t.Fatal("first resize must flush the banner + transcript")
-	}
-	printed := ansiStrip(m.lastPrint)
-	for _, want := range []string{"khode", "earlier question", "earlier answer"} {
+	printed := ansiStrip(historyOf(m))
+	for _, want := range []string{"earlier question", "earlier answer"} {
 		if !strings.Contains(printed, want) {
-			t.Errorf("startup chunk missing %q:\n%s", want, printed)
+			t.Errorf("startup history missing %q:\n%s", want, printed)
 		}
 	}
 	if m.printed != len(m.messages) {
 		t.Errorf("watermark = %d, want %d", m.printed, len(m.messages))
 	}
-	if got := ansiStrip(m.View().Content); strings.Contains(got, "earlier answer") {
-		t.Error("printed transcript leaked into the live region")
+	if got := ansiStrip(m.liveBlocks()); strings.Contains(got, "earlier answer") {
+		t.Error("printed transcript leaked into the live blocks")
 	}
 }
 
@@ -480,12 +476,10 @@ func TestSessionSwitchPrintsTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.useSession(sess)
-	if cmd := m.flush(); cmd == nil {
-		t.Fatal("session switch printed nothing")
-	}
-	printed := ansiStrip(m.lastPrint)
-	if !strings.Contains(printed, "khode") || !strings.Contains(printed, "picked session history") {
-		t.Errorf("switch chunk = %q, want banner + transcript", printed)
+	m.flush()
+	printed := ansiStrip(historyOf(m))
+	if !strings.Contains(printed, "picked session history") {
+		t.Errorf("switch history = %q, want the picked transcript", printed)
 	}
 }
 

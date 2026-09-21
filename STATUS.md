@@ -89,21 +89,22 @@ alignment prefix made the full-width rule and the mode chip wrap onto
 extra rows — and a blank pad now absorbs transient shrink (see the
 next entry).
 
-**Fixed-height transient band (2026-09-19):** the ghost fix went
-through three iterations — a shrink-absorbing pad (worked, but the
-space lingered), a per-tick pad drain (the frame crawled down line by
-line — visibly awful), and a one-shot drain (still drifted: uv's
-actual anchor is unknowable from our side, so every heal was a guess).
-The final design removes the whole problem: the chat frame carries a
-FIXED 12-row transient band between the status line and the input that
-renders the command popup, the mode picker, or the mode line when
-open and blanks when closed. The frame's height is constant across a
-transient's whole life — the same-size repaint erases the transient's
-pixels (uv never erases vacated rows), nothing lingers, nothing
-drains, nothing moves. liveChrome accounts the band; wrapper
-bookkeeping stays only for textarea growth and overlay transitions.
-The visible trade: a permanent blank band above the mode line /
-input, like Claude Code's thinking area.
+**History-tail band (2026-09-21):** the reserved blank band was itself
+rejected (a huge idle gap), so the band now renders the last lines of
+REAL conversation history instead: flush keeps a 40-line tail buffer
+and only prints lines that fall out of the band's 11-line window into
+scrollback — the conversation flows straight into the input with no
+gap, and the popup overlays the window's bottom when open (Claude
+Code's overlay-the-transcript behavior, achieved inside the frame
+where uv's diff can erase). The frame floats under its content at boot
+(no blank bottom-pinning — that filler was the original gap) and pins
+at the bottom edge naturally once the conversation fills the screen;
+after an overlay transition the band grows into the dead space with
+deeper tail history instead of letting the input float. The wrapper's
+top/hModel bookkeeping simplified accordingly; pinTick/drain machinery
+deleted entirely. Known artifacts: an overlay's top rows can ghost at
+the screen top when a shorter chat frame replaces it (uv gives no
+erase-above primitive) and scrolls away with content.
 
 **Bottom-pinned inline frame (2026-09-19):** the chat input now sits
 glued to the terminal's bottom edge at all times — the full-screen
