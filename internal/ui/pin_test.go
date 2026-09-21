@@ -49,15 +49,22 @@ func TestFrameHeightChangesStayPinned(t *testing.T) {
 	}
 
 	// Close it with esc (a real update — the wrapper schedules the
-	// refill one tick later), then run the refill: the delta fills.
+	// refill one tick later), then run ticks until the bookkeeping
+	// settles: a refill pass heals the uncovered delta, and once pinned
+	// the pad drain retires a row whose heal lands on the next tick.
+	// After any even number of ticks the pin invariant must hold.
 	m = pressKeys(m, "esc")
-	next, _ = m.Update(pinTick{})
-	m = next.(Model)
+	for range 4 {
+		next, _ = m.Update(pinTick{})
+		m = next.(Model)
+	}
 	if m.top+m.hModel != 30 {
 		t.Fatalf("after close: top %d + hModel %d = %d, want 30", m.top, m.hModel, 30)
 	}
 
-	// Settled: further refills are no-ops.
+	// Settled: further ticks only drain-and-heal, keeping the pin.
+	next, _ = m.Update(pinTick{})
+	m = next.(Model)
 	next, _ = m.Update(pinTick{})
 	m = next.(Model)
 	if m.top+m.hModel != 30 {

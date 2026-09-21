@@ -98,11 +98,15 @@ now renders a blank pad (`padRows`, capped at `maxPadRows`) that
 Update's wrapper grows by exactly the shrink delta, keeping the frame's
 total height — and the bottom edge — constant through a transient's
 whole life; the same-size repaint erases the transient's pixels
-instead. Opening the next transient consumes the pad first (the slot
-is reused), and big overlay closes beyond the cap fall back to the
-delayed refill. Known limitation: a stray row can still survive into
-history in long mixed sequences — uv exposes no erase-above primitive,
-so residue can be minimized but not made impossible.
+instead. The pad then drains: while the terminal is quiet and pinned,
+one pad row is retired per tick (drain and its heal blank are separate
+ticks — printing in the same pass races the render), so the popup's
+space flows back to history within a fraction of a second. Opening the
+next transient consumes the pad first (the slot is reused), and big
+overlay closes beyond the cap fall back to the delayed refill. Known
+limitation: a stray row can still survive into history in long mixed
+sequences — uv exposes no erase-above primitive, so residue can be
+minimized but not made impossible.
 
 **shift+tab mode cycling (2026-09-19):** shift+tab walks the permission
 modes (plan → ask → accept-edits → auto, wrapping via `perm.Next`)
@@ -353,4 +357,4 @@ Backlog (no committed order):
 | 2026-09-19 | Mode switching UI: shift+tab cycles permission modes (`perm.Next` + quiet `cycleMode`, no chat notice), Claude-Code-style mode line above the input (per-mode accent, hidden in ask, liveChrome-accounted), bare `/mode` opens an interactive picker (`modepicker.go`) replacing the printed list; `/mode <name>` + settings row unchanged; tests + dump frames | a537a0f |
 | 2026-09-19 | Bottom-pinned inline frame: flush tops seal chunks up with blank rows so the input glues to the terminal's bottom edge (Claude Code's full-screen inline look); two-regime pin law (no-scroll fill / scroll self-pin) + one-tick-delayed refill for the height-mismatch case; tmux-verified end to end | (this commit) |
 | 2026-09-19 | Fixes from the first pinned run: mouse capture restored (wheel swallowed — Claude Code parity; the wheel must not scroll the scrollback under a full-screen frame) and the header built one column short — flush's alignment prefix was wrapping the rule onto a second row and could push the mode chip off | (this commit) |
-| 2026-09-19 | Transient ghosts fixed: a blank pad (`padRows`, cap 12) absorbs popup/picker shrink so the frame's height never changes across a transient's life — the repaint erases the box instead of leaving it in history; consumed by the next transient, refill fallback beyond the cap | (this commit) |
+| 2026-09-19 | Transient ghosts fixed: a blank pad (`padRows`, cap 12) absorbs popup/picker shrink so the frame's height never changes across a transient's life — the repaint erases the box instead of leaving it in history; the pad drains one row per quiet tick (drain/heal split across ticks), is consumed by the next transient, and falls back to the refill beyond the cap | (this commit) |

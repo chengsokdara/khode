@@ -379,7 +379,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// delayed refill fills the dead rows one tick later.
 			m2.top += m2.hModel - newH
 			m2.hModel = newH
-			refill := tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return pinTick{} })
+			refill := tea.Tick(pinDelay, func(time.Time) tea.Msg { return pinTick{} })
 			if cmd == nil {
 				return m2, refill
 			}
@@ -395,8 +395,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // the refill runs against the frame uv actually painted (see flush).
 type pinTick struct{}
 
+// pinDelay spaces the pin bookkeeping ticks (refills and pad-drain
+// steps) so the renderer always paints between them.
+const pinDelay = 40 * time.Millisecond
+
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(pinTick); ok {
+		// Quiet-terminal pad drain: while nothing else is happening and
+		// the frame is pinned, hand one pad row back to history per
+		// tick. The drain itself only retires the row — the next render
+		// shrinks by one and uv anchors one row high — and the FOLLOWING
+		// tick's refill prints the heal blank that re-seats the frame on
+		// the bottom edge. Printing in the same pass as the drain would
+		// race the render (insertAbove before the shrink = a wasted
+		// scroll), which is why the two steps are separate ticks.
+		if m.padRows > 0 && m.top > 0 && m.top+m.hModel == m.height {
+			m.padRows--
+			m.hModel--
+			return m, tea.Tick(pinDelay, func(time.Time) tea.Msg { return pinTick{} })
+		}
 		return m, m.flush()
 	}
 	switch msg := msg.(type) {
@@ -1281,12 +1298,12 @@ func (m *Model) flush() tea.Cmd {
 	if fill > 0 {
 		blanks := strings.Repeat("\n", fill-1) // fill newlines short one: fill blank rows
 		if chunk == "" {
-			chunk = blanks
+			chunk = blanks // fill==1 leaves "": one empty row, still a print
 		} else {
 			chunk += "\n" + blanks
 		}
 	}
-	if chunk == "" {
+	if chunk == "" && fill == 0 {
 		return nil
 	}
 
@@ -1307,7 +1324,7 @@ func (m *Model) flush() tea.Cmd {
 	if m.top < 0 {
 		m.top = 0
 	}
-	refill := tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return pinTick{} })
+	refill := tea.Tick(pinDelay, func(time.Time) tea.Msg { return pinTick{} })
 	return tea.Sequence(tea.Println(m.lastPrint), refill)
 }
 
