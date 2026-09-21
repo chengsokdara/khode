@@ -89,10 +89,17 @@ type Model struct {
 
 	// top is the screen row (0-based) the frame's first row occupies and
 	// hModel the frame height as last rendered — together the state
-	// flush's bottom-pinning math needs (see flush). hModel is refreshed
-	// by Update after every pass, top advances in flush.
+	// flush's bottom-pinning math needs (see flush). Update refreshes
+	// hModel and grows padRows; flush advances top.
 	top    int
 	hModel int
+	// padRows are invisible blank rows rendered just above the input.
+	// When the frame shrinks (a popup or overlay closed), the pad absorbs
+	// the delta in the same render, so uv never sees the frame vacate
+	// rows — the transient's pixels are erased by the redraw instead of
+	// lingering as ghosts in the transcript. The pad is consumed again by
+	// the next growth (a popup opening) and decays one row per seal.
+	padRows int
 
 	picker     *picker     // session chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
@@ -337,26 +344,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return next, cmd
 	}
-	// Mirror uv's asymmetric re-anchoring as the frame's height changes
-	// between renders. Growth scrolls the screen (the bottom stays
-	// glued); shrink leaves the frame's bottom high with dead rows
-	// below, which the delayed refill fills. Either way hModel becomes
-	// the height uv last saw — flush's pin math needs it.
+	// Mirror uv's re-anchoring as the frame's height changes between
+	// renders, with padRows absorbing every shrink: growth scrolls the
+	// screen (the bottom stays glued), and a shrink would leave the
+	// transient's pixels painted above the frame as ghosts in the
+	// transcript — the pad covers the vacated rows with blanks in the
+	// same render instead. hModel becomes the height uv last saw —
+	// flush's pin math needs it.
 	if m2.width > 0 {
 		newH := lipgloss.Height(m2.View().Content)
-		if newH > m2.hModel && m2.top+m2.hModel == m2.height {
-			m2.top = m2.height - newH
+		chat := m2.perm == nil && m2.welcome == nil && m2.settings == nil &&
+			m2.toolsPanel == nil && m2.picker == nil
+		if chat {
+			// The pad only exists in the chat view, so only chat-view
+			// height changes can be absorbed by it. A shrink grows the
+			// pad (total height — and the bottom edge — stay put, and the
+			// same-size repaint erases the transient's pixels); growth
+			// consumes the pad first (a popup opening re-uses its slot).
+			switch delta := newH - m2.hModel; {
+			case delta < 0:
+				m2.padRows = min(maxPadRows, m2.padRows-delta)
+			case delta > 0 && m2.padRows > 0:
+				m2.padRows -= min(m2.padRows, delta)
+			}
+			newH = lipgloss.Height(m2.View().Content)
 		}
-		var refill tea.Cmd
-		if newH < m2.hModel && m2.hModel > 0 {
-			refill = tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return pinTick{} })
-		}
-		m2.hModel = newH
-		if refill != nil {
+		switch {
+		case newH > m2.hModel:
+			// Growth beyond the pad: uv scrolls, keeping the bottom glued.
+			m2.top = max(0, m2.height-newH)
+			m2.hModel = newH
+		case newH < m2.hModel:
+			// Uncovered shrink (overlay views): the bottom rises and the
+			// delayed refill fills the dead rows one tick later.
+			m2.top += m2.hModel - newH
+			m2.hModel = newH
+			refill := tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg { return pinTick{} })
 			if cmd == nil {
 				return m2, refill
 			}
 			return m2, tea.Sequence(cmd, refill)
+		default:
+			m2.hModel = newH
 		}
 	}
 	return m2, cmd
@@ -495,9 +524,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cycleMode()
 			return m, nil
 		}
-		// History is the terminal's real scrollback now (inline program,
-		// no mouse capture): wheel, scrollbar, and selection are native,
-		// and pgup/pgdn have nothing left to do in the app.
+		// The wheel is captured and swallowed (see View); every other
+		// key reaches the textarea.
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		m.syncPopup()
@@ -562,6 +590,13 @@ func (m Model) chatView() string {
 	}
 	if m.modePick != nil {
 		parts = append(parts, m.modePickView()) // floats just above the input
+	}
+	if m.padRows > 0 {
+		// The shrink absorber (see Update): invisible rows that keep the
+		// frame's height constant when a transient closes, so the redraw
+		// erases the transient's pixels instead of leaving them as
+		// ghosts in the transcript.
+		parts = append(parts, strings.Repeat("\n", m.padRows-1))
 	}
 	parts = append(parts, inputBox, help)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -1324,8 +1359,13 @@ func (m Model) liveBudget() int {
 // line, the input box (textarea + 2 border rows), the help line, the
 // completion popup while it is open, the mode picker while it is open,
 // and the mode line while a non-default mode is active.
+// maxPadRows caps the shrink-absorbing pad so a big overlay closing
+// can't eat the live region's height budget forever; anything beyond
+// the cap falls back to the delayed refill.
+const maxPadRows = 12
+
 func (m Model) liveChrome() int {
-	return 1 + m.textarea.Height() + 2 + 1 + m.popupHeight() + m.modePickHeight() + m.modeHintRows()
+	return 1 + m.textarea.Height() + 2 + 1 + m.popupHeight() + m.modePickHeight() + m.modeHintRows() + m.padRows
 }
 
 // --- helpers -----------------------------------------------------------------

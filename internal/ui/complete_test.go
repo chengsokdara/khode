@@ -192,16 +192,38 @@ func TestPopupShrinksLiveBudget(t *testing.T) {
 	if m.popupHeight() == 0 {
 		t.Fatal("popup did not open")
 	}
-	if got := m.liveBudget(); got >= before {
-		t.Errorf("live budget with popup = %d, want < %d (popup rows carved out)", got, before)
+	withPopup := m.liveBudget()
+	if withPopup >= before {
+		t.Errorf("live budget with popup = %d, want < %d (popup rows carved out)", withPopup, before)
 	}
 
 	m = pressKeys(m, "esc")
 	if m.popupHeight() != 0 {
 		t.Fatal("popup still open after esc")
 	}
-	if got := m.liveBudget(); got != before {
-		t.Errorf("live budget after esc = %d, want the original %d", got, before)
+	// The shrink lands in the pad (Update absorbs it), so the total
+	// frame height — and the live budget — stay exactly as they were
+	// with the popup open: the same-size repaint erases the popup's
+	// pixels instead of leaving them as ghosts in the transcript. The
+	// pad drains when the next transient opens.
+	if m.padRows == 0 {
+		t.Fatal("popup shrink was not absorbed by the pad")
+	}
+	if got := m.liveBudget(); got >= before {
+		t.Errorf("live budget after esc = %d, want < %d (pad holds the popup's slot)", got, before)
+	}
+
+	// Reopening a transient consumes the pad instead of scrolling. (esc
+	// keeps the typed slash, so clear the input first.)
+	m.textarea.Reset()
+	m = pressKeys(m, "/")
+	next, _ = m.Update(pinTick{})
+	m = next.(Model)
+	if m.padRows != 0 {
+		t.Errorf("pad = %d after the popup reopened, want 0 (consumed)", m.padRows)
+	}
+	if got := m.liveBudget(); got != withPopup {
+		t.Errorf("live budget with popup over consumed pad = %d, want %d (same slot the popup used before)", got, withPopup)
 	}
 }
 
