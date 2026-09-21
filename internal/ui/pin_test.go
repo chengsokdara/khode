@@ -38,35 +38,31 @@ func TestFrameHeightChangesStayPinned(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 
-	// Open the settings overlay through a real Update (the wrapper
-	// tracks the growth) and settle the render with a pin tick.
-	m.OpenSettings(rowProvider)
-	next, _ = m.Update(pinTick{})
-	m = next.(Model)
-	h := lipgloss.Height(m.View().Content)
-	if m.top+h != 30 {
-		t.Fatalf("overlay open: top %d + height %d = %d, want 30", m.top, h, 30)
+	// Overlay transitions change the frame height; the wrapper corrects
+	// its bookkeeping on the next Update and the tick after that heals,
+	// so run three ticks per transition before asserting.
+	settle := func(m Model) Model {
+		for range 3 {
+			next, _ := m.Update(pinTick{})
+			m = next.(Model)
+		}
+		return m
 	}
 
-	// Close it with esc (a real update — the wrapper schedules the
-	// refill one tick later), then run ticks until the bookkeeping
-	// settles: a refill pass heals the uncovered delta, and once pinned
-	// the pad drain retires a row whose heal lands on the next tick.
-	// After any even number of ticks the pin invariant must hold.
-	m = pressKeys(m, "esc")
-	for range 4 {
-		next, _ = m.Update(pinTick{})
-		m = next.(Model)
+	m.OpenSettings(rowProvider)
+	m = settle(m)
+	if m.top+m.hModel != 30 {
+		t.Fatalf("overlay open: top %d + hModel %d = %d, want 30", m.top, m.hModel, 30)
 	}
+
+	m = pressKeys(m, "esc")
+	m = settle(m)
 	if m.top+m.hModel != 30 {
 		t.Fatalf("after close: top %d + hModel %d = %d, want 30", m.top, m.hModel, 30)
 	}
 
-	// Settled: further ticks only drain-and-heal, keeping the pin.
-	next, _ = m.Update(pinTick{})
-	m = next.(Model)
-	next, _ = m.Update(pinTick{})
-	m = next.(Model)
+	// Settled: further ticks keep the pin.
+	m = settle(m)
 	if m.top+m.hModel != 30 {
 		t.Fatalf("settled: top %d + hModel %d = %d, want 30", m.top, m.hModel, 30)
 	}

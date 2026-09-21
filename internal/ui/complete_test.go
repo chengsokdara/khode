@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // matchNames renders the popup's current matches for assertions.
@@ -180,50 +181,35 @@ func TestPopupShrinksLiveBudget(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	if m.popupHeight() != 0 {
-		t.Fatalf("hidden popup occupies %d rows", m.popupHeight())
-	}
 	before := m.liveBudget()
 	if before <= 0 {
 		t.Fatalf("baseline live budget = %d", before)
 	}
 
+	// The transient band is fixed-height: opening and closing the popup
+	// changes nothing about the frame's size — the same-size repaint is
+	// what erases the popup's pixels (uv never erases vacated rows), and
+	// nothing moves in either direction.
+	hBefore := lipgloss.Height(m.View().Content)
 	m = pressKeys(m, "/")
-	if m.popupHeight() == 0 {
+	if m.popup == nil {
 		t.Fatal("popup did not open")
 	}
-	withPopup := m.liveBudget()
-	if withPopup >= before {
-		t.Errorf("live budget with popup = %d, want < %d (popup rows carved out)", withPopup, before)
+	if got := m.liveBudget(); got != before {
+		t.Errorf("live budget with popup = %d, want the original %d", got, before)
 	}
-
+	if h := lipgloss.Height(m.View().Content); h != hBefore {
+		t.Errorf("frame height with popup = %d, want %d (band is fixed)", h, hBefore)
+	}
 	m = pressKeys(m, "esc")
-	if m.popupHeight() != 0 {
+	if m.popup != nil {
 		t.Fatal("popup still open after esc")
 	}
-	// The shrink lands in the pad (Update absorbs it), so the total
-	// frame height — and the live budget — stay exactly as they were
-	// with the popup open: the same-size repaint erases the popup's
-	// pixels instead of leaving them as ghosts in the transcript. The
-	// pad drains when the next transient opens.
-	if m.padRows == 0 {
-		t.Fatal("popup shrink was not absorbed by the pad")
+	if got := m.liveBudget(); got != before {
+		t.Errorf("live budget after esc = %d, want the original %d", got, before)
 	}
-	if got := m.liveBudget(); got >= before {
-		t.Errorf("live budget after esc = %d, want < %d (pad holds the popup's slot)", got, before)
-	}
-
-	// Reopening a transient consumes the pad instead of scrolling. (esc
-	// keeps the typed slash, so clear the input first.)
-	m.textarea.Reset()
-	m = pressKeys(m, "/")
-	next, _ = m.Update(pinTick{})
-	m = next.(Model)
-	if m.padRows != 0 {
-		t.Errorf("pad = %d after the popup reopened, want 0 (consumed)", m.padRows)
-	}
-	if got := m.liveBudget(); got != withPopup {
-		t.Errorf("live budget with popup over consumed pad = %d, want %d (same slot the popup used before)", got, withPopup)
+	if h := lipgloss.Height(m.View().Content); h != hBefore {
+		t.Errorf("frame height after esc = %d, want %d (band is fixed)", h, hBefore)
 	}
 }
 

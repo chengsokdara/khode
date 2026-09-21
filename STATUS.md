@@ -89,6 +89,48 @@ alignment prefix made the full-width rule and the mode chip wrap onto
 extra rows — and a blank pad now absorbs transient shrink (see the
 next entry).
 
+**Fixed-height transient band (2026-09-19):** the ghost fix went
+through three iterations — a shrink-absorbing pad (worked, but the
+space lingered), a per-tick pad drain (the frame crawled down line by
+line — visibly awful), and a one-shot drain (still drifted: uv's
+actual anchor is unknowable from our side, so every heal was a guess).
+The final design removes the whole problem: the chat frame carries a
+FIXED 12-row transient band between the status line and the input that
+renders the command popup, the mode picker, or the mode line when
+open and blanks when closed. The frame's height is constant across a
+transient's whole life — the same-size repaint erases the transient's
+pixels (uv never erases vacated rows), nothing lingers, nothing
+drains, nothing moves. liveChrome accounts the band; wrapper
+bookkeeping stays only for textarea growth and overlay transitions.
+The visible trade: a permanent blank band above the mode line /
+input, like Claude Code's thinking area.
+
+**Bottom-pinned inline frame (2026-09-19):** the chat input now sits
+glued to the terminal's bottom edge at all times — the full-screen
+inline look of Claude Code — instead of floating under the banner with
+dead terminal rows below. flush() tops every seal chunk up with blank
+rows (same atomic insertAbove, so fills can never race prints) sized by
+a two-regime law derived from uv's renderer: in the no-scroll regime
+the chunk must end exactly one row short of the terminal bottom; in the
+scroll regime the seal re-pins by itself, and the one case that can't
+(a seal coinciding with a frame-height change — the completion popup
+closing on submit, say) is healed by a refill that runs one render tick
+later (pinTick). Update's wrapper mirrors uv's asymmetric re-anchoring
+(growth scrolls and keeps the bottom glued; shrink needs the refill)
+and tracks the two state fields the math needs (`top`, `hModel`).
+Verified in tmux capture-panes (real emulator — pyte mis-parses kitty
+sequences): boot, seals, overlay grow/close, shift+tab, and multiline
+input all end with the help line on the last terminal row and clean
+scrollback. Follow-ups from the user's first pinned run: the mouse is
+captured again (wheel swallowed — under a full-screen pinned frame the
+wheel must not scroll the scrollback out from under it; Claude Code
+consumes the wheel the same way; history stays reachable via the
+scrollbar and terminal search, selection via shift+drag), the
+header is built one column short of the terminal — flush's left-edge
+alignment prefix made the full-width rule and the mode chip wrap onto
+extra rows — and a blank pad now absorbs transient shrink (see the
+next entry).
+
 **No more transient ghosts in history (2026-09-19):** closing the
 command popup or the /mode picker used to leave the box's pixels
 painted above the input — uv's diff renderer only repaints rows the
@@ -362,4 +404,4 @@ Backlog (no committed order):
 | 2026-09-19 | Mode switching UI: shift+tab cycles permission modes (`perm.Next` + quiet `cycleMode`, no chat notice), Claude-Code-style mode line above the input (per-mode accent, hidden in ask, liveChrome-accounted), bare `/mode` opens an interactive picker (`modepicker.go`) replacing the printed list; `/mode <name>` + settings row unchanged; tests + dump frames | a537a0f |
 | 2026-09-19 | Bottom-pinned inline frame: flush tops seal chunks up with blank rows so the input glues to the terminal's bottom edge (Claude Code's full-screen inline look); two-regime pin law (no-scroll fill / scroll self-pin) + one-tick-delayed refill for the height-mismatch case; tmux-verified end to end | (this commit) |
 | 2026-09-19 | Fixes from the first pinned run: mouse capture restored (wheel swallowed — Claude Code parity; the wheel must not scroll the scrollback under a full-screen frame) and the header built one column short — flush's alignment prefix was wrapping the rule onto a second row and could push the mode chip off | (this commit) |
-| 2026-09-19 | Transient ghosts fixed: a blank pad (`padRows`, cap 12) absorbs popup/picker shrink so the frame's height never changes across a transient's life — the repaint erases the box instead of leaving it in history; the pad drains one row per quiet tick (drain/heal split across ticks), is consumed by the next transient, and falls back to the refill beyond the cap | (this commit) |
+| 2026-09-19 | Transient rendering settled after three iterations (pad → pad+drain → fixed band): the chat frame now carries a FIXED 12-row transient band (popup/picker/mode line or blanks) — the frame's height never changes, the same-size repaint erases transients, nothing moves; pad/drain machinery deleted | (this commit) |

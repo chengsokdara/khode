@@ -156,3 +156,35 @@ func (m Model) modeHintRows() int {
 	}
 	return 1
 }
+
+// transientBand renders the fixed-height slot between the status line
+// and the input: the command popup or the mode picker when one is
+// open, the mode line when a non-default mode is active, blanks
+// otherwise. The band never changes size, so the frame's height is
+// constant across a transient's whole life — uv's diff renderer never
+// erases rows a shrunken frame vacated, and a same-size repaint is the
+// only way to erase them; a constant frame means there is nothing to
+// erase, nothing to drain, and nothing moves when transients come and
+// go.
+func (m Model) transientBand() []string {
+	var slot string
+	switch {
+	case m.popup != nil:
+		slot = m.popupView()
+	case m.modePick != nil:
+		slot = m.modePickView()
+	}
+	rows := []string{}
+	if slot != "" {
+		rows = append(rows, strings.Split(slot, "\n")...)
+	}
+	for len(rows) < transientBandRows-1 {
+		rows = append(rows, "")
+	}
+	if hint := m.modeHint(); hint != "" {
+		rows = append(rows, hint)
+	} else {
+		rows = append(rows, "")
+	}
+	return rows
+}
