@@ -6,8 +6,8 @@
 // anthropic messages/events (tool_calls → tool_use blocks included). The
 // reverse direction (anthropic → openai shapes) lives in dialects/openaiChat.ts.
 // Extended thinking remains rejected with an explicit pointer.
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolCall } from '../canonical';
-import { boolOption, floatOption, imageOption, intOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolCall } from '../canonical';
+import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
 import { translateSseStream } from './sse';
 
 // ------------------------------------------------------------- error envelope
@@ -111,8 +111,8 @@ export type MessagesParse =
   | { ok: false; status: number; message: string; param?: string | null; code?: string | null };
 
 const ANTHROPIC_ROLES: readonly string[] = ['user', 'assistant'];
-/** Extended thinking — arrives with the later reasoning work. */
-const LATER_KEYS: readonly string[] = ['thinking'];
+/** Hosted/server tools ride here when Anthropic adds more; thinking is canonical now (M17). */
+const LATER_KEYS: readonly string[] = [];
 
 function parseErr(message: string, param?: string | null, code?: string | null): MessagesParse {
   return { ok: false, status: 400, message, param: param ?? null, code: code ?? null };
@@ -191,14 +191,17 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
   let text = '';
   const images: CanonicalImage[] = [];
   const toolCalls: CanonicalToolCall[] = [];
+  // M17: thinking/redacted_thinking blocks accumulate onto the turn's message.
+  let pendingReasoning: CanonicalReasoningContent | undefined;
 
   const pushTurn = (): void => {
-    if (text || images.length || (msg.role === 'assistant' && toolCalls.length)) {
+    if (text || images.length || (msg.role === 'assistant' && toolCalls.length) || pendingReasoning) {
       out.push({
         role: msg.role as 'user' | 'assistant',
         content: text,
         ...(images.length ? { images } : {}),
         ...(toolCalls.length ? { toolCalls } : {}),
+        ...(pendingReasoning ? { reasoning: pendingReasoning } : {}),
         extra: {},
       });
     }
@@ -267,8 +270,22 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
       });
     } else if (block.type === 'document') {
       return { err: parseErr(`'document' content blocks (PDFs) are not supported yet.`, param) };
-    } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-      return { err: parseErr(`'${String(block.type)}' content blocks are not supported yet — extended thinking arrives later.`, param) };
+    } else if (block.type === 'thinking') {
+      // M17: thinking blocks parse onto the canonical reasoning slot (text +
+      // signature preserved verbatim — the API requires signatures on
+      // assistant thinking history).
+      if (typeof block.thinking !== 'string' || !block.thinking) {
+        return { err: parseErr(`${pParam}.thinking must be a non-empty string`, param) };
+      }
+      pendingReasoning = canonicalReasoningContent({
+        text: pendingReasoning?.text ? `${pendingReasoning.text}\n${block.thinking}` : block.thinking,
+        signature: typeof block.signature === 'string' ? block.signature : undefined,
+      });
+    } else if (block.type === 'redacted_thinking') {
+      if (typeof block.data !== 'string' || !block.data) {
+        return { err: parseErr(`${pParam}.data must be a non-empty string`, param) };
+      }
+      pendingReasoning = canonicalReasoningContent({ redacted: block.data });
     } else {
       return { err: parseErr(`Unsupported content block type '${String(block.type)}'`, param) };
     }
@@ -327,7 +344,24 @@ export async function parseAnthropicMessagesRequest(reader: { json: () => Promis
   }
   for (const key of LATER_KEYS) {
     if (key in raw) {
-      return parseErr(`'${key}' is not supported yet — extended thinking arrives in a later milestone.`, key);
+      return parseErr(`'${key}' is not supported yet.`, key);
+    }
+  }
+
+  // M17: the thinking param parses onto canonical reasoning (type 'disabled'
+  // or absent → no reasoning; 'enabled' carries the token budget).
+  let reasoning: CanonicalReasoning | null = null;
+  if (raw.thinking !== undefined && raw.thinking !== null) {
+    if (!raw.thinking || typeof raw.thinking !== 'object' || Array.isArray(raw.thinking)) {
+      return parseErr('thinking must be an object', 'thinking');
+    }
+    const t = raw.thinking as Record<string, unknown>;
+    if (t.type === 'enabled') {
+      const budget = intOption(t.budget_tokens, 'thinking.budget_tokens', 1, 128_000);
+      if (budget.err) return parseErr(budget.err, 'thinking.budget_tokens');
+      reasoning = canonicalReasoning(undefined, budget.val);
+    } else if (t.type !== 'disabled') {
+      return parseErr("thinking.type must be 'enabled' or 'disabled'", 'thinking.type');
     }
   }
 
@@ -402,7 +436,7 @@ export async function parseAnthropicMessagesRequest(reader: { json: () => Promis
     extras.metadata = raw.metadata;
   }
 
-  return { ok: true, model, request: { messages, stream, options, extras } };
+  return { ok: true, model, request: { messages, stream, ...(reasoning ? { reasoning } : {}), options, extras } };
 }
 
 // ----------------------------------------------------- openai → anthropic wire
@@ -472,11 +506,15 @@ export function openAiCompletionToAnthropicMessage(payload: Record<string, unkno
   const usage = (payload.usage ?? {}) as Record<string, unknown>;
   const id = typeof payload.id === 'string' ? `msg_${payload.id.replace(/^chatcmpl-/, '')}` : 'msg_khateway';
   const text = foldOpenAiContent(message.content);
+  const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
   const rawCalls = Array.isArray(message.tool_calls) ? (message.tool_calls as Record<string, unknown>[]) : [];
   const toolCalls = rawCalls.filter(
     (tc) => tc && typeof tc === 'object' && typeof (tc as Record<string, unknown>).id === 'string',
   );
   const content: Record<string, unknown>[] = [];
+  // M17: upstream reasoning_content → a thinking block leading the message
+  // (no signature — only anthropic-generated thinking carries one).
+  if (reasoning) content.push({ type: 'thinking', thinking: reasoning });
   if (text) content.push({ type: 'text', text });
   for (const tc of toolCalls) {
     const fn = (tc.function ?? {}) as Record<string, unknown>;
@@ -512,9 +550,13 @@ export function transformOpenAiSseToAnthropic(src: ReadableStream<Uint8Array>, m
     let stopReason: string | null = null;
     let inputTokens = 0;
     let outputTokens = 0;
-    // openai delta.tool_calls[] index → anthropic tool_use block (text block is index 0)
+    // openai delta.tool_calls[] index → anthropic tool_use block (text and
+    // thinking blocks claim indexes lazily — reasoning may precede text).
     const toolBlocks = new Map<number, { blockIndex: number; id: string; name: string }>();
-    let nextBlockIndex = 1;
+    let nextBlockIndex = 0;
+    let textBlockIndex: number | null = null;
+    let thinkingBlockIndex: number | null = null;
+    const openBlocks: number[] = [];
 
     const emitStart = () => {
       if (started) return;
@@ -534,7 +576,32 @@ export function transformOpenAiSseToAnthropic(src: ReadableStream<Uint8Array>, m
           },
         }),
       );
-      out.enqueue(sse('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+    };
+
+    /** Opens (once) the text block — lazily, so thinking can claim index 0. */
+    const ensureTextBlock = (): number => {
+      if (textBlockIndex === null) {
+        textBlockIndex = nextBlockIndex++;
+        openBlocks.push(textBlockIndex);
+        out.enqueue(sse('content_block_start', { type: 'content_block_start', index: textBlockIndex, content_block: { type: 'text', text: '' } }));
+      }
+      return textBlockIndex;
+    };
+
+    /** Opens (once) the thinking block for upstream reasoning_content deltas. */
+    const emitThinkingDelta = (thinking: string): void => {
+      if (thinkingBlockIndex === null) {
+        thinkingBlockIndex = nextBlockIndex++;
+        openBlocks.push(thinkingBlockIndex);
+        out.enqueue(sse('content_block_start', { type: 'content_block_start', index: thinkingBlockIndex, content_block: { type: 'thinking', thinking: '' } }));
+      }
+      out.enqueue(
+        sse('content_block_delta', {
+          type: 'content_block_delta',
+          index: thinkingBlockIndex,
+          delta: { type: 'thinking_delta', thinking },
+        }),
+      );
     };
 
     /** Opens (once) + streams one openai tool-call entry as a tool_use block. */
@@ -549,6 +616,7 @@ export function transformOpenAiSseToAnthropic(src: ReadableStream<Uint8Array>, m
           name: typeof fn.name === 'string' ? fn.name : '',
         };
         toolBlocks.set(idx, block);
+        openBlocks.push(block.blockIndex);
         out.enqueue(
           sse('content_block_start', {
             type: 'content_block_start',
@@ -575,9 +643,11 @@ export function transformOpenAiSseToAnthropic(src: ReadableStream<Uint8Array>, m
         out.enqueue(sse('error', { type: 'error', error: { type: 'api_error', message: 'Upstream stream ended without content.' } }));
         return;
       }
-      out.enqueue(sse('content_block_stop', { type: 'content_block_stop', index: 0 }));
-      for (const block of [...toolBlocks.values()].sort((a, b) => a.blockIndex - b.blockIndex)) {
-        out.enqueue(sse('content_block_stop', { type: 'content_block_stop', index: block.blockIndex }));
+      // A response with no content at all still yields a valid (empty) text
+      // block; tool/thinking-only streams close just their own blocks.
+      if (openBlocks.length === 0) ensureTextBlock();
+      for (const index of openBlocks) {
+        out.enqueue(sse('content_block_stop', { type: 'content_block_stop', index }));
       }
       out.enqueue(
         sse('message_delta', {
@@ -629,8 +699,13 @@ export function transformOpenAiSseToAnthropic(src: ReadableStream<Uint8Array>, m
         }
         emitStart();
         const delta = (choice.delta ?? {}) as Record<string, unknown>;
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+          // M17: upstream reasoning_content → thinking block deltas.
+          emitThinkingDelta(delta.reasoning_content);
+        }
         if (typeof delta.content === 'string' && delta.content) {
-          out.enqueue(sse('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta.content } }));
+          const idx = ensureTextBlock();
+          out.enqueue(sse('content_block_delta', { type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: delta.content } }));
         }
         if (Array.isArray(delta.tool_calls)) {
           for (const entry of delta.tool_calls as unknown[]) {

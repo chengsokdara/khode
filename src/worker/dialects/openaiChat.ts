@@ -4,8 +4,8 @@
 // error JSON shape, mapping upstream failures into that shape, and the M4
 // cross-dialect half that translates anthropic messages/streams into openai
 // completions/chunks (the reverse lives in dialects/anthropicMessages.ts).
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalRole, CanonicalToolCall } from '../canonical';
-import { boolOption, floatOption, imageOption, intOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalRole, CanonicalToolCall } from '../canonical';
+import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
 import { translateSseStream } from './sse';
 
 export interface OpenAiErrorBody {
@@ -213,12 +213,22 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
       return parseErr(`${param}.content must be a string or a non-empty content-part array`, `${param}.content`);
     }
 
-    const { role, content: _c, tool_calls: _tc, function_call: _fc, ...msgExtra } = msg;
+    // M17: reasoning_content in assistant history (DeepSeek/GLM convention —
+    // also what this face EMITS for reasoning models) → canonical reasoning.
+    let reasoning: CanonicalReasoningContent | undefined;
+    if (msg.reasoning_content !== undefined) {
+      if (typeof msg.reasoning_content === 'string' && msg.reasoning_content) {
+        reasoning = canonicalReasoningContent({ text: msg.reasoning_content });
+      }
+    }
+
+    const { role, content: _c, tool_calls: _tc, function_call: _fc, reasoning_content: _rc, ...msgExtra } = msg;
     messages.push({
       role: role as CanonicalRole,
       content,
       ...(images.length ? { images } : {}),
       ...(toolCalls ? { toolCalls } : {}),
+      ...(reasoning ? { reasoning } : {}),
       extra: msgExtra,
     });
   }
@@ -287,9 +297,19 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
   if (n.err) return parseErr(n.err, 'n');
   options.n = n.val;
 
+  // M17: reasoning_effort promoted from extras to the canonical reasoning
+  // slot (openai adapter re-emits it; anthropic/gemini adapters map it onto
+  // thinking budgets). Never rides extras to upstreams any more.
+  let reasoning: CanonicalReasoning | null = null;
+  if (raw.reasoning_effort !== undefined) {
+    const effort = reasoningEffortOption(raw.reasoning_effort, 'reasoning_effort');
+    if (effort.err) return parseErr(effort.err, 'reasoning_effort');
+    reasoning = canonicalReasoning(effort.val);
+  }
+
   // Everything we did not consume above rides along untouched.
   const {
-    model: _m, messages: _msgs, stream: _s, stream_options: _so, usage: _usage, temperature: _t, top_p: _tp, max_tokens: _mt, max_completion_tokens: _mct,
+    model: _m, messages: _msgs, stream: _s, stream_options: _so, usage: _usage, reasoning_effort: _re, temperature: _t, top_p: _tp, max_tokens: _mt, max_completion_tokens: _mct,
     stop: _st, n: _n, tools: _tools, tool_choice: _tch, parallel_tool_calls: _ptc, ...extras
   } = raw;
 
@@ -300,6 +320,7 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
       messages,
       stream,
       ...(streamIncludeUsage !== undefined ? { streamIncludeUsage } : {}),
+      ...(reasoning ? { reasoning } : {}),
       options,
       extras,
     },
@@ -401,8 +422,9 @@ export function toolInputToArguments(input: unknown): string {
 /**
  * Translates an anthropic Message JSON body into an openai chat.completion.
  * Text blocks fold into one message string; tool_use blocks become
- * `message.tool_calls` (arguments re-encoded as a JSON string). `model` is
- * the caller-facing model (the requested slug).
+ * `message.tool_calls` (arguments re-encoded as a JSON string); M17 thinking
+ * blocks fold into `message.reasoning_content` (DeepSeek/GLM convention).
+ * `model` is the caller-facing model (the requested slug).
  */
 export function anthropicMessageToOpenAiCompletion(
   payload: Record<string, unknown>,
@@ -410,11 +432,14 @@ export function anthropicMessageToOpenAiCompletion(
 ): Record<string, unknown> {
   const blocks = Array.isArray(payload.content) ? (payload.content as Record<string, unknown>[]) : [];
   let text = '';
+  let reasoning = '';
   const toolCalls: Record<string, unknown>[] = [];
   for (const block of blocks) {
     if (!block || typeof block !== 'object') continue;
     if (block.type === 'text' && typeof block.text === 'string') {
       text += (text ? '\n' : '') + block.text;
+    } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
+      reasoning += (reasoning ? '\n' : '') + block.thinking;
     } else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       toolCalls.push({
         id: block.id,
@@ -422,9 +447,10 @@ export function anthropicMessageToOpenAiCompletion(
         function: { name: block.name, arguments: toolInputToArguments(block.input) },
       });
     }
-    // thinking / redacted_thinking blocks are not translated (explicit parse-time rejection inbound)
+    // redacted_thinking blocks carry no client-visible text — dropped here
   }
   const message: Record<string, unknown> = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+  if (reasoning) message.reasoning_content = reasoning;
   if (toolCalls.length) message.tool_calls = toolCalls;
   const usage = (payload.usage ?? {}) as Record<string, unknown>;
   const promptTokens = toCount(usage.input_tokens);
@@ -558,6 +584,7 @@ export function transformAnthropicSseToOpenAi(
                 ),
               );
             }
+            // thinking blocks surface via their deltas (below) — no start chunk needed
             break;
           }
           case 'content_block_delta': {
@@ -565,6 +592,11 @@ export function transformAnthropicSseToOpenAi(
             if (delta.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
               emitStart();
               out.enqueue(chunk({ content: delta.text }, null));
+            } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string' && delta.thinking) {
+              // M17: anthropic thinking → openai reasoning_content delta (the
+              // DeepSeek/GLM convention this face already accepts in history).
+              emitStart();
+              out.enqueue(chunk({ reasoning_content: delta.thinking }, null));
             } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && delta.partial_json) {
               const toolIndex = toolIndexByBlock.get(typeof payload.index === 'number' ? payload.index : -1);
               if (toolIndex !== undefined) {
@@ -572,7 +604,7 @@ export function transformAnthropicSseToOpenAi(
                 out.enqueue(chunk({ tool_calls: [{ index: toolIndex, function: { arguments: delta.partial_json } }] }, null));
               }
             }
-            // thinking_delta arrives with the later reasoning work
+            // signature_delta rides nothing client-visible
             break;
           }
           case 'message_delta': {

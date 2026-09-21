@@ -15,6 +15,7 @@ import { joinAdapterUrl } from '../env';
 import type { CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolChoice } from '../canonical';
 import type { RoutingCandidate } from '../routing';
 import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
+import { EFFORT_BUDGETS } from '../dialects/options';
 
 /** Wire value Khateway sends unless the provider overrides it via default_headers. */
 export const ANTHROPIC_VERSION = '2023-06-01';
@@ -78,6 +79,13 @@ function turnFor(m: CanonicalMessage, system: string[]): Turn | null {
     return { role: 'user', blocks: [result] };
   }
   const blocks: AnthropicBlock[] = [];
+  // M17: thinking/redacted_thinking blocks LEAD an assistant turn (API rule —
+  // reasoning precedes content; signatures ride verbatim).
+  if (m.reasoning?.redacted) {
+    blocks.push({ type: 'redacted_thinking', data: m.reasoning.redacted });
+  } else if (m.reasoning?.text) {
+    blocks.push({ type: 'thinking', thinking: m.reasoning.text, ...(m.reasoning.signature ? { signature: m.reasoning.signature } : {}) });
+  }
   if (m.content) blocks.push({ type: 'text', text: m.content });
   if (m.role === 'user') {
     for (const img of m.images ?? []) blocks.push(imageBlock(img));
@@ -157,6 +165,23 @@ export async function buildAnthropicMessagesRequest(
   const maxTokens =
     o.maxTokens !== undefined && o.maxTokens !== null ? o.maxTokens : (cand.model.maxOutputTokens ?? 4096);
 
+  // M17: canonical reasoning → the Messages `thinking` param. Explicit budgets
+  // win over the effort buckets; the budget is clamped below max_tokens (API
+  // rule) and disabled when there is no room left. With thinking enabled the
+  // API forbids top_p/top_k tweaks and temperatures above 1 — they're dropped
+  // rather than guaranteed-400ing the request.
+  const budgetRequested =
+    req.reasoning?.budgetTokens != null
+      ? Math.round(req.reasoning.budgetTokens)
+      : req.reasoning?.effort
+        ? (EFFORT_BUDGETS[req.reasoning.effort] || 1024)
+        : null;
+  let thinkingBudget: number | null = null;
+  if (budgetRequested !== null && budgetRequested > 0) {
+    const clamped = Math.min(budgetRequested, maxTokens - 1);
+    thinkingBudget = clamped >= 1024 ? clamped : null;
+  }
+
   const body: Record<string, unknown> = {};
   for (const key of ANTHROPIC_EXTRA_KEYS) {
     if (key in req.extras) body[key] = req.extras[key];
@@ -168,8 +193,12 @@ export async function buildAnthropicMessagesRequest(
   body.model = cand.model.upstreamModel;
   body.max_tokens = maxTokens;
   body.stream = req.stream;
-  if (o.temperature !== undefined && o.temperature !== null) body.temperature = o.temperature;
-  if (o.topP !== undefined && o.topP !== null) body.top_p = o.topP;
+  if (thinkingBudget !== null) {
+    body.thinking = { type: 'enabled', budget_tokens: thinkingBudget };
+  } else {
+    if (o.temperature !== undefined && o.temperature !== null) body.temperature = o.temperature;
+    if (o.topP !== undefined && o.topP !== null) body.top_p = o.topP;
+  }
   if (o.stop !== undefined && o.stop !== null && o.stop.length > 0) body.stop_sequences = o.stop;
 
   if (o.tools?.length) {

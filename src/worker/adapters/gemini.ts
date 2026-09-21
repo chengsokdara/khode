@@ -23,6 +23,7 @@ import { joinAdapterUrl } from '../env';
 import type { CanonicalChatRequest, CanonicalEmbeddingsRequest, CanonicalImage, CanonicalMessage } from '../canonical';
 import type { RoutingCandidate } from '../routing';
 import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
+import { EFFORT_BUDGETS } from '../dialects/options';
 
 /** Splits a `data:<media>;base64,<data>` URL; null for any other shape. */
 function parseDataUrl(url: string): { mediaType: string; data: string } | null {
@@ -84,26 +85,39 @@ function partsFor(m: CanonicalMessage, functionNameById: Map<string, string>): R
 }
 
 /**
- * Maps the openai-dialect `reasoning_effort` extra (and a defensive
- * `thinking.budget_tokens` extra) onto `generationConfig.thinkingConfig`.
- * `minimal` disables thinking (budget 0 — supported by the Flash tier; Pro
- * rejects it upstream with its own error, surfaced honestly). Numeric
- * budgets are clamped to the documented 0–32768 range.
+ * Maps canonical reasoning (M17) — with the openai-dialect `reasoning_effort`
+ * / `thinking.budget_tokens` extras as a legacy fallback — onto
+ * `generationConfig.thinkingConfig`. `minimal` disables thinking (budget 0 —
+ * supported by the Flash tier; Pro rejects it upstream with its own error,
+ * surfaced honestly). Numeric budgets are clamped to the documented 0–32768
+ * range. When the client opted into reasoning, `includeThoughts: true` asks
+ * Gemini for thought summaries so they can be surfaced client-side.
  */
-function thinkingConfigFor(extras: Record<string, unknown>): Record<string, unknown> | null {
-  const effort = extras['reasoning_effort'];
-  if (typeof effort === 'string') {
-    const budget = effort === 'minimal' ? 0 : effort === 'low' ? 1024 : effort === 'medium' ? 8192 : effort === 'high' ? 24576 : null;
-    if (budget !== null) return { thinkingBudget: budget };
+function thinkingConfigFor(req: CanonicalChatRequest): Record<string, unknown> | null {
+  const canonical = req.reasoning;
+  const extras = req.extras;
+  let budget: number | null = null;
+  if (canonical?.budgetTokens !== undefined && canonical.budgetTokens !== null) {
+    budget = Math.min(32768, Math.max(0, Math.round(canonical.budgetTokens)));
+  } else if (canonical?.effort) {
+    budget = EFFORT_BUDGETS[canonical.effort];
+  } else if (typeof extras['reasoning_effort'] === 'string') {
+    const effort = extras['reasoning_effort'];
+    budget = effort === 'minimal' ? 0 : effort === 'low' ? 1024 : effort === 'medium' ? 8192 : effort === 'high' ? 24576 : null;
   }
-  const thinking = extras['thinking'];
-  if (thinking && typeof thinking === 'object' && !Array.isArray(thinking)) {
-    const t = thinking as Record<string, unknown>;
-    if (typeof t.budget_tokens === 'number' && Number.isFinite(t.budget_tokens)) {
-      return { thinkingBudget: Math.min(32768, Math.max(0, Math.round(t.budget_tokens))) };
+  if (budget === null) {
+    const thinking = extras['thinking'];
+    if (thinking && typeof thinking === 'object' && !Array.isArray(thinking)) {
+      const t = thinking as Record<string, unknown>;
+      if (typeof t.budget_tokens === 'number' && Number.isFinite(t.budget_tokens)) {
+        budget = Math.min(32768, Math.max(0, Math.round(t.budget_tokens)));
+      }
     }
   }
-  return null;
+  if (budget === null) return null;
+  const config: Record<string, unknown> = { thinkingBudget: budget };
+  if (budget > 0) config.includeThoughts = true;
+  return config;
 }
 
 /**
@@ -191,7 +205,7 @@ export async function buildGeminiGenerateContentRequest(
   if (typeof req.extras.top_k === 'number' && Number.isFinite(req.extras.top_k)) {
     generationConfig.topK = req.extras.top_k;
   }
-  const thinkingConfig = thinkingConfigFor(req.extras);
+  const thinkingConfig = thinkingConfigFor(req);
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
   if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig;
   // NOTE: remaining client extras are openai/anthropic-dialect fields Gemini

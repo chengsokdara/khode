@@ -247,6 +247,37 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
 
 ## Decisions already made (do not re-litigate without asking)
 
+- **M17 reasoning/thinking contract (session 22, do not regress)**:
+  - **reasoning_content is the openai-face convention** (DeepSeek/GLM — the
+    same field this gateway accepts in history and emits on both JSON and
+    SSE). Anthropic thinking blocks/`thinking_delta` and gemini thought
+    parts both normalize onto it; the reverse translators emit anthropic
+    thinking blocks (leading the message, signature verbatim) and responses
+    `rs_*` reasoning items with `summary_text`.
+  - **Budget precedence**: explicit `budgetTokens` > `effort` bucket
+    (EFFORT_BUDGETS in dialects/options.ts: minimal 0 / low 1024 / medium
+    8192 / high 24576). Anthropic: clamped to max_tokens-1, DROPPED when the
+    clamp falls below the API's 1024 floor (request succeeds WITHOUT
+    thinking; do not "fix" to a hard error); temperature/top_p suppressed
+    while thinking is on (API forbids them). Gemini: 0–32768 clamp,
+    `includeThoughts: true` whenever budget > 0. Openai: only `reasoning_effort`
+    re-emits (budgets are gateway-only); minimal → NOT re-emitted to openai
+    (not in its vocabulary).
+  - **History reasoning**: anthropic keeps it (thinking blocks lead the
+    turn — signature rides verbatim); openai and gemini histories DROP
+    reasoning (`reasoning_content` never reaches gemini/openai upstreams —
+    not needed to continue a conversation). Responses reasoning input items
+    fold summary_text into canonical reasoning.
+  - **Redacted thinking**: parses (`data` → canonical redacted), re-emits to
+    anthropic only, is dropped by every translator (no client-visible text).
+  - **Responses reasoning items**: lazy-opened BEFORE the message item,
+    finalized (summary_text.done → part.done → output_item.done) before it;
+    a reasoning-only stream is valid output; sequence numbers stay monotonic.
+  - **Billing unchanged**: anthropic counts thinking in output_tokens; gemini
+    thoughts fold into output (M12). Cache keys: canonical reasoning rides
+    cacheKeyInput via the request projection — a thinking and a non-thinking
+    variant of the same prompt are DIFFERENT entries (correct).
+
 - **M16 parity-pack contract (session 21, do not regress)**:
   - **/v1/models pricing is per-token decimal strings** derived from
     USD-per-1M via `usdPerMillionToPerToken` (toFixed(12) + trailing-zero

@@ -15,8 +15,8 @@
 // reasoning fail with an explicit 400 pointer — never silently mis-shaped.
 // Errors use the OpenAI error envelope (shared with the chat dialect;
 // rendered by routes/gateway.ts via openAiError).
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalRole, CanonicalToolCall } from '../canonical';
-import { boolOption, floatOption, imageOption, intOption, toolChoiceOption, toolDefsOption } from './options';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalRole, CanonicalToolCall } from '../canonical';
+import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, toolChoiceOption, toolDefsOption } from './options';
 import { toolInputToArguments } from './openaiChat';
 import { translateSseStream, type SseOut } from './sse';
 
@@ -98,8 +98,20 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
   if (parallel.err) return parseErr(parallel.err, 'parallel_tool_calls');
   options.parallelToolCalls = parallel.val ?? null;
 
-  if ('reasoning' in raw) {
-    return parseErr("'reasoning' is not supported yet — reasoning models arrive in a later milestone.", 'reasoning');
+  // M17: the reasoning param parses onto canonical reasoning (effort only;
+  // `summary` is accepted and honored implicitly — upstream reasoning is
+  // always surfaced as reasoning output items / summary deltas when present).
+  let reasoning: CanonicalReasoning | null = null;
+  if (raw.reasoning !== undefined && raw.reasoning !== null) {
+    if (!raw.reasoning || typeof raw.reasoning !== 'object' || Array.isArray(raw.reasoning)) {
+      return parseErr('reasoning must be an object', 'reasoning');
+    }
+    const r = raw.reasoning as Record<string, unknown>;
+    if (r.effort !== undefined && r.effort !== null) {
+      const effort = reasoningEffortOption(r.effort, 'reasoning.effort');
+      if (effort.err) return parseErr(effort.err, 'reasoning.effort');
+      reasoning = canonicalReasoning(effort.val);
+    }
   }
   for (const key of STATE_KEYS) {
     if (key in raw) {
@@ -165,7 +177,27 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
         return parseErr(`'item_reference' input items are not supported — Khateway does not store previous responses.`, param);
       }
       if (itemType === 'reasoning') {
-        return parseErr(`'reasoning' input items are not supported yet — reasoning arrives in a later milestone.`, param);
+        // M17: reasoning input items parse onto an assistant message carrying
+        // canonical reasoning (summary text only; the model regenerates its
+        // own thinking — history reasoning is context, not instructions).
+        let summaryText = '';
+        if (Array.isArray(item.summary)) {
+          for (const rawPart of item.summary as unknown[]) {
+            const part = rawPart && typeof rawPart === 'object' ? (rawPart as Record<string, unknown>) : null;
+            if (part && part.type === 'summary_text' && typeof part.text === 'string' && part.text) {
+              summaryText += (summaryText ? '\n' : '') + part.text;
+            }
+          }
+        }
+        if (summaryText) {
+          messages.push({
+            role: 'assistant',
+            content: '',
+            reasoning: canonicalReasoningContent({ text: summaryText }),
+            extra: {},
+          });
+        }
+        continue;
       }
       if (itemType !== 'message') {
         return parseErr(`Unsupported input item type '${itemType}'`, param);
@@ -228,7 +260,7 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
 
   // No extras: responses-only params would be rejected by the translated
   // upstream dialects, so everything unconsumed above is dropped (see header).
-  return { ok: true, model, request: { messages, stream, options, extras: {} } };
+  return { ok: true, model, request: { messages, stream, ...(reasoning ? { reasoning } : {}), options, extras: {} } };
 }
 
 // ------------------------------------------------ responses ← upstream (JSON)
@@ -350,10 +382,16 @@ function toolCallsToFunctionCallItems(rawCalls: unknown): Record<string, unknown
   return items;
 }
 
+/** M17: upstream reasoning text → a Responses reasoning output item. */
+function reasoningItem(id: string, text: string): Record<string, unknown> {
+  return { id, type: 'reasoning', summary: [{ type: 'summary_text', text }] };
+}
+
 /**
  * Translates an openai chat.completion JSON body into a Responses API object.
- * `message.tool_calls` become function_call output items. `model` is the
- * caller-facing model (the requested slug).
+ * `message.tool_calls` become function_call output items; M17
+ * `message.reasoning_content` becomes a reasoning output item leading the
+ * message. `model` is the caller-facing model (the requested slug).
  */
 export function openAiCompletionToResponse(payload: Record<string, unknown>, model: string): Record<string, unknown> {
   const choices = Array.isArray(payload.choices) ? (payload.choices as Record<string, unknown>[]) : [];
@@ -363,8 +401,10 @@ export function openAiCompletionToResponse(payload: Record<string, unknown>, mod
   const { status, reason } = responseStatusForFinish(first.finish_reason);
   const suffix = typeof payload.id === 'string' && payload.id ? payload.id.replace(/^chatcmpl-/, '') : 'khateway';
   const text = textOfOpenAiContent(message.content);
+  const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
   const callItems = toolCallsToFunctionCallItems(message.tool_calls);
   const items: Record<string, unknown>[] = [];
+  if (reasoning) items.push(reasoningItem(`rs_${suffix}`, reasoning));
   if (text || callItems.length === 0) {
     items.push(outputMessageItem(`msg_${suffix}`, text, 'completed'));
   }
@@ -383,17 +423,21 @@ export function openAiCompletionToResponse(payload: Record<string, unknown>, mod
 /**
  * Translates an anthropic Message JSON body into a Responses API object.
  * Text blocks fold into one output_text part; tool_use blocks become
- * function_call output items. `model` is the caller-facing model (the
+ * function_call output items; M17 thinking blocks become a reasoning output
+ * item leading the message. `model` is the caller-facing model (the
  * requested slug).
  */
 export function anthropicMessageToResponse(payload: Record<string, unknown>, model: string): Record<string, unknown> {
   const blocks = Array.isArray(payload.content) ? (payload.content as Record<string, unknown>[]) : [];
   let text = '';
+  let reasoning = '';
   const callItems: Record<string, unknown>[] = [];
   for (const block of blocks) {
     if (!block || typeof block !== 'object') continue;
     if (block.type === 'text' && typeof block.text === 'string') {
       text += (text ? '\n' : '') + block.text;
+    } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
+      reasoning += (reasoning ? '\n' : '') + block.thinking;
     } else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       callItems.push(
         functionCallItem(
@@ -405,12 +449,13 @@ export function anthropicMessageToResponse(payload: Record<string, unknown>, mod
         ),
       );
     }
-    // thinking / redacted_thinking blocks are rejected at parse time
+    // redacted_thinking blocks carry no client-visible text — dropped here
   }
   const usage = (payload.usage ?? {}) as Record<string, unknown>;
   const { status, reason } = responseStatusForStopReason(payload.stop_reason);
   const suffix = typeof payload.id === 'string' && payload.id ? payload.id.replace(/^msg_/, '') : 'khateway';
   const items: Record<string, unknown>[] = [];
+  if (reasoning) items.push(reasoningItem(`rs_${suffix}`, reasoning));
   if (text || callItems.length === 0) {
     items.push(outputMessageItem(`msg_${suffix}`, text, 'completed'));
   }
@@ -445,12 +490,18 @@ function makeResponsesStream(out: SseOut, model: string) {
   const createdAt = Math.floor(Date.now() / 1000);
   let respId = 'resp_khateway';
   let itemId = 'msg_khateway';
+  let reasoningItemId = 'rs_khateway';
   let seq = 0;
   let created = false;
   let opened = false; // message item added
+  let reasoningOpened = false; // M17 reasoning item added
+  let reasoningDone = false;
+  let reasoningText = '';
+  let reasoningOutIndex = -1;
   let closed = false;
   let text = '';
   let nextOutIndex = 0;
+  let messageOutIndex = 0;
   const calls: { itemId: string; callId: string; name: string; args: string; outIndex: number }[] = [];
   const callByCallId = new Map<string, (typeof calls)[number]>();
 
@@ -485,27 +536,77 @@ function makeResponsesStream(out: SseOut, model: string) {
     begin();
     if (opened || closed) return;
     opened = true;
-    const outIndex = nextOutIndex++;
+    messageOutIndex = nextOutIndex++;
     emit('response.output_item.added', {
       type: 'response.output_item.added',
       sequence_number: next(),
-      output_index: outIndex,
+      output_index: messageOutIndex,
       item: messageItem('', 'in_progress'),
     });
     emit('response.content_part.added', {
       type: 'response.content_part.added',
       sequence_number: next(),
       item_id: itemId,
-      output_index: outIndex,
+      output_index: messageOutIndex,
       content_index: 0,
       part: { type: 'output_text', text: '', annotations: [] },
+    });
+  };
+
+  /** Opens (once) the M17 reasoning item — always before the message item. */
+  const openReasoning = (): void => {
+    begin();
+    if (reasoningOpened || closed) return;
+    reasoningOpened = true;
+    reasoningOutIndex = nextOutIndex++;
+    emit('response.output_item.added', {
+      type: 'response.output_item.added',
+      sequence_number: next(),
+      output_index: reasoningOutIndex,
+      item: { id: reasoningItemId, type: 'reasoning', summary: [] },
+    });
+    emit('response.reasoning_summary_part.added', {
+      type: 'response.reasoning_summary_part.added',
+      sequence_number: next(),
+      item_id: reasoningItemId,
+      output_index: reasoningOutIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: '' },
+    });
+  };
+
+  /** Finalizes the reasoning item (summary text/part + output_item .done), if open. */
+  const finalizeReasoning = (): void => {
+    if (!reasoningOpened || reasoningDone || closed) return;
+    reasoningDone = true;
+    emit('response.reasoning_summary_text.done', {
+      type: 'response.reasoning_summary_text.done',
+      sequence_number: next(),
+      item_id: reasoningItemId,
+      output_index: reasoningOutIndex,
+      summary_index: 0,
+      text: reasoningText,
+    });
+    emit('response.reasoning_summary_part.done', {
+      type: 'response.reasoning_summary_part.done',
+      sequence_number: next(),
+      item_id: reasoningItemId,
+      output_index: reasoningOutIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: reasoningText },
+    });
+    emit('response.output_item.done', {
+      type: 'response.output_item.done',
+      sequence_number: next(),
+      output_index: reasoningOutIndex,
+      item: { id: reasoningItemId, type: 'reasoning', summary: [{ type: 'summary_text', text: reasoningText }] },
     });
   };
 
   /** Finalizes the message item (its three .done events), if open and not yet done. */
   const finalizeMessage = (): void => {
     if (!opened || closed) return;
-    const outIndex = 0; // the message item is always the first output
+    const outIndex = messageOutIndex;
     emit('response.output_text.done', {
       type: 'response.output_text.done',
       sequence_number: next(),
@@ -540,10 +641,12 @@ function makeResponsesStream(out: SseOut, model: string) {
       if (created || typeof raw !== 'string' || !raw) return;
       respId = `resp_${raw.replace(/^(chatcmpl-|msg_|resp_)/, '') || 'khateway'}`;
       itemId = `msg_${respId.slice('resp_'.length)}`;
+      reasoningItemId = `rs_${respId.slice('resp_'.length)}`;
     },
     /** Opens + streams one tool invocation (function_call output item). */
     addToolCall(callId: string, name: string): void {
       if (closed || !callId) return;
+      finalizeReasoning();
       finalizeMessage();
       begin();
       const state = {
@@ -576,26 +679,44 @@ function makeResponsesStream(out: SseOut, model: string) {
         delta: fragment,
       });
     },
+    /** Streams one upstream reasoning fragment (thinking/reasoning_content). */
+    reasoningDelta(t: string): void {
+      if (closed || !t) return;
+      if (!reasoningDone) {
+        openReasoning();
+        reasoningText += t;
+        emit('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          sequence_number: next(),
+          item_id: reasoningItemId,
+          output_index: reasoningOutIndex,
+          summary_index: 0,
+          delta: t,
+        });
+      }
+    },
     delta(t: string): void {
       if (closed || !t) return;
+      finalizeReasoning();
       openMessage();
       text += t;
       emit('response.output_text.delta', {
         type: 'response.output_text.delta',
         sequence_number: next(),
         item_id: itemId,
-        output_index: 0,
+        output_index: messageOutIndex,
         content_index: 0,
         delta: t,
       });
     },
     close(status: StatusOutcome, usage: { input_tokens: number; output_tokens: number }): void {
       if (closed) return;
-      if (!created || (!opened && calls.length === 0)) {
+      if (!created || (!opened && calls.length === 0 && !reasoningOpened)) {
         this.fail('Upstream stream ended without content.');
         return;
       }
       finalizeMessage(); // before closed flips — its guard checks `closed`
+      finalizeReasoning(); // same — must run before `closed` flips
       closed = true;
       for (const c of calls) {
         emit('response.function_call_arguments.done', {
@@ -612,7 +733,11 @@ function makeResponsesStream(out: SseOut, model: string) {
           item: functionCallItem(c.itemId, c.callId, c.name, c.args, 'completed'),
         });
       }
+      // M17: a reasoning-only stream is valid output (summary, no message).
       const output: Record<string, unknown>[] = [];
+      if (reasoningOpened) {
+        output.push({ id: reasoningItemId, type: 'reasoning', summary: [{ type: 'summary_text', text: reasoningText }] });
+      }
       if (opened) output.push(messageItem(text, 'completed'));
       for (const c of calls) output.push(functionCallItem(c.itemId, c.callId, c.name, c.args, 'completed'));
       emit('response.completed', {
@@ -691,6 +816,7 @@ export function transformOpenAiSseToResponses(src: ReadableStream<Uint8Array>, m
           return;
         }
         const delta = (choice.delta ?? {}) as Record<string, unknown>;
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) stream.reasoningDelta(delta.reasoning_content);
         if (typeof delta.content === 'string' && delta.content) stream.delta(delta.content);
         if (Array.isArray(delta.tool_calls)) {
           for (const raw of delta.tool_calls as unknown[]) {
@@ -764,6 +890,9 @@ export function transformAnthropicSseToResponses(src: ReadableStream<Uint8Array>
             const delta = (payload.delta ?? {}) as Record<string, unknown>;
             if (delta.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
               stream.delta(delta.text);
+            } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string' && delta.thinking) {
+              // M17: anthropic thinking → reasoning summary deltas.
+              stream.reasoningDelta(delta.thinking);
             } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && delta.partial_json) {
               const callId = callIdByBlock.get(typeof payload.index === 'number' ? payload.index : -1);
               if (callId) stream.toolDelta(callId, delta.partial_json);

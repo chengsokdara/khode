@@ -115,15 +115,21 @@ export function mapGeminiFinishReason(finish: unknown, hasToolCalls = false): st
   }
 }
 
-/** One candidate's parts → openai text + tool_calls (thought parts skipped). */
-function partsToOpenAiMessage(parts: unknown): { text: string; toolCalls: Record<string, unknown>[] } {
+/** One candidate's parts → openai text + reasoning + tool_calls (M17: thought
+ * parts surface as `reasoning_content` — the DeepSeek/GLM convention this
+ * gateway normalizes reasoning onto). */
+function partsToOpenAiMessage(parts: unknown): { text: string; reasoning: string; toolCalls: Record<string, unknown>[] } {
   let text = '';
+  let reasoning = '';
   const toolCalls: Record<string, unknown>[] = [];
-  if (!Array.isArray(parts)) return { text, toolCalls };
+  if (!Array.isArray(parts)) return { text, reasoning, toolCalls };
   for (const raw of parts) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const part = raw as Record<string, unknown>;
-    if (part.thought === true) continue; // thinking summaries are not surfaced
+    if (part.thought === true) {
+      if (typeof part.text === 'string' && part.text) reasoning += (reasoning ? '\n' : '') + part.text;
+      continue;
+    }
     if (typeof part.text === 'string' && part.text) {
       text += (text ? '\n' : '') + part.text;
     } else if (part.functionCall && typeof part.functionCall === 'object') {
@@ -145,7 +151,7 @@ function partsToOpenAiMessage(parts: unknown): { text: string; toolCalls: Record
     }
     // inlineData / fileData / executableCode parts have no openai equivalent here
   }
-  return { text, toolCalls };
+  return { text, reasoning, toolCalls };
 }
 
 /**
@@ -159,8 +165,9 @@ export function geminiCompletionToOpenAi(payload: Record<string, unknown>, model
   const candidate = candidates[0] ?? {};
   const content = candidate.content;
   const parts = content && typeof content === 'object' && !Array.isArray(content) ? (content as Record<string, unknown>).parts : null;
-  const { text, toolCalls } = partsToOpenAiMessage(parts);
+  const { text, reasoning, toolCalls } = partsToOpenAiMessage(parts);
   const message: Record<string, unknown> = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+  if (reasoning) message.reasoning_content = reasoning;
   if (toolCalls.length) message.tool_calls = toolCalls;
   const usage = geminiUsageMetadata(payload);
   const { promptTokens, completionTokens } = usage
@@ -312,10 +319,15 @@ export function transformGeminiSseToOpenAi(
           const parts = content && typeof content === 'object' && !Array.isArray(content) ? (content as Record<string, unknown>).parts : null;
           if (Array.isArray(parts)) {
             let textBuffer = '';
+            let thoughtBuffer = '';
             for (const raw of parts) {
               if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
               const part = raw as Record<string, unknown>;
-              if (part.thought === true) continue;
+              if (part.thought === true) {
+                // M17: thought summaries surface as reasoning_content deltas.
+                if (typeof part.text === 'string' && part.text) thoughtBuffer += (thoughtBuffer ? '\n' : '') + part.text;
+                continue;
+              }
               if (typeof part.text === 'string' && part.text) textBuffer += (textBuffer ? '\n' : '') + part.text;
               if (part.functionCall && typeof part.functionCall === 'object') {
                 const fc = part.functionCall as Record<string, unknown>;
@@ -337,6 +349,10 @@ export function transformGeminiSseToOpenAi(
                   );
                 }
               }
+            }
+            if (thoughtBuffer) {
+              emitStart();
+              out.enqueue(chunk({ reasoning_content: thoughtBuffer }, null));
             }
             if (textBuffer) {
               emitStart();

@@ -65,6 +65,7 @@ const SLUGS = [
   'mock-log-json', 'mock-log-stream',
   'mock-gemini', 'mock-gemini-tools', 'mock-gemini-400', 'mock-gemini-429',
   'mock-emb', 'mock-emb-fb', 'mock-emb-anthropic', 'mock-gem-emb',
+  'mock-claude-think', 'mock-gem-think',
 ];
 const KEY_NAMES = ['Smoke Key (smoke)', 'Restricted (smoke)', 'Capped (smoke)'];
 
@@ -91,6 +92,7 @@ async function cleanup() {
 // Khateway translated auth headers, system positioning, max_tokens, etc.
 
 const lastReq = { path: '', headers: {}, body: {} };
+let lastGemThinking = null; // M17: last generationConfig.thinkingConfig seen by the gemini face
 
 function startMockUpstream() {
   const server = http.createServer((req, res) => {
@@ -138,6 +140,39 @@ function startMockUpstream() {
       }
       if (url.endsWith('/v1/messages')) {
         // ---- anthropic Messages dialect mock ----
+        if (model === 'claude-think') {
+          // M17 thinking response: thinking block + text (JSON) / thinking_delta + text_delta (SSE).
+          if (body.stream) {
+            res.writeHead(200, { 'content-type': 'text/event-stream' });
+            res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: 'msg_think', type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 9, output_tokens: 0 } } })}\n\n`);
+            res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } })}\n\n`);
+            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'pondering ' } })}\n\n`);
+            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'deeply' } })}\n\n`);
+            res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
+            res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })}\n\n`);
+            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Thought answer' } })}\n\n`);
+            res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 1 })}\n\n`);
+            res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 15 } })}\n\n`);
+            res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+            return res.end();
+          }
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end(
+            JSON.stringify({
+              id: 'msg_think',
+              type: 'message',
+              role: 'assistant',
+              model,
+              content: [
+                { type: 'thinking', thinking: 'pondering deeply', signature: 'sig-mock' },
+                { type: 'text', text: 'Thought answer' },
+              ],
+              stop_reason: 'end_turn',
+              stop_sequence: null,
+              usage: { input_tokens: 9, output_tokens: 15 },
+            }),
+          );
+        }
         if (model === 'claude-429') {
           res.writeHead(429, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Slow down' } }));
@@ -203,6 +238,7 @@ function startMockUpstream() {
       if (gemMatch) {
         const gemModel = decodeURIComponent(gemMatch[1]);
         const isStream = gemMatch[2] === 'streamGenerateContent';
+        lastGemThinking = body.generationConfig?.thinkingConfig ?? null; // M17 recorder
         // ---- native Gemini embeddings (M13): :embedContent / :batchEmbedContents
         if (gemMatch[2] === 'embedContent' || gemMatch[2] === 'batchEmbedContents') {
           const texts =
@@ -234,6 +270,9 @@ function startMockUpstream() {
           const gemEvent = (payload) => `data: ${JSON.stringify(payload)}\n\n`;
           if (gemModel === 'gemini-tool') {
             res.write(gemEvent({ responseId: 'gem-resp-1', candidates: [{ content: { role: 'model', parts: [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] }, index: 0 }] }));
+          } else if (gemModel === 'gem-think') {
+            res.write(gemEvent({ responseId: 'gem-think-1', candidates: [{ content: { role: 'model', parts: [{ thought: true, text: 'gemini ' }, { thought: true, text: 'thinking' }] }, index: 0 }] }));
+            res.write(gemEvent({ responseId: 'gem-think-1', candidates: [{ content: { role: 'model', parts: [{ text: 'Thought answer' }] }, index: 0 }] }));
           } else {
             res.write(gemEvent({ responseId: 'gem-resp-1', candidates: [{ content: { role: 'model', parts: [{ text: 'Hello from native' }] }, index: 0 }] }));
             res.write(gemEvent({ responseId: 'gem-resp-1', candidates: [{ content: { role: 'model', parts: [{ text: ' Gemini!' }] }, index: 0 }] }));
@@ -242,7 +281,11 @@ function startMockUpstream() {
           return res.end();
         }
         const gemParts =
-          gemModel === 'gemini-tool' ? [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] : [{ text: 'Hello from native Gemini!' }];
+          gemModel === 'gemini-tool'
+            ? [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }]
+            : gemModel === 'gem-think'
+              ? [{ thought: true, text: 'gemini thinking' }, { text: 'Thought answer' }]
+              : [{ text: 'Hello from native Gemini!' }];
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(
           JSON.stringify({
@@ -500,6 +543,9 @@ const mock = await startMockUpstream();
     ['mock-emb-fb', 'mock-emb-429', prov.body.id, ['mock-emb']],
     ['mock-emb-anthropic', 'claude-mock', provAnthropic.body.id],
     ['mock-gem-emb', 'gem-emb-mock', provGemini.body.id],
+    // M17 thinking fixtures: anthropic thinking face + native-gemini thought face.
+    ['mock-claude-think', 'claude-think', provAnthropic.body.id],
+    ['mock-gem-think', 'gem-think', provGemini.body.id],
   ]) {
     const r = await mkModel(slug, upstream, provId, fallbacks);
     created.push([slug, r]);
@@ -2045,6 +2091,163 @@ const mock = await startMockUpstream();
     body: JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }),
   }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
   check('keyless again after toggle-back: no-auth chat → 200', chatKeylessAgain.status === 200, String(chatKeylessAgain.status));
+
+  // ==================================================================
+  // M17 — reasoning/thinking end-to-end: anthropic thinking param in/out,
+  // openai reasoning_effort → thinking budgets, gemini thought surfacing,
+  // and reasoning in every client dialect (JSON + SSE).
+  // ==================================================================
+
+  // -- anthropic face: thinking param + thinking blocks (JSON) ---------------
+  const thinkRes = await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-claude-think', max_tokens: 4096, thinking: { type: 'enabled', budget_tokens: 2048 },
+    messages: [{ role: 'user', content: 'Think hard' }],
+  }));
+  check(
+    'M17 anthropic dialect: thinking param accepted → 200',
+    thinkRes.status === 200,
+    JSON.stringify(thinkRes.body).slice(0, 160),
+  );
+  check(
+    'M17 upstream got the thinking param (budget as sent)',
+    lastReq.body?.thinking?.type === 'enabled' && lastReq.body?.thinking?.budget_tokens === 2048,
+    JSON.stringify(lastReq.body?.thinking),
+  );
+  check(
+    'M17 anthropic same-dialect passthrough: thinking block leads the response content',
+    thinkRes.body?.content?.[0]?.type === 'thinking' && thinkRes.body?.content?.[0]?.signature === 'sig-mock',
+    JSON.stringify(thinkRes.body?.content),
+  );
+
+  // thinking history: send the assistant thinking block back in — must parse.
+  const thinkHistory = await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-claude-think', max_tokens: 1024, thinking: { type: 'enabled', budget_tokens: 2048 },
+    messages: [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'prior', signature: 'sig' }, { type: 'text', text: 'a' }] },
+      { role: 'user', content: 'go on' },
+    ],
+  }));
+  check('M17 thinking history parses → 200', thinkHistory.status === 200, JSON.stringify(thinkHistory.body).slice(0, 120));
+  const histTurn = lastReq.body?.messages?.find((m) => Array.isArray(m.content) && m.content.some?.((b) => b.type === 'thinking'));
+  check(
+    'M17 thinking history re-emitted to the anthropic upstream (signature verbatim)',
+    histTurn && histTurn.content[0].type === 'thinking' && histTurn.content[0].thinking === 'prior' && histTurn.content[0].signature === 'sig',
+    JSON.stringify(lastReq.body?.messages?.[1]),
+  );
+
+  // No room for a meaningful budget (anthropic floor 1024) → thinking dropped,
+  // the request still succeeds without it.
+  await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-claude', max_tokens: 100, thinking: { type: 'enabled', budget_tokens: 5000 },
+    messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M17 thinking dropped when max_tokens leaves no room (budget needs ≥1024)',
+    lastReq.body?.thinking === undefined,
+    JSON.stringify(lastReq.body?.thinking),
+  );
+
+  // -- openai face: reasoning_effort → anthropic thinking budget -------------
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-claude', reasoning_effort: 'low', max_tokens: 2048,
+    messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M17 openai reasoning_effort low → anthropic upstream thinking budget 1024; temperature absent',
+    lastReq.body?.thinking?.budget_tokens === 1024 && lastReq.body?.temperature === undefined,
+    JSON.stringify({ thinking: lastReq.body?.thinking, temperature: lastReq.body?.temperature }),
+  );
+
+  // openai face JSON: anthropic thinking blocks → reasoning_content
+  const thinkOpenai = await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-claude-think', max_tokens: 1024, messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M17 openai client: anthropic thinking → reasoning_content field',
+    thinkOpenai.status === 200 && thinkOpenai.body?.choices?.[0]?.message?.reasoning_content === 'pondering deeply' && thinkOpenai.body?.choices?.[0]?.message?.content === 'Thought answer',
+    JSON.stringify(thinkOpenai.body?.choices?.[0]?.message),
+  );
+
+  // openai face SSE: thinking_delta → reasoning_content deltas
+  const thinkStream = await fetch(base + '/v1/chat/completions', {
+    method: 'POST', headers: v1Headers(),
+    body: JSON.stringify({ model: 'mock-claude-think', max_tokens: 1024, stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const thinkStreamText = await thinkStream.text();
+  const thinkChunks = parseDataLines(thinkStreamText);
+  check(
+    'M17 openai client SSE: thinking_delta → reasoning_content deltas before content',
+    thinkStream.status === 200 && thinkChunks.some((ch) => ch?.choices?.[0]?.delta?.reasoning_content === 'pondering ') && thinkChunks.some((ch) => ch?.choices?.[0]?.delta?.content === 'Thought answer'),
+    JSON.stringify(thinkChunks.slice(0, 3)),
+  );
+
+  // -- responses face: reasoning param + thinking → reasoning output items ---
+  const thinkResp = await fetchOrPost('/v1/responses', JSON.stringify({
+    model: 'mock-claude-think', max_output_tokens: 20000, reasoning: { effort: 'medium' },
+    input: 'Think',
+  }));
+  check(
+    'M17 responses: reasoning param accepted; anthropic thinking → reasoning output item leading message',
+    thinkResp.status === 200 && thinkResp.body?.output?.[0]?.type === 'reasoning' && thinkResp.body?.output?.[0]?.summary?.[0]?.text === 'pondering deeply' && thinkResp.body?.output?.[1]?.type === 'message',
+    JSON.stringify(thinkResp.body?.output),
+  );
+  check(
+    'M17 responses: reasoning.effort medium → anthropic thinking budget 8192',
+    lastReq.body?.thinking?.budget_tokens === 8192,
+    JSON.stringify(lastReq.body?.thinking),
+  );
+
+  // responses SSE: thinking_delta → reasoning summary deltas
+  const thinkRespStream = await fetch(base + '/v1/responses', {
+    method: 'POST', headers: v1Headers(),
+    body: JSON.stringify({ model: 'mock-claude-think', max_output_tokens: 1024, stream: true, input: 'Think' }),
+  });
+  const thinkRespStreamText = await thinkRespStream.text();
+  const reasoningDeltas = [...thinkRespStreamText.matchAll(/event: response\.reasoning_summary_text\.delta\ndata: (.*)/g)].map((m) => JSON.parse(m[1]));
+  check(
+    'M17 responses SSE: reasoning_summary_text.delta events stream before output_text',
+    reasoningDeltas.length === 2 && reasoningDeltas[0].delta === 'pondering ' && reasoningDeltas[1].delta === 'deeply',
+    JSON.stringify(reasoningDeltas),
+  );
+
+  // -- native gemini: canonical reasoning → thinkingConfig + thought surfacing
+  const gemThinkRes = await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-gem-think', reasoning_effort: 'low', messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M17 gemini: reasoning_effort low → thinkingConfig {budget 1024, includeThoughts}',
+    lastGemThinking?.thinkingBudget === 1024 && lastGemThinking?.includeThoughts === true,
+    JSON.stringify(lastGemThinking),
+  );
+  check(
+    'M17 gemini thought parts → reasoning_content on the openai face',
+    gemThinkRes.status === 200 && gemThinkRes.body?.choices?.[0]?.message?.reasoning_content === 'gemini thinking' && gemThinkRes.body?.choices?.[0]?.message?.content === 'Thought answer',
+    JSON.stringify(gemThinkRes.body?.choices?.[0]?.message),
+  );
+
+  // gemini thought parts through the ANTHROPIC client face → thinking blocks
+  const gemThinkAnthropic = await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-gem-think', max_tokens: 1024, messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M17 gemini thoughts → anthropic client sees a thinking block',
+    gemThinkAnthropic.status === 200 && gemThinkAnthropic.body?.content?.some?.((b) => b.type === 'thinking' && b.thinking === 'gemini thinking'),
+    JSON.stringify(gemThinkAnthropic.body?.content),
+  );
+
+  // anthropic thinking history through the GEMINI upstream: reasoning dropped.
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-gemini',
+    messages: [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: 'a', reasoning_content: 'dropped for gemini' },
+      { role: 'user', content: 'go' },
+    ],
+  }));
+  const gemContents = lastReq.body?.contents ?? [];
+  const hasThought = JSON.stringify(gemContents).includes('dropped for gemini');
+  check('M17 openai-face reasoning_content history dropped for gemini upstreams', !hasThought, JSON.stringify(gemContents).slice(0, 200));
 
   // ==================================================================
   // M16 — OpenRouter client-parity pack: /v1/models pricing +

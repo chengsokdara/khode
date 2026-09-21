@@ -4,15 +4,44 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
-    "req": { "messages": [{ "role": "user", "content": "hi" }], "stream": false, "options": {}, "extras": {} },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
-      "body": { "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }] },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      },
       "timeoutMs": 60000
     }
   },
@@ -21,15 +50,44 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com"
     },
-    "req": { "messages": [{ "role": "user", "content": "hi" }], "stream": false, "options": {}, "extras": {} },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
-      "body": { "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }] },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      },
       "timeoutMs": 60000
     }
   },
@@ -38,27 +96,79 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
       "messages": [
-        { "role": "system", "content": "Be terse.", "extra": {} },
-        { "role": "developer", "content": "No markdown.", "extra": {} },
-        { "role": "user", "content": "hi", "extra": {} }
+        {
+          "role": "system",
+          "content": "Be terse.",
+          "extra": {}
+        },
+        {
+          "role": "developer",
+          "content": "No markdown.",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
       ],
       "stream": false,
-      "options": { "temperature": 0.5, "topP": 0.9, "maxTokens": 512, "maxTokensField": "max_tokens", "stop": ["END", "STOP"] },
+      "options": {
+        "temperature": 0.5,
+        "topP": 0.9,
+        "maxTokens": 512,
+        "maxTokensField": "max_tokens",
+        "stop": [
+          "END",
+          "STOP"
+        ]
+      },
       "extras": {}
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "systemInstruction": { "parts": [{ "text": "Be terse.\n\nNo markdown." }] },
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "generationConfig": { "temperature": 0.5, "topP": 0.9, "maxOutputTokens": 512, "stopSequences": ["END", "STOP"] }
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Be terse.\n\nNo markdown."
+            }
+          ]
+        },
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "temperature": 0.5,
+          "topP": 0.9,
+          "maxOutputTokens": 512,
+          "stopSequences": [
+            "END",
+            "STOP"
+          ]
+        }
       },
       "timeoutMs": 60000
     }
@@ -68,22 +178,49 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
-      "options": { "maxTokens": 256, "maxTokensField": "max_completion_tokens" },
+      "options": {
+        "maxTokens": 256,
+        "maxTokensField": "max_completion_tokens"
+      },
       "extras": {}
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "generationConfig": { "maxOutputTokens": 256 }
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "maxOutputTokens": 256
+        }
       },
       "timeoutMs": 60000
     }
@@ -93,15 +230,44 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
-    "req": { "messages": [{ "role": "user", "content": "hi" }], "stream": true, "options": {}, "extras": {} },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "stream": true,
+      "options": {},
+      "extras": {}
+    },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
-      "body": { "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }] },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      },
       "timeoutMs": 60000
     }
   },
@@ -110,32 +276,82 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
       "options": {
-        "tools": [{ "name": "get_weather", "description": "Weather", "parameters": { "type": "object", "properties": { "city": { "type": "string" } } } }],
+        "tools": [
+          {
+            "name": "get_weather",
+            "description": "Weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
         "toolChoice": "required"
       },
       "extras": {}
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "tools": [
+        "contents": [
           {
-            "functionDeclarations": [
-              { "name": "get_weather", "description": "Weather", "parameters": { "type": "object", "properties": { "city": { "type": "string" } } } }
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
             ]
           }
         ],
-        "toolConfig": { "functionCallingConfig": { "mode": "ANY" } }
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "description": "Weather",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "ANY"
+          }
+        }
       },
       "timeoutMs": 60000
     }
@@ -145,26 +361,75 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
       "options": {
-        "tools": [{ "name": "get_weather", "parameters": { "type": "object" } }],
-        "toolChoice": { "name": "get_weather" }
+        "tools": [
+          {
+            "name": "get_weather",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ],
+        "toolChoice": {
+          "name": "get_weather"
+        }
       },
       "extras": {}
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "tools": [{ "functionDeclarations": [{ "name": "get_weather", "parameters": { "type": "object" } }] }],
-        "toolConfig": { "functionCallingConfig": { "mode": "ANY", "allowedFunctionNames": ["get_weather"] } }
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "ANY",
+            "allowedFunctionNames": [
+              "get_weather"
+            ]
+          }
+        }
       },
       "timeoutMs": 60000
     }
@@ -174,26 +439,70 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
       "options": {
-        "tools": [{ "name": "get_weather", "parameters": { "type": "object" } }],
+        "tools": [
+          {
+            "name": "get_weather",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ],
         "toolChoice": "none"
       },
       "extras": {}
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "tools": [{ "functionDeclarations": [{ "name": "get_weather", "parameters": { "type": "object" } }] }],
-        "toolConfig": { "functionCallingConfig": { "mode": "NONE" } }
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "NONE"
+          }
+        }
       },
       "timeoutMs": 60000
     }
@@ -203,15 +512,40 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
       "messages": [
-        { "role": "user", "content": "Weather in Paris?", "extra": {} },
-        { "role": "assistant", "content": "", "toolCalls": [{ "id": "call_gemini_0", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" }], "extra": {} },
-        { "role": "tool", "content": "18C", "toolCallId": "call_gemini_0", "extra": {} }
+        {
+          "role": "user",
+          "content": "Weather in Paris?",
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_gemini_0",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          ],
+          "extra": {}
+        },
+        {
+          "role": "tool",
+          "content": "18C",
+          "toolCallId": "call_gemini_0",
+          "extra": {}
+        }
       ],
       "stream": false,
       "options": {},
@@ -219,12 +553,46 @@
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
         "contents": [
-          { "role": "user", "parts": [{ "text": "Weather in Paris?" }] },
-          { "role": "model", "parts": [{ "functionCall": { "name": "get_weather", "args": { "city": "Paris" } } }] },
-          { "role": "user", "parts": [{ "functionResponse": { "name": "get_weather", "response": { "result": "18C" } } }] }
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Weather in Paris?"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Paris"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "functionResponse": {
+                  "name": "get_weather",
+                  "response": {
+                    "result": "18C"
+                  }
+                }
+              }
+            ]
+          }
         ]
       },
       "timeoutMs": 60000
@@ -235,16 +603,45 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
       "messages": [
-        { "role": "user", "content": "Weather?", "extra": {} },
-        { "role": "assistant", "content": "", "toolCalls": [{ "id": "call_gemini_0", "name": "get_weather", "arguments": "{}" }], "extra": {} },
-        { "role": "tool", "content": "{\"tempC\":18,\"sky\":\"clear\"}", "toolCallId": "call_gemini_0", "extra": {} },
-        { "role": "user", "content": "thanks", "extra": {} }
+        {
+          "role": "user",
+          "content": "Weather?",
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_gemini_0",
+              "name": "get_weather",
+              "arguments": "{}"
+            }
+          ],
+          "extra": {}
+        },
+        {
+          "role": "tool",
+          "content": "{\"tempC\":18,\"sky\":\"clear\"}",
+          "toolCallId": "call_gemini_0",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "thanks",
+          "extra": {}
+        }
       ],
       "stream": false,
       "options": {},
@@ -252,12 +649,48 @@
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
         "contents": [
-          { "role": "user", "parts": [{ "text": "Weather?" }] },
-          { "role": "model", "parts": [{ "functionCall": { "name": "get_weather", "args": {} } }] },
-          { "role": "user", "parts": [{ "functionResponse": { "name": "get_weather", "response": { "tempC": 18, "sky": "clear" } } }, { "text": "thanks" }] }
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Weather?"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {}
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "functionResponse": {
+                  "name": "get_weather",
+                  "response": {
+                    "tempC": 18,
+                    "sky": "clear"
+                  }
+                }
+              },
+              {
+                "text": "thanks"
+              }
+            ]
+          }
         ]
       },
       "timeoutMs": 60000
@@ -268,8 +701,13 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
@@ -278,8 +716,13 @@
           "role": "user",
           "content": "What is this?",
           "images": [
-            { "url": "data:image/png;base64,iVBORw0KGgo=" },
-            { "url": "https://example.com/cat.png", "detail": "low" }
+            {
+              "url": "data:image/png;base64,iVBORw0KGgo="
+            },
+            {
+              "url": "https://example.com/cat.png",
+              "detail": "low"
+            }
           ],
           "extra": {}
         }
@@ -290,15 +733,30 @@
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
         "contents": [
           {
             "role": "user",
             "parts": [
-              { "text": "What is this?" },
-              { "inlineData": { "mimeType": "image/png", "data": "iVBORw0KGgo=" } },
-              { "fileData": { "mimeType": "image/png", "fileUri": "https://example.com/cat.png" } }
+              {
+                "text": "What is this?"
+              },
+              {
+                "inlineData": {
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgo="
+                }
+              },
+              {
+                "fileData": {
+                  "mimeType": "image/png",
+                  "fileUri": "https://example.com/cat.png"
+                }
+              }
             ]
           }
         ]
@@ -307,76 +765,168 @@
     }
   },
   {
-    "name": "thinking — reasoning_effort low → thinkingBudget 1024; top_k extra → generationConfig.topK",
+    "name": "thinking — reasoning_effort low → thinkingBudget 1024 + includeThoughts; top_k extra → generationConfig.topK",
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
       "options": {},
-      "extras": { "reasoning_effort": "low", "top_k": 40 }
+      "extras": {
+        "reasoning_effort": "low",
+        "top_k": 40
+      }
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "generationConfig": { "topK": 40, "thinkingConfig": { "thinkingBudget": 1024 } }
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "topK": 40,
+          "thinkingConfig": {
+            "thinkingBudget": 1024,
+            "includeThoughts": true
+          }
+        }
       },
       "timeoutMs": 60000
     }
   },
   {
-    "name": "thinking — reasoning_effort high → 24576; minimal disables (budget 0)",
+    "name": "thinking — reasoning_effort high → 24576 + includeThoughts; minimal disables (budget 0)",
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-pro" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-pro"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
       "options": {},
-      "extras": { "reasoning_effort": "high" }
+      "extras": {
+        "reasoning_effort": "high"
+      }
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "generationConfig": { "thinkingConfig": { "thinkingBudget": 24576 } }
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 24576,
+            "includeThoughts": true
+          }
+        }
       },
       "timeoutMs": 60000
     }
   },
   {
-    "name": "thinking — anthropic-style thinking.budget_tokens clamped to the 0–32768 range",
+    "name": "thinking — anthropic-style thinking.budget_tokens clamped to 0–32768 + includeThoughts",
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
       "options": {},
-      "extras": { "thinking": { "type": "enabled", "budget_tokens": 99999 } }
+      "extras": {
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 99999
+        }
+      }
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
-        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-        "generationConfig": { "thinkingConfig": { "thinkingBudget": 32768 } }
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 32768,
+            "includeThoughts": true
+          }
+        }
       },
       "timeoutMs": 60000
     }
@@ -386,15 +936,32 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
       "messages": [
-        { "role": "user", "content": "a", "extra": {} },
-        { "role": "user", "content": "b", "extra": {} },
-        { "role": "assistant", "content": "c", "extra": {} }
+        {
+          "role": "user",
+          "content": "a",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "b",
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "c",
+          "extra": {}
+        }
       ],
       "stream": false,
       "options": {},
@@ -402,11 +969,31 @@
     },
     "expected": {
       "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-      "headers": { "x-goog-api-key": "sk-gem-mock", "content-type": "application/json" },
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
       "body": {
         "contents": [
-          { "role": "user", "parts": [{ "text": "a" }, { "text": "b" }] },
-          { "role": "model", "parts": [{ "text": "c" }] }
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "a"
+              },
+              {
+                "text": "b"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "text": "c"
+              }
+            ]
+          }
         ]
       },
       "timeoutMs": 60000
@@ -417,14 +1004,27 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
       "messages": [
-        { "role": "assistant", "content": "prefill", "extra": {} },
-        { "role": "user", "content": "hi", "extra": {} }
+        {
+          "role": "assistant",
+          "content": "prefill",
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
       ],
       "stream": false,
       "options": {},
@@ -438,14 +1038,26 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "user", "content": "hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
       "stream": false,
-      "options": { "n": 3 },
+      "options": {
+        "n": 3
+      },
       "extras": {}
     },
     "error": "unsupported",
@@ -456,12 +1068,23 @@
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
     "req": {
-      "messages": [{ "role": "system", "content": "Be terse.", "extra": {} }],
+      "messages": [
+        {
+          "role": "system",
+          "content": "Be terse.",
+          "extra": {}
+        }
+      ],
       "stream": false,
       "options": {},
       "extras": {}
@@ -473,11 +1096,27 @@
     "name": "unreadable stored key → misconfig",
     "adapter": "gemini",
     "cand": {
-      "model": { "upstreamModel": "gemini-2.5-flash" },
-      "provider": { "name": "Gemini (smoke)", "baseUrl": "https://generativelanguage.googleapis.com/v1beta", "apiKeyEnc": "v1.not.a.real.ciphertext" },
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+        "apiKeyEnc": "v1.not.a.real.ciphertext"
+      },
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
-    "req": { "messages": [{ "role": "user", "content": "hi" }], "stream": false, "options": {}, "extras": {} },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
     "error": "misconfig",
     "messageContains": "unreadable"
   }

@@ -5,26 +5,58 @@
       "model": "claude-sonnet-4-5",
       "max_tokens": 1024,
       "system": [
-        { "type": "text", "text": "Sys A" },
-        { "type": "text", "text": "Sys B" }
+        {
+          "type": "text",
+          "text": "Sys A"
+        },
+        {
+          "type": "text",
+          "text": "Sys B"
+        }
       ],
       "temperature": 1,
       "top_p": 0.9,
       "top_k": 40,
-      "metadata": { "user_id": "u1" },
-      "stop_sequences": ["\n\nHuman:"],
+      "metadata": {
+        "user_id": "u1"
+      },
+      "stop_sequences": [
+        "\n\nHuman:"
+      ],
       "stream": true,
       "tools": [
-        { "name": "get_weather", "description": "Get weather", "input_schema": { "type": "object" } }
+        {
+          "name": "get_weather",
+          "description": "Get weather",
+          "input_schema": {
+            "type": "object"
+          }
+        }
       ],
-      "tool_choice": { "type": "any", "disable_parallel_tool_use": true },
+      "tool_choice": {
+        "type": "any",
+        "disable_parallel_tool_use": true
+      },
       "messages": [
-        { "role": "user", "content": "Hello" },
+        {
+          "role": "user",
+          "content": "Hello"
+        },
         {
           "role": "assistant",
           "content": [
-            { "type": "text", "text": "Calling tool" },
-            { "type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": { "city": "Paris" } }
+            {
+              "type": "text",
+              "text": "Calling tool"
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_1",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
           ]
         },
         {
@@ -34,11 +66,24 @@
               "type": "tool_result",
               "tool_use_id": "toolu_1",
               "content": [
-                { "type": "text", "text": "22C" },
-                { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AAA" } }
+                {
+                  "type": "text",
+                  "text": "22C"
+                },
+                {
+                  "type": "image",
+                  "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "AAA"
+                  }
+                }
               ]
             },
-            { "type": "text", "text": "And now?" }
+            {
+              "type": "text",
+              "text": "And now?"
+            }
           ]
         }
       ]
@@ -49,13 +94,25 @@
       "request": {
         "stream": true,
         "messages": [
-          { "role": "system", "content": "Sys A\nSys B", "extra": {} },
-          { "role": "user", "content": "Hello", "extra": {} },
+          {
+            "role": "system",
+            "content": "Sys A\nSys B",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "Hello",
+            "extra": {}
+          },
           {
             "role": "assistant",
             "content": "Calling tool",
             "toolCalls": [
-              { "id": "toolu_1", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" }
+              {
+                "id": "toolu_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Paris\"}"
+              }
             ],
             "extra": {}
           },
@@ -63,14 +120,28 @@
             "role": "tool",
             "content": "22C",
             "toolCallId": "toolu_1",
-            "images": [{ "url": "data:image/png;base64,AAA" }],
+            "images": [
+              {
+                "url": "data:image/png;base64,AAA"
+              }
+            ],
             "extra": {}
           },
-          { "role": "user", "content": "And now?", "extra": {} }
+          {
+            "role": "user",
+            "content": "And now?",
+            "extra": {}
+          }
         ],
         "options": {
           "tools": [
-            { "name": "get_weather", "description": "Get weather", "parameters": { "type": "object" } }
+            {
+              "name": "get_weather",
+              "description": "Get weather",
+              "parameters": {
+                "type": "object"
+              }
+            }
           ],
           "toolChoice": "required",
           "parallelToolCalls": false,
@@ -78,9 +149,16 @@
           "maxTokensField": "max_tokens",
           "temperature": 1,
           "topP": 0.9,
-          "stop": ["\n\nHuman:"]
+          "stop": [
+            "\n\nHuman:"
+          ]
         },
-        "extras": { "top_k": 40, "metadata": { "user_id": "u1" } }
+        "extras": {
+          "top_k": 40,
+          "metadata": {
+            "user_id": "u1"
+          }
+        }
       }
     }
   },
@@ -91,11 +169,19 @@
       "max_tokens": 64,
       "system": "Be terse.",
       "messages": [
-        { "role": "user", "content": "run it" },
+        {
+          "role": "user",
+          "content": "run it"
+        },
         {
           "role": "assistant",
           "content": [
-            { "type": "tool_use", "id": "toolu_2", "name": "boom", "input": {} }
+            {
+              "type": "tool_use",
+              "id": "toolu_2",
+              "name": "boom",
+              "input": {}
+            }
           ]
         },
         {
@@ -117,19 +203,35 @@
       "request": {
         "stream": false,
         "messages": [
-          { "role": "system", "content": "Be terse.", "extra": {} },
-          { "role": "user", "content": "run it", "extra": {} },
+          {
+            "role": "system",
+            "content": "Be terse.",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "run it",
+            "extra": {}
+          },
           {
             "role": "assistant",
             "content": "",
-            "toolCalls": [{ "id": "toolu_2", "name": "boom", "arguments": "{}" }],
+            "toolCalls": [
+              {
+                "id": "toolu_2",
+                "name": "boom",
+                "arguments": "{}"
+              }
+            ],
             "extra": {}
           },
           {
             "role": "tool",
             "content": "exploded",
             "toolCallId": "toolu_2",
-            "extra": { "is_error": true }
+            "extra": {
+              "is_error": true
+            }
           }
         ],
         "options": {
@@ -152,8 +254,17 @@
         {
           "role": "user",
           "content": [
-            { "type": "text", "text": "look" },
-            { "type": "image", "source": { "type": "url", "url": "https://example.com/cat.jpg" } }
+            {
+              "type": "text",
+              "text": "look"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.jpg"
+              }
+            }
           ]
         }
       ]
@@ -167,7 +278,11 @@
           {
             "role": "user",
             "content": "look",
-            "images": [{ "url": "https://example.com/cat.jpg" }],
+            "images": [
+              {
+                "url": "https://example.com/cat.jpg"
+              }
+            ],
             "extra": {}
           }
         ],
@@ -197,7 +312,12 @@
     "name": "missing max_tokens (REQUIRED in Messages)",
     "body": {
       "model": "claude-sonnet-4-5",
-      "messages": [{ "role": "user", "content": "Hi" }]
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ]
     },
     "expected": {
       "ok": false,
@@ -212,7 +332,12 @@
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 64,
-      "messages": [{ "role": "user", "content": "" }]
+      "messages": [
+        {
+          "role": "user",
+          "content": ""
+        }
+      ]
     },
     "expected": {
       "ok": false,
@@ -223,23 +348,48 @@
     }
   },
   {
-    "name": "thinking block rejected (extended thinking arrives later)",
+    "name": "thinking block parses onto canonical reasoning (M17)",
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 64,
       "messages": [
         {
           "role": "user",
-          "content": [{ "type": "thinking", "thinking": "hmm", "signature": "x" }]
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "hmm",
+              "signature": "x"
+            }
+          ]
         }
       ]
     },
     "expected": {
-      "ok": false,
-      "status": 400,
-      "message": "'thinking' content blocks are not supported yet — extended thinking arrives later.",
-      "param": "messages[0]",
-      "code": null
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "",
+            "reasoning": {
+              "text": "hmm",
+              "signature": "x"
+            },
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 64,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
     }
   },
   {
@@ -250,7 +400,16 @@
       "messages": [
         {
           "role": "user",
-          "content": [{ "type": "document", "source": { "type": "base64", "media_type": "application/pdf", "data": "AAA" } }]
+          "content": [
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "AAA"
+              }
+            }
+          ]
         }
       ]
     },
@@ -270,7 +429,14 @@
       "messages": [
         {
           "role": "user",
-          "content": [{ "type": "tool_use", "id": "toolu_1", "name": "f", "input": {} }]
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_1",
+              "name": "f",
+              "input": {}
+            }
+          ]
         }
       ]
     },
@@ -291,7 +457,13 @@
         {
           "role": "assistant",
           "content": [
-            { "type": "image", "source": { "type": "url", "url": "https://example.com/cat.jpg" } }
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.jpg"
+              }
+            }
           ]
         }
       ]
@@ -313,7 +485,14 @@
         {
           "role": "user",
           "content": [
-            { "type": "image", "source": { "type": "base64", "media_type": "text/plain", "data": "AAA" } }
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "text/plain",
+                "data": "AAA"
+              }
+            }
           ]
         }
       ]
@@ -331,7 +510,12 @@
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 64,
-      "messages": [{ "role": "user", "content": "Hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
       "tool_choice": "auto"
     },
     "expected": {
@@ -347,8 +531,18 @@
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 64,
-      "messages": [{ "role": "user", "content": "Hi" }],
-      "tools": [{ "type": "web_search_20250305", "name": "web_search" }]
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "tools": [
+        {
+          "type": "web_search_20250305",
+          "name": "web_search"
+        }
+      ]
     },
     "expected": {
       "ok": false,
@@ -363,7 +557,12 @@
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 64,
-      "messages": [{ "role": "user", "content": "Hi" }],
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
       "temperature": 1.5
     },
     "expected": {
@@ -372,6 +571,86 @@
       "message": "temperature must be a number between 0 and 1",
       "param": "temperature",
       "code": null
+    }
+  },
+  {
+    "name": "M17: thinking param {enabled, budget_tokens} → canonical reasoning",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 4096,
+      "thinking": {
+        "type": "enabled",
+        "budget_tokens": 2048
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "reasoning": {
+          "budgetTokens": 2048
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 4096,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "M17: thinking type disabled → no canonical reasoning",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 4096,
+      "thinking": {
+        "type": "disabled"
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 4096,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
     }
   }
 ]

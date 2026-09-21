@@ -67,7 +67,15 @@ client `/api/v1` key/credit endpoints, legacy `POST /v1/completions`
 attribution persisted on request_logs (migration 0010), success-path
 `x-ratelimit-*` headers from the binding rate-limit bucket,
 `usage:{include:true}` → `streamIncludeUsage`, SSE keep-alive comments
-(`withSseKeepAlive`).
+(`withSseKeepAlive`). **M17 done** — reasoning/thinking end-to-end: canonical
+`CanonicalReasoning` (+ per-message `CanonicalReasoningContent`), thinking
+un-rejected on all three client faces (`reasoning_effort` / anthropic
+`thinking` param + thinking blocks / responses `reasoning` + reasoning
+items), budgets mapped per upstream (anthropic thinking param clamped ≥1024
+floor or dropped, gemini thinkingConfig + includeThoughts, openai
+reasoning_effort re-emit), `reasoning_content` ↔ thinking blocks ↔ responses
+reasoning items/SSE events across the whole matrix, history reasoning kept
+for anthropic and dropped for openai/gemini upstreams.
 **Keyless-native default** (khode integration): /v1 is served
 anonymously unless `client_key_enforcement` is switched on (admin settings).
 
@@ -231,7 +239,8 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             matrix incl. the M5 /v1/responses cells + dual-adapter providers + model
                             discovery/import + the M12 native-gemini matrix + the M13 embeddings
                             branch + the M16 parity cells (models pricing, legacy /v1/completions
-                            incl. attribution headers, /api/v1) — 190 checks as of 2026-09-19)
+                            incl. attribution headers, /api/v1) + the M17 thinking
+                            matrix (claude-think + gem-think mock faces) — 206 checks as of 2026-09-21)
 scripts/smoke_m8.mjs       — accounts/balance/webhook e2e vs wrangler dev :8787 (signup → credit →
                             debit math → 429 → signed LS webhook → idempotency; 42 checks + 2 M16 /api/v1 checks = 45)
 scripts/smoke_m9.mjs       — orgs/teams e2e vs wrangler dev :8787 (2 orgs coexist, join codes,

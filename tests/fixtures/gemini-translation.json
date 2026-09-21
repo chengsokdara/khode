@@ -8,20 +8,45 @@
       "modelVersion": "gemini-2.5-flash",
       "candidates": [
         {
-          "content": { "role": "model", "parts": [{ "text": "Hello from Gemini!" }] },
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Hello from Gemini!"
+              }
+            ]
+          },
           "finishReason": "STOP",
           "index": 0
         }
       ],
-      "usageMetadata": { "promptTokenCount": 4, "candidatesTokenCount": 6, "thoughtsTokenCount": 2, "totalTokenCount": 12 }
+      "usageMetadata": {
+        "promptTokenCount": 4,
+        "candidatesTokenCount": 6,
+        "thoughtsTokenCount": 2,
+        "totalTokenCount": 12
+      }
     },
     "expected": {
       "id": "chatcmpl-AbCdEf",
       "object": "chat.completion",
       "created": "<now>",
       "model": "gemini-2.5-flash",
-      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "Hello from Gemini!" }, "finish_reason": "stop" }],
-      "usage": { "prompt_tokens": 4, "completion_tokens": 8, "total_tokens": 12 }
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Hello from Gemini!"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 4,
+        "completion_tokens": 8,
+        "total_tokens": 12
+      }
     }
   },
   {
@@ -31,12 +56,28 @@
     "payload": {
       "candidates": [
         {
-          "content": { "role": "model", "parts": [{ "functionCall": { "name": "get_weather", "args": { "city": "Paris" } } }] },
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Paris"
+                  }
+                }
+              }
+            ]
+          },
           "finishReason": "STOP",
           "index": 0
         }
       ],
-      "usageMetadata": { "promptTokenCount": 9, "candidatesTokenCount": 7, "totalTokenCount": 16 }
+      "usageMetadata": {
+        "promptTokenCount": 9,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 16
+      }
     },
     "expected": {
       "id": "chatcmpl-khateway",
@@ -49,12 +90,25 @@
           "message": {
             "role": "assistant",
             "content": null,
-            "tool_calls": [{ "id": "call_gemini_0", "type": "function", "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" } }]
+            "tool_calls": [
+              {
+                "id": "call_gemini_0",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Paris\"}"
+                }
+              }
+            ]
           },
           "finish_reason": "tool_calls"
         }
       ],
-      "usage": { "prompt_tokens": 9, "completion_tokens": 7, "total_tokens": 16 }
+      "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 7,
+        "total_tokens": 16
+      }
     }
   },
   {
@@ -64,12 +118,26 @@
     "payload": {
       "candidates": [
         {
-          "content": { "role": "model", "parts": [{ "functionCall": { "name": "f", "args": {} } }] },
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "f",
+                  "args": {}
+                }
+              }
+            ]
+          },
           "finishReason": "MAX_TOKENS",
           "index": 0
         }
       ],
-      "usageMetadata": { "promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2 }
+      "usageMetadata": {
+        "promptTokenCount": 1,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 2
+      }
     },
     "expected": {
       "id": "chatcmpl-khateway",
@@ -79,11 +147,28 @@
       "choices": [
         {
           "index": 0,
-          "message": { "role": "assistant", "content": null, "tool_calls": [{ "id": "call_gemini_0", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_gemini_0",
+                "type": "function",
+                "function": {
+                  "name": "f",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
           "finish_reason": "length"
         }
       ],
-      "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+      "usage": {
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "total_tokens": 2
+      }
     }
   },
   {
@@ -93,43 +178,100 @@
     "payload": {
       "candidates": [
         {
-          "content": { "role": "model", "parts": [{ "text": "line one" }, { "text": "line two" }] },
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "line one"
+              },
+              {
+                "text": "line two"
+              }
+            ]
+          },
           "finishReason": "SAFETY",
           "index": 0
         }
       ],
-      "usageMetadata": { "promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5 }
+      "usageMetadata": {
+        "promptTokenCount": 2,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 5
+      }
     },
     "expected": {
       "id": "chatcmpl-khateway",
       "object": "chat.completion",
       "created": "<now>",
       "model": "gemini-2.5-flash",
-      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "line one\nline two" }, "finish_reason": "content_filter" }],
-      "usage": { "prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5 }
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "line one\nline two"
+          },
+          "finish_reason": "content_filter"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5
+      }
     }
   },
   {
     "fn": "json",
-    "name": "thought parts are skipped (thinking summaries never surface)",
+    "name": "json: thought parts surface as reasoning_content (M17)",
     "model": "gemini-2.5-flash",
     "payload": {
       "candidates": [
         {
-          "content": { "role": "model", "parts": [{ "thought": true, "text": "internal reasoning" }, { "text": "visible answer" }] },
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "thought": true,
+                "text": "internal reasoning"
+              },
+              {
+                "text": "visible answer"
+              }
+            ]
+          },
           "finishReason": "STOP",
           "index": 0
         }
       ],
-      "usageMetadata": { "promptTokenCount": 5, "candidatesTokenCount": 2, "thoughtsTokenCount": 9, "totalTokenCount": 16 }
+      "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 2,
+        "thoughtsTokenCount": 9,
+        "totalTokenCount": 16
+      }
     },
     "expected": {
       "id": "chatcmpl-khateway",
       "object": "chat.completion",
       "created": "<now>",
       "model": "gemini-2.5-flash",
-      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "visible answer" }, "finish_reason": "stop" }],
-      "usage": { "prompt_tokens": 5, "completion_tokens": 11, "total_tokens": 16 }
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "visible answer",
+            "reasoning_content": "internal reasoning"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 11,
+        "total_tokens": 16
+      }
     }
   },
   {
@@ -137,15 +279,41 @@
     "name": "no usageMetadata → zeroed usage (defensive; real responses always carry it)",
     "model": "gemini-2.5-flash",
     "payload": {
-      "candidates": [{ "content": { "role": "model", "parts": [{ "text": "hi" }] }, "finishReason": "STOP", "index": 0 }]
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ]
     },
     "expected": {
       "id": "chatcmpl-khateway",
       "object": "chat.completion",
       "created": "<now>",
       "model": "gemini-2.5-flash",
-      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "hi" }, "finish_reason": "stop" }],
-      "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hi"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0
+      }
     }
   },
   {
@@ -154,7 +322,12 @@
     "status": 400,
     "raw": "{\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received.\",\"status\":\"INVALID_ARGUMENT\"}}",
     "expected": {
-      "error": { "message": "Invalid JSON payload received.", "type": "invalid_request_error", "param": null, "code": "INVALID_ARGUMENT" }
+      "error": {
+        "message": "Invalid JSON payload received.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "INVALID_ARGUMENT"
+      }
     }
   },
   {
@@ -163,7 +336,12 @@
     "status": 429,
     "raw": "{\"error\":{\"code\":429,\"message\":\"Resource exhausted.\",\"status\":\"RESOURCE_EXHAUSTED\"}}",
     "expected": {
-      "error": { "message": "Resource exhausted.", "type": "rate_limit_error", "param": null, "code": "RESOURCE_EXHAUSTED" }
+      "error": {
+        "message": "Resource exhausted.",
+        "type": "rate_limit_error",
+        "param": null,
+        "code": "RESOURCE_EXHAUSTED"
+      }
     }
   },
   {
@@ -172,7 +350,12 @@
     "status": 401,
     "raw": "{\"error\":{\"code\":401,\"message\":\"API key not valid.\",\"status\":\"UNAUTHENTICATED\"}}",
     "expected": {
-      "error": { "message": "API key not valid.", "type": "authentication_error", "param": null, "code": "UNAUTHENTICATED" }
+      "error": {
+        "message": "API key not valid.",
+        "type": "authentication_error",
+        "param": null,
+        "code": "UNAUTHENTICATED"
+      }
     }
   },
   {
@@ -181,7 +364,12 @@
     "status": 500,
     "raw": "{\"error\":{\"code\":500,\"message\":\"Boom.\",\"status\":\"SOMETHING_NEW\"}}",
     "expected": {
-      "error": { "message": "Boom.", "type": "api_error", "param": null, "code": "SOMETHING_NEW" }
+      "error": {
+        "message": "Boom.",
+        "type": "api_error",
+        "param": null,
+        "code": "SOMETHING_NEW"
+      }
     }
   },
   {
@@ -190,7 +378,12 @@
     "status": 502,
     "raw": "bad gateway",
     "expected": {
-      "error": { "message": "bad gateway", "type": "api_error", "param": null, "code": null }
+      "error": {
+        "message": "bad gateway",
+        "type": "api_error",
+        "param": null,
+        "code": null
+      }
     }
   }
 ]

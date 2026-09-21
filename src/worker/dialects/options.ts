@@ -6,9 +6,43 @@
 // all three dialect parsers — they normalize each dialect's wire shape onto
 // the canonical form (src/worker/canonical.ts).
 
-import type { CanonicalImage, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
+import type { CanonicalImage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
 
 export type OptResult = { err?: string; val?: number | null };
+
+// -------------------------------------------------------------- M17 reasoning
+
+/** Effort → token budget. Gemini: minimal disables thinking (budget 0). */
+export const EFFORT_BUDGETS: Record<NonNullable<CanonicalReasoning['effort']>, number> = {
+  minimal: 0,
+  low: 1024,
+  medium: 8192,
+  high: 24576,
+};
+
+/** Validates the openai/responses `reasoning_effort` vocabulary. */
+export function reasoningEffortOption(v: unknown, param: string): { err?: string; val?: CanonicalReasoning['effort'] } {
+  if (v === undefined || v === null) return {};
+  if (v === 'minimal' || v === 'low' || v === 'medium' || v === 'high') return { val: v };
+  return { err: `${param} must be one of 'minimal', 'low', 'medium', 'high'` };
+}
+
+/** Merges an effort bucket + explicit budget into one canonical reasoning value. */
+export function canonicalReasoning(effort?: CanonicalReasoning['effort'], budgetTokens?: number | null): CanonicalReasoning | null {
+  if (budgetTokens != null && Number.isFinite(budgetTokens)) {
+    return { ...(effort ? { effort } : {}), budgetTokens: Math.max(0, Math.round(budgetTokens)) };
+  }
+  return effort ? { effort } : null;
+}
+
+/** Normalizes thinking/reasoning content pieces onto the canonical shape. */
+export function canonicalReasoningContent(parts: { text?: string; signature?: string; redacted?: string }): CanonicalReasoningContent | undefined {
+  const out: CanonicalReasoningContent = {};
+  if (parts.text) out.text = parts.text;
+  if (parts.signature) out.signature = parts.signature;
+  if (parts.redacted) out.redacted = parts.redacted;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 export function floatOption(v: unknown, param: string, lo: number, hi: number): OptResult {
   if (v === undefined) return { val: undefined };

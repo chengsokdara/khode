@@ -41,8 +41,36 @@ export interface CanonicalMessage {
   toolCalls?: CanonicalToolCall[];
   /** Tool result binding (role 'tool'): the tool-call id this message answers. */
   toolCallId?: string;
+  /** M17 reasoning content carried in conversation history (anthropic thinking
+   * blocks, openai `reasoning_content`, responses reasoning items). Only
+   * re-emitted to upstreams that can express it (anthropic thinking blocks —
+   * with signature; dropped for openai/gemini histories — reasoning is never
+   * required to continue a conversation). */
+  reasoning?: CanonicalReasoningContent;
   /** Per-message client fields Khateway does not interpret (e.g. `name`); kept for passthrough. */
   extra: Record<string, unknown>;
+}
+
+/** M17: reasoning content attached to a message. */
+export interface CanonicalReasoningContent {
+  /** Visible thinking text. */
+  text?: string;
+  /** Anthropic thinking signature — preserved verbatim for anthropic upstreams (API requirement). */
+  signature?: string;
+  /** Anthropic redacted_thinking data — preserved verbatim, only re-emitted to anthropic. */
+  redacted?: string;
+}
+
+/**
+ * M17: request-level reasoning/thinking control, normalized from the openai
+ * `reasoning_effort` param, the anthropic `thinking` param (budget_tokens)
+ * and the responses `reasoning` param. Adapters map it per target dialect.
+ */
+export interface CanonicalReasoning {
+  /** Client-declared effort bucket ('minimal' = as little as possible — gemini disables thinking). */
+  effort?: 'minimal' | 'low' | 'medium' | 'high';
+  /** Explicit token budget (anthropic budget_tokens). Wins over effort when set. */
+  budgetTokens?: number;
 }
 
 /** A client-declared callable tool (openai `function` / anthropic tool / responses function tool). */
@@ -77,6 +105,8 @@ export interface CanonicalChatRequest {
   stream: boolean;
   /** openai `stream_options.include_usage` verbatim when the client declared it (openai chat dialect only). */
   streamIncludeUsage?: boolean;
+  /** M17: reasoning/thinking control normalized from the three client dialects. */
+  reasoning?: CanonicalReasoning | null;
   options: CanonicalChatOptions;
   /** Client fields Khateway does not interpret; adapters pass them through where the upstream dialect allows. */
   extras: Record<string, unknown>;

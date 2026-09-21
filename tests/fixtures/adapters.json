@@ -917,5 +917,347 @@
       },
       "timeoutMs": 60000
     }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M17: canonical reasoning budget → thinking param (budget clamped below max_tokens)",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "reasoning": {
+        "budgetTokens": 4096
+      },
+      "options": {
+        "tools": null,
+        "toolChoice": null,
+        "maxTokens": 4096,
+        "maxTokensField": "max_tokens",
+        "stop": null
+      },
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 4095
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M17: canonical reasoning effort low → budget 1024; temperature dropped while thinking",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "reasoning": {
+        "effort": "low"
+      },
+      "options": {
+        "tools": null,
+        "toolChoice": null,
+        "maxTokens": 4096,
+        "maxTokensField": "max_tokens",
+        "stop": null,
+        "temperature": 0.7
+      },
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 1024
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M17: assistant history reasoning → thinking block (with signature) leading the turn",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "q",
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "a",
+          "reasoning": {
+            "text": "prior thinking",
+            "signature": "sigA"
+          },
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "go on",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {
+        "tools": null,
+        "toolChoice": null,
+        "maxTokens": 4096,
+        "maxTokensField": "max_tokens",
+        "stop": null
+      },
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "q"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "prior thinking",
+                "signature": "sigA"
+              },
+              {
+                "type": "text",
+                "text": "a"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "go on"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "gemini",
+    "name": "M17: canonical reasoning effort medium → thinkingBudget 8192 + includeThoughts",
+    "cand": {
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "reasoning": {
+        "effort": "medium"
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 8192,
+            "includeThoughts": true
+          }
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "openai",
+    "name": "M17: canonical reasoning effort → reasoning_effort re-emitted; message reasoning dropped from history",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "name": "OpenAI (smoke)",
+        "baseUrl": "https://api.openai.com/v1"
+      },
+      "baseUrl": "https://api.openai.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        },
+        {
+          "role": "assistant",
+          "content": "previous",
+          "reasoning": {
+            "text": "old reasoning"
+          },
+          "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "continue",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "reasoning": {
+        "effort": "high"
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          },
+          {
+            "role": "assistant",
+            "content": "previous"
+          },
+          {
+            "role": "user",
+            "content": "continue"
+          }
+        ],
+        "model": "gpt-5",
+        "stream": false,
+        "reasoning_effort": "high"
+      },
+      "timeoutMs": 60000
+    }
   }
 ]

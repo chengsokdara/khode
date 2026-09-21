@@ -5,33 +5,75 @@
       "model": "gpt-5",
       "instructions": "Be terse.",
       "input": [
-        { "role": "user", "content": [{ "type": "input_text", "text": "Hi" }] },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Hi"
+            }
+          ]
+        },
         {
           "type": "function_call",
           "call_id": "call_1",
           "name": "get_weather",
           "arguments": "{\"city\":\"Paris\"}"
         },
-        { "type": "function_call_output", "call_id": "call_1", "output": "22C" },
-        { "role": "assistant", "content": [{ "type": "output_text", "text": "Done" }] },
-        { "role": "developer", "content": "policy text" },
+        {
+          "type": "function_call_output",
+          "call_id": "call_1",
+          "output": "22C"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Done"
+            }
+          ]
+        },
+        {
+          "role": "developer",
+          "content": "policy text"
+        },
         {
           "role": "user",
           "content": [
-            { "type": "refusal", "refusal": "No." },
-            { "type": "input_image", "image_url": "https://example.com/cat.jpg" }
+            {
+              "type": "refusal",
+              "refusal": "No."
+            },
+            {
+              "type": "input_image",
+              "image_url": "https://example.com/cat.jpg"
+            }
           ]
         }
       ],
-      "tools": [{ "type": "function", "name": "get_weather", "parameters": { "type": "object" } }],
-      "tool_choice": { "type": "function", "name": "get_weather" },
+      "tools": [
+        {
+          "type": "function",
+          "name": "get_weather",
+          "parameters": {
+            "type": "object"
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "function",
+        "name": "get_weather"
+      },
       "parallel_tool_calls": true,
       "temperature": 0.5,
       "max_output_tokens": 256,
       "stream": false,
       "store": false,
       "truncation": "auto",
-      "include": ["reasoning.encrypted_content"]
+      "include": [
+        "reasoning.encrypted_content"
+      ]
     },
     "expected": {
       "ok": true,
@@ -39,29 +81,67 @@
       "request": {
         "stream": false,
         "messages": [
-          { "role": "system", "content": "Be terse.", "extra": {} },
-          { "role": "user", "content": "Hi", "extra": {} },
+          {
+            "role": "system",
+            "content": "Be terse.",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          },
           {
             "role": "assistant",
             "content": "",
             "toolCalls": [
-              { "id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" }
+              {
+                "id": "call_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Paris\"}"
+              }
             ],
             "extra": {}
           },
-          { "role": "tool", "content": "22C", "toolCallId": "call_1", "extra": {} },
-          { "role": "assistant", "content": "Done", "extra": {} },
-          { "role": "developer", "content": "policy text", "extra": {} },
+          {
+            "role": "tool",
+            "content": "22C",
+            "toolCallId": "call_1",
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "Done",
+            "extra": {}
+          },
+          {
+            "role": "developer",
+            "content": "policy text",
+            "extra": {}
+          },
           {
             "role": "user",
             "content": "No.",
-            "images": [{ "url": "https://example.com/cat.jpg" }],
+            "images": [
+              {
+                "url": "https://example.com/cat.jpg"
+              }
+            ],
             "extra": {}
           }
         ],
         "options": {
-          "tools": [{ "name": "get_weather", "parameters": { "type": "object" } }],
-          "toolChoice": { "name": "get_weather" },
+          "tools": [
+            {
+              "name": "get_weather",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ],
+          "toolChoice": {
+            "name": "get_weather"
+          },
           "parallelToolCalls": true,
           "temperature": 0.5,
           "maxTokens": 256,
@@ -73,13 +153,22 @@
   },
   {
     "name": "plain-string input becomes a single user message",
-    "body": { "model": "gpt-5", "input": "Just say hi." },
+    "body": {
+      "model": "gpt-5",
+      "input": "Just say hi."
+    },
     "expected": {
       "ok": true,
       "model": "gpt-5",
       "request": {
         "stream": false,
-        "messages": [{ "role": "user", "content": "Just say hi.", "extra": {} }],
+        "messages": [
+          {
+            "role": "user",
+            "content": "Just say hi.",
+            "extra": {}
+          }
+        ],
         "options": {
           "tools": null,
           "toolChoice": null,
@@ -91,7 +180,9 @@
   },
   {
     "name": "missing input",
-    "body": { "model": "gpt-5" },
+    "body": {
+      "model": "gpt-5"
+    },
     "expected": {
       "ok": false,
       "status": 400,
@@ -102,7 +193,10 @@
   },
   {
     "name": "empty input string rejected",
-    "body": { "model": "gpt-5", "input": "" },
+    "body": {
+      "model": "gpt-5",
+      "input": ""
+    },
     "expected": {
       "ok": false,
       "status": 400,
@@ -127,25 +221,48 @@
     }
   },
   {
-    "name": "reasoning param rejected",
+    "name": "reasoning param parses onto canonical reasoning (M17)",
     "body": {
       "model": "gpt-5",
       "input": "Hi",
-      "reasoning": { "effort": "high" }
+      "reasoning": {
+        "effort": "high"
+      }
     },
     "expected": {
-      "ok": false,
-      "status": 400,
-      "message": "'reasoning' is not supported yet — reasoning models arrive in a later milestone.",
-      "param": "reasoning",
-      "code": null
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "reasoning": {
+          "effort": "high"
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
     }
   },
   {
     "name": "item_reference input item rejected",
     "body": {
       "model": "gpt-5",
-      "input": [{ "type": "item_reference", "id": "msg_abc" }]
+      "input": [
+        {
+          "type": "item_reference",
+          "id": "msg_abc"
+        }
+      ]
     },
     "expected": {
       "ok": false,
@@ -157,7 +274,11 @@
   },
   {
     "name": "max_output_tokens below 16 rejected",
-    "body": { "model": "gpt-5", "input": "Hi", "max_output_tokens": 8 },
+    "body": {
+      "model": "gpt-5",
+      "input": "Hi",
+      "max_output_tokens": 8
+    },
     "expected": {
       "ok": false,
       "status": 400,
@@ -171,7 +292,11 @@
     "body": {
       "model": "gpt-5",
       "input": "Hi",
-      "tools": [{ "type": "web_search" }]
+      "tools": [
+        {
+          "type": "web_search"
+        }
+      ]
     },
     "expected": {
       "ok": false,

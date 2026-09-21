@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-19 (session 21 — M15 hardening/deploy + M16 parity pack)
+Last updated: 2026-09-21 (session 22 — M17 reasoning/thinking)
 
 ## How to use this file
 
@@ -11,6 +11,45 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **M17 — reasoning/thinking end-to-end ✅ complete (session 22, 2026-09-21)**
+  (user: "continue" — M17 was next in the approved sequence). Shipped:
+  - **Canonical**: `CanonicalReasoning` ({effort?, budgetTokens?}) on the
+    request + `CanonicalReasoningContent` ({text?, signature?, redacted?}) on
+    messages (canonical.ts). Shared helpers in `dialects/options.ts`
+    (EFFORT_BUDGETS minimal 0 / low 1024 / medium 8192 / high 24576,
+    reasoningEffortOption, canonicalReasoning, canonicalReasoningContent).
+  - **Client faces un-rejected**: openai chat `reasoning_effort` promoted from
+    extras; `reasoning_content` message field parses into history; anthropic
+    `thinking` param ({enabled,budget_tokens}|{disabled}) + thinking/
+    redacted_thinking blocks (signature preserved verbatim); responses
+    `reasoning` param (effort) + reasoning input items (summary_text folded).
+  - **Adapters**: anthropic emits `thinking:{type:'enabled',budget_tokens}`
+    (explicit budget wins over effort; clamped to max_tokens-1; DROPPED when
+    no room for the ≥1024 floor — request still succeeds; temperature/top_p
+    suppressed while thinking is on); thinking blocks LEAD assistant turns
+    (redacted → redacted_thinking). gemini thinkingConfig from canonical
+    reasoning (+ includeThoughts:true when budget > 0); openai re-emits
+    `reasoning_effort` (budgets are gateway-only); openai/gemini histories
+    DROP reasoning (never needed to continue).
+  - **Translation (the matrix)**: anthropic thinking/thinking_delta ↔ openai
+    `reasoning_content` (JSON + SSE, DeepSeek/GLM convention) ↔ responses
+    reasoning output items + `response.reasoning_summary_{text,part}.*`
+    events (lazy-opened BEFORE the message item, finalized before it);
+    gemini thought parts surface as reasoning_content → anthropic thinking
+    blocks → responses reasoning items. `anthropicMessageToOpenAiCompletion`
+    folds thinking into reasoning_content (redacted dropped); both Responses
+    JSON translators emit a leading `rs_*` reasoning item.
+  - **Billing unchanged**: anthropic counts thinking in output_tokens; gemini
+    thoughts already fold into output (M12 contract).
+  - **Tests**: +12 vitest (296 total; parse/adapter/JSON/SSE goldens incl.
+    thinking-param parse, budget clamp + no-room drop, signature round-trip,
+    reasoning_content ↔ thinking SSE both ways, responses reasoning item
+    sequence); smoke_gateway +16 M17 checks → **206** (mock faces
+    `claude-think` + `gem-think`: param in/out, history re-emission,
+    effort→budget in all 3 faces, thought surfacing in all 3 faces, history
+    dropped for gemini).
+- **Next: M18 — structured outputs / JSON mode** (last package in the
+  approved sequence).
 - **M16 — OpenRouter client-parity pack ✅ complete (session 21, 2026-09-19)**
   (after M15 hardening + real deploy, same session). Shipped:
   - **`GET /v1/models` enrichment** (additive DTO): `pricing` as OpenRouter-
@@ -94,16 +133,20 @@ If something is claimed ✅ but not verified, it says so.
     node_modules/.wrangler/web-dist/.dev.vars/.video_agent/.zcode; commits:
     initial (M1–M14) + M15 hardening.
 
-## Verification baseline (2026-09-19, session 21)
+## Verification baseline (2026-09-21, session 22)
 
 - `npm run check` — clean (worker + web + test tsconfigs)
-- `npm test` — **284/284** (+14 completions: parse/JSON/SSE goldens + keep-alive)
+- `npm test` — **296/296** (+12 M17 reasoning goldens)
 - `npm run build:web` — clean (408.3 KB js / 112.4 KB gzip)
-- `npm run migrate:local` — 0009_m15_log_indexes + 0010_m16_attribution applied
-- Smokes post-M16: `npm run smoke` green (exit 0), `smoke:gateway` **190/190**
-  (+14 M16), `smoke:m8` **45** (+2 /api/v1), `smoke:m9` **75**,
-  `smoke:m10` **37** (+4 x-ratelimit), `smoke:m11` **ALL PASS (30)**,
-  `smoke:m14` **ALL PASS (24)**
+- Smokes post-M17: `npm run smoke` green (exit 0), `smoke:gateway` **206/206**
+  (+16 M17), `smoke:m8` **45**, `smoke:m9` **75**, `smoke:m10` **37**,
+  `smoke:m11` **ALL PASS (30)**, `smoke:m14` **ALL PASS (24)**
+
+## Verification baseline (2026-09-19, session 21)
+
+- `npm test` — **284/284** (+14 completions); `smoke:gateway` **190/190**
+  (+14 M16), `smoke:m8` **45**, `smoke:m10` **37**, others green (see the
+  git history of this file for the full session-21 baseline)
 - Deploy verification (M15): see the M15 block above (remote /health,
   /v1/models, chat 404 envelope, admin login, SPA — all green). The remote
   worker predates M16 — redeploy when you want the parity pack live.

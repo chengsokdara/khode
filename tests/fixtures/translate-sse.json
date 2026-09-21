@@ -565,7 +565,7 @@
   },
   {
     "translator": "openAiToAnthropic",
-    "name": "tool_calls stream → tool_use block start + input_json_delta + block stops",
+    "name": "tool_calls stream → tool_use block at index 0 (lazy text block, M17) + input_json_delta + stops",
     "model": "claude-sonnet-4-5",
     "inputEvents": [
       {
@@ -674,17 +674,6 @@
           "type": "content_block_start",
           "index": 0,
           "content_block": {
-            "type": "text",
-            "text": ""
-          }
-        }
-      },
-      {
-        "event": "content_block_start",
-        "data": {
-          "type": "content_block_start",
-          "index": 1,
-          "content_block": {
             "type": "tool_use",
             "id": "call_1",
             "name": "get_weather",
@@ -696,7 +685,7 @@
         "event": "content_block_delta",
         "data": {
           "type": "content_block_delta",
-          "index": 1,
+          "index": 0,
           "delta": {
             "type": "input_json_delta",
             "partial_json": "{\"city\":\"Paris\"}"
@@ -708,13 +697,6 @@
         "data": {
           "type": "content_block_stop",
           "index": 0
-        }
-      },
-      {
-        "event": "content_block_stop",
-        "data": {
-          "type": "content_block_stop",
-          "index": 1
         }
       },
       {
@@ -1289,6 +1271,700 @@
       },
       {
         "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "translator": "anthropicToOpenAi",
+    "name": "M17: thinking_delta → reasoning_content deltas; text follows",
+    "model": "claude-sonnet-4-5",
+    "inputEvents": [
+      {
+        "event": "message_start",
+        "data": {
+          "type": "message_start",
+          "message": {
+            "id": "msg_01S",
+            "usage": {
+              "input_tokens": 5
+            }
+          }
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 0,
+          "content_block": {
+            "type": "thinking",
+            "thinking": ""
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "thinking_delta",
+            "thinking": "let me "
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "thinking_delta",
+            "thinking": "think"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 0
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 1,
+          "content_block": {
+            "type": "text",
+            "text": ""
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 1,
+          "delta": {
+            "type": "text_delta",
+            "text": "Answer"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 1
+        }
+      },
+      {
+        "event": "message_delta",
+        "data": {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "end_turn"
+          },
+          "usage": {
+            "output_tokens": 9
+          }
+        }
+      },
+      {
+        "event": "message_stop",
+        "data": {
+          "type": "message_stop"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "claude-sonnet-4-5",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "claude-sonnet-4-5",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "reasoning_content": "let me "
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "claude-sonnet-4-5",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "reasoning_content": "think"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "claude-sonnet-4-5",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "Answer"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "claude-sonnet-4-5",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 9,
+            "total_tokens": 14
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "translator": "openAiToAnthropic",
+    "name": "M17: reasoning_content deltas → thinking block leading text block",
+    "model": "glm-5.3-flash",
+    "inputEvents": [
+      {
+        "data": {
+          "id": "chatcmpl-rc",
+          "object": "chat.completion.chunk",
+          "created": 1700000000,
+          "model": "glm-5.3-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "reasoning_content": "reasoning…"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "id": "chatcmpl-rc",
+          "object": "chat.completion.chunk",
+          "created": 1700000000,
+          "model": "glm-5.3-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "Hi"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "id": "chatcmpl-rc",
+          "object": "chat.completion.chunk",
+          "created": 1700000000,
+          "model": "glm-5.3-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        }
+      },
+      {
+        "data": "[DONE]"
+      }
+    ],
+    "expected": [
+      {
+        "event": "message_start",
+        "data": {
+          "type": "message_start",
+          "message": {
+            "id": "msg_rc",
+            "type": "message",
+            "role": "assistant",
+            "model": "glm-5.3-flash",
+            "content": [],
+            "stop_reason": null,
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          }
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 0,
+          "content_block": {
+            "type": "thinking",
+            "thinking": ""
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "thinking_delta",
+            "thinking": "reasoning…"
+          }
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 1,
+          "content_block": {
+            "type": "text",
+            "text": ""
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 1,
+          "delta": {
+            "type": "text_delta",
+            "text": "Hi"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 0
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 1
+        }
+      },
+      {
+        "event": "message_delta",
+        "data": {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "end_turn",
+            "stop_sequence": null
+          },
+          "usage": {
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "event": "message_stop",
+        "data": {
+          "type": "message_stop"
+        }
+      }
+    ]
+  },
+  {
+    "translator": "anthropicToResponses",
+    "name": "M17: thinking_delta → reasoning item + summary deltas before the message item",
+    "model": "claude-sonnet-4-5",
+    "inputEvents": [
+      {
+        "event": "message_start",
+        "data": {
+          "type": "message_start",
+          "message": {
+            "id": "msg_01RS",
+            "usage": {
+              "input_tokens": 4
+            }
+          }
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 0,
+          "content_block": {
+            "type": "thinking",
+            "thinking": ""
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "thinking_delta",
+            "thinking": "hmm"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 0
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 1,
+          "content_block": {
+            "type": "text",
+            "text": ""
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 1,
+          "delta": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 1
+        }
+      },
+      {
+        "event": "message_delta",
+        "data": {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "end_turn"
+          },
+          "usage": {
+            "output_tokens": 6
+          }
+        }
+      },
+      {
+        "event": "message_stop",
+        "data": {
+          "type": "message_stop"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "response.created",
+        "data": {
+          "type": "response.created",
+          "sequence_number": 0,
+          "response": {
+            "id": "resp_01RS",
+            "object": "response",
+            "created_at": "<now>",
+            "status": "in_progress",
+            "model": "claude-sonnet-4-5",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "usage": null
+          }
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": {
+          "type": "response.output_item.added",
+          "sequence_number": 1,
+          "output_index": 0,
+          "item": {
+            "id": "rs_01RS",
+            "type": "reasoning",
+            "summary": []
+          }
+        }
+      },
+      {
+        "event": "response.reasoning_summary_part.added",
+        "data": {
+          "type": "response.reasoning_summary_part.added",
+          "sequence_number": 2,
+          "item_id": "rs_01RS",
+          "output_index": 0,
+          "summary_index": 0,
+          "part": {
+            "type": "summary_text",
+            "text": ""
+          }
+        }
+      },
+      {
+        "event": "response.reasoning_summary_text.delta",
+        "data": {
+          "type": "response.reasoning_summary_text.delta",
+          "sequence_number": 3,
+          "item_id": "rs_01RS",
+          "output_index": 0,
+          "summary_index": 0,
+          "delta": "hmm"
+        }
+      },
+      {
+        "event": "response.reasoning_summary_text.done",
+        "data": {
+          "type": "response.reasoning_summary_text.done",
+          "sequence_number": 4,
+          "item_id": "rs_01RS",
+          "output_index": 0,
+          "summary_index": 0,
+          "text": "hmm"
+        }
+      },
+      {
+        "event": "response.reasoning_summary_part.done",
+        "data": {
+          "type": "response.reasoning_summary_part.done",
+          "sequence_number": 5,
+          "item_id": "rs_01RS",
+          "output_index": 0,
+          "summary_index": 0,
+          "part": {
+            "type": "summary_text",
+            "text": "hmm"
+          }
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": {
+          "type": "response.output_item.done",
+          "sequence_number": 6,
+          "output_index": 0,
+          "item": {
+            "id": "rs_01RS",
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "hmm"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": {
+          "type": "response.output_item.added",
+          "sequence_number": 7,
+          "output_index": 1,
+          "item": {
+            "id": "msg_01RS",
+            "type": "message",
+            "role": "assistant",
+            "status": "in_progress",
+            "content": []
+          }
+        }
+      },
+      {
+        "event": "response.content_part.added",
+        "data": {
+          "type": "response.content_part.added",
+          "sequence_number": 8,
+          "item_id": "msg_01RS",
+          "output_index": 1,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "",
+            "annotations": []
+          }
+        }
+      },
+      {
+        "event": "response.output_text.delta",
+        "data": {
+          "type": "response.output_text.delta",
+          "sequence_number": 9,
+          "item_id": "msg_01RS",
+          "output_index": 1,
+          "content_index": 0,
+          "delta": "ok"
+        }
+      },
+      {
+        "event": "response.output_text.done",
+        "data": {
+          "type": "response.output_text.done",
+          "sequence_number": 10,
+          "item_id": "msg_01RS",
+          "output_index": 1,
+          "content_index": 0,
+          "text": "ok"
+        }
+      },
+      {
+        "event": "response.content_part.done",
+        "data": {
+          "type": "response.content_part.done",
+          "sequence_number": 11,
+          "item_id": "msg_01RS",
+          "output_index": 1,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "ok",
+            "annotations": []
+          }
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": {
+          "type": "response.output_item.done",
+          "sequence_number": 12,
+          "output_index": 1,
+          "item": {
+            "id": "msg_01RS",
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "ok",
+                "annotations": []
+              }
+            ]
+          }
+        }
+      },
+      {
+        "event": "response.completed",
+        "data": {
+          "type": "response.completed",
+          "sequence_number": 13,
+          "response": {
+            "id": "resp_01RS",
+            "object": "response",
+            "created_at": "<now>",
+            "status": "completed",
+            "model": "claude-sonnet-4-5",
+            "output": [
+              {
+                "id": "rs_01RS",
+                "type": "reasoning",
+                "summary": [
+                  {
+                    "type": "summary_text",
+                    "text": "hmm"
+                  }
+                ]
+              },
+              {
+                "id": "msg_01RS",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "ok",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "usage": {
+              "input_tokens": 4,
+              "output_tokens": 6,
+              "total_tokens": 10
+            }
+          }
+        }
       }
     ]
   }

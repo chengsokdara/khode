@@ -75,6 +75,10 @@ export async function buildOpenAiChatRequest(
   // Forward the client's include_usage wish so streaming upstreams send a
   // final usage chunk (relayed untouched on the openai→openai path).
   if (req.streamIncludeUsage !== undefined) body.stream_options = { include_usage: req.streamIncludeUsage };
+  // M17: canonical reasoning re-emits as `reasoning_effort` (the openai
+  // vocabulary — o-series/GLM-style upstreams accept it; explicit budgets
+  // have no openai-side param and stay gateway-only).
+  if (req.reasoning?.effort) body.reasoning_effort = req.reasoning.effort;
 
   const o = req.options;
   if (o.temperature !== undefined && o.temperature !== null) body.temperature = o.temperature;
