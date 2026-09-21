@@ -355,6 +355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newH := lipgloss.Height(m2.View().Content)
 		chat := m2.perm == nil && m2.welcome == nil && m2.settings == nil &&
 			m2.toolsPanel == nil && m2.picker == nil
+		var wake tea.Cmd
 		if chat {
 			// The pad only exists in the chat view, so only chat-view
 			// height changes can be absorbed by it. A shrink grows the
@@ -364,6 +365,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch delta := newH - m2.hModel; {
 			case delta < 0:
 				m2.padRows = min(maxPadRows, m2.padRows-delta)
+				// The drain chain needs a pinTick to start, and ticks are
+				// only scheduled by printing — typing "/" then deleting it
+				// seals nothing, so the pad would sit forever. Wake it.
+				wake = tea.Tick(pinDelay, func(time.Time) tea.Msg { return pinTick{} })
 			case delta > 0 && m2.padRows > 0:
 				m2.padRows -= min(m2.padRows, delta)
 			}
@@ -386,6 +391,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m2, tea.Sequence(cmd, refill)
 		default:
 			m2.hModel = newH
+		}
+		if wake != nil {
+			if cmd == nil {
+				cmd = wake
+			} else {
+				cmd = tea.Batch(cmd, wake)
+			}
 		}
 	}
 	return m2, cmd

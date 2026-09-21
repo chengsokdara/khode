@@ -106,7 +106,12 @@ next transient consumes the pad first (the slot is reused), and big
 overlay closes beyond the cap fall back to the delayed refill. Known
 limitation: a stray row can still survive into history in long mixed
 sequences — uv exposes no erase-above primitive, so residue can be
-minimized but not made impossible.
+minimized but not made impossible. Second half of the fix: the pad
+drains — while quiet and pinned, one row is retired per tick and the
+next tick's refill re-seats the frame — and the wrapper's shrink-absorb
+schedules the wake tick itself, because ticks otherwise fire only when
+flush prints and a seal-less popup cycle (type "/", delete it) would
+never start the drain.
 
 **shift+tab mode cycling (2026-09-19):** shift+tab walks the permission
 modes (plan → ask → accept-edits → auto, wrapping via `perm.Next`)
