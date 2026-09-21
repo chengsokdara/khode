@@ -89,22 +89,23 @@ alignment prefix made the full-width rule and the mode chip wrap onto
 extra rows — and a blank pad now absorbs transient shrink (see the
 next entry).
 
-**History-tail band (2026-09-21):** the reserved blank band was itself
-rejected (a huge idle gap), so the band now renders the last lines of
-REAL conversation history instead: flush keeps a 40-line tail buffer
-and only prints lines that fall out of the band's 11-line window into
-scrollback — the conversation flows straight into the input with no
-gap, and the popup overlays the window's bottom when open (Claude
-Code's overlay-the-transcript behavior, achieved inside the frame
-where uv's diff can erase). The frame floats under its content at boot
-(no blank bottom-pinning — that filler was the original gap) and pins
-at the bottom edge naturally once the conversation fills the screen;
-after an overlay transition the band grows into the dead space with
-deeper tail history instead of letting the input float. The wrapper's
-top/hModel bookkeeping simplified accordingly; pinTick/drain machinery
-deleted entirely. Known artifacts: an overlay's top rows can ghost at
-the screen top when a shorter chat frame replaces it (uv gives no
-erase-above primitive) and scrolls away with content.
+**Full-screen rendering (2026-09-21):** the inline+scrollback
+experiment is reverted — five successive rounds of renderer artifacts
+(ghost boxes, lingering gaps, line-by-line crawls, duplicated frame
+fragments) all traced to the same root: the inline renderer cannot
+erase rows a shrunken frame vacated, and every workaround fought that
+constraint. khode now runs FULL SCREEN on the alternate buffer
+(tea.View.AltScreen) the way Claude Code does: the whole terminal
+repaints every frame, so the popup overlays the conversation and
+erases cleanly on close, nothing can leak into scrollback, and the
+input sits at the bottom of a frame that is exactly terminal-height.
+The conversation renders in an in-app viewport (sealed blocks from
+their render cache plus the streaming block), the captured mouse wheel
+scrolls it (m.scroll, snapping to the live edge on submit and stream
+events), and all the inline machinery — flush printing, printed
+watermark, lastPrint, top/hModel tracking, tail buffer, bandExtra,
+pad/drain/pinTick — is deleted; flush is a documented no-op kept for
+its call sites.
 
 **Bottom-pinned inline frame (2026-09-19):** the chat input now sits
 glued to the terminal's bottom edge at all times — the full-screen
@@ -406,3 +407,4 @@ Backlog (no committed order):
 | 2026-09-19 | Bottom-pinned inline frame: flush tops seal chunks up with blank rows so the input glues to the terminal's bottom edge (Claude Code's full-screen inline look); two-regime pin law (no-scroll fill / scroll self-pin) + one-tick-delayed refill for the height-mismatch case; tmux-verified end to end | (this commit) |
 | 2026-09-19 | Fixes from the first pinned run: mouse capture restored (wheel swallowed — Claude Code parity; the wheel must not scroll the scrollback under a full-screen frame) and the header built one column short — flush's alignment prefix was wrapping the rule onto a second row and could push the mode chip off | (this commit) |
 | 2026-09-19 | Transient rendering settled after three iterations (pad → pad+drain → fixed band): the chat frame now carries a FIXED 12-row transient band (popup/picker/mode line or blanks) — the frame's height never changes, the same-size repaint erases transients, nothing moves; pad/drain machinery deleted | (this commit) |
+| 2026-09-21 | Full-screen rendering: reverted the inline+scrollback experiment after five rounds of renderer artifacts; khode runs on the alternate buffer with an in-app conversation viewport (wheel-scrollable), popup overlays erase cleanly, input pinned at the bottom; all inline printing machinery deleted | (this commit) |

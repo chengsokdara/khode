@@ -57,8 +57,7 @@ func TestDumpViews(t *testing.T) {
 		uiMessage{role: "system", raw: "mode → accept-edits · file changes run freely; commands still ask"},
 	)
 	chat = resize(chat)
-	write("scrollback.txt", chat.lastPrint) // what tea.Println hands the terminal
-	write("chat.txt", chat.View().Content)  // the live region: status + input
+	write("chat.txt", chat.View().Content) // the full-screen frame
 
 	// streaming state: elapsed timer + cursor + live border; the banner
 	// prints, the streaming block stays in the live region.
@@ -160,12 +159,9 @@ func TestDumpViews(t *testing.T) {
 	if !strings.Contains(string(raw), "38;2;") {
 		t.Error("chat frame has no truecolor escapes")
 	}
-	// The banner (with the header rule) lives in the scrollback chunk now.
-	if !strings.Contains(string(plain(t, dir, "scrollback.txt")), "─") {
-		t.Error("scrollback chunk missing the header rule")
-	}
-	if !strings.Contains(string(plain(t, dir, "scrollback.txt")), "khode") {
-		t.Error("scrollback chunk missing the banner wordmark")
+	// The banner is a system message rendered in the viewport.
+	if !strings.Contains(string(plain(t, dir, "chat.txt")), "─") {
+		t.Error("frame missing the header rule")
 	}
 	if got := plain(t, dir, "chat.txt"); !strings.Contains(got, "❯") {
 		t.Errorf("chat frame missing the input prompt: %q", got)

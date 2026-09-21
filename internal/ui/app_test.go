@@ -12,8 +12,6 @@ import (
 	"khode/internal/llm"
 	"khode/internal/tools"
 
-	"charm.land/lipgloss/v2"
-
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -38,49 +36,38 @@ func newTestModel(t *testing.T) Model {
 		tools.Default(t.TempDir()), nil, t.TempDir())
 }
 
-// The program is inline: the view declares no alt screen (the terminal
-// keeps its real scrollback), but the mouse IS captured — the wheel
-// must not scroll the scrollback out from under the bottom-pinned
-// frame, exactly like Claude Code. Selection survives via shift+drag.
-func TestInlineViewDeclaresNothing(t *testing.T) {
+// The program runs full screen (alternate buffer): the whole terminal
+// is repainted every frame, so overlays erase cleanly and nothing
+// leaks into scrollback. The mouse is captured for viewport scrolling.
+func TestFullScreenView(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 
 	v := m.View()
-	if v.AltScreen {
-		t.Error("view entered the alt screen; scrollback would be suspended")
+	if !v.AltScreen {
+		t.Error("view is not on the alt screen; overlays cannot erase")
 	}
 	if v.MouseMode != tea.MouseModeCellMotion {
-		t.Errorf("mouse mode = %v, want cell motion (captured wheel)", v.MouseMode)
+		t.Errorf("mouse mode = %v, want cell motion (viewport wheel)", v.MouseMode)
 	}
 }
 
-// Wheel events are swallowed: they must never scroll the terminal.
-func TestWheelEventsSwallowed(t *testing.T) {
+// The wheel scrolls the conversation viewport and snaps back on input.
+func TestWheelEventsScrollViewport(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	before := m.top
+
 	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, Y: 5})
 	m = next.(Model)
-	if m.top != before {
-		t.Errorf("wheel event changed state: top %d -> %d", before, m.top)
+	if m.scroll != 3 {
+		t.Fatalf("scroll = %d after wheel up, want 3", m.scroll)
 	}
-}
-
-// The header is built one column short of the terminal: flush prefixes
-// every printed line with a space, and a full-width rule would wrap its
-// last character onto a second row (the "two-row rule" bug).
-func TestHeaderFitsPrintWidth(t *testing.T) {
-	m := newTestModel(t)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, Y: 5})
 	m = next.(Model)
-
-	for _, line := range strings.Split(m.header(), "\n") {
-		if w := lipgloss.Width(line); w > 99 {
-			t.Errorf("header line is %d wide, want <= 99 (terminal - prefix)", w)
-		}
+	if m.scroll != 0 {
+		t.Fatalf("scroll = %d after wheel down, want 0", m.scroll)
 	}
 }
 
@@ -395,36 +382,28 @@ func TestKeylessTurnStillBlockedForOtherProviders(t *testing.T) {
 	}
 }
 
-// flush hands sealed blocks to the terminal's scrollback in one chunk
-// and advances the watermark; a streaming block is never printed.
+// Sealed blocks render in the conversation viewport; a streaming block
+// renders with the live cursor until it seals.
 func TestFlushPrintsSealedBlocks(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = next.(Model) // first flush: the banner
+	m = next.(Model)
 
-	// A streaming block is never printed: flush has nothing to do.
 	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true, raw: "in flight", history: true})
-	if cmd := m.flush(); cmd != nil {
-		t.Error("flush printed while the last block was still streaming")
-	}
-	// Sealing it makes it history; a small chunk is absorbed into the
-	// band's tail (only displaced lines print to scrollback).
 	m.messages[len(m.messages)-1].streaming = false
-	m.flush()
-	if got := ansiStrip(historyOf(m)); !strings.Contains(got, "in flight") {
-		t.Errorf("history = %q, want the sealed block", got)
+	if cmd := m.flush(); cmd != nil {
+		t.Error("flush is a no-op in full-screen mode")
 	}
-	if m.printed != len(m.messages) {
-		t.Errorf("watermark = %d, want %d", m.printed, len(m.messages))
+	if got := ansiStrip(m.View().Content); !strings.Contains(got, "in flight") {
+		t.Errorf("viewport missing the sealed block: %q", got)
 	}
-	if got := ansiStrip(m.liveBlocks()); strings.Contains(got, "in flight") {
+	if got := ansiStrip(m.streamingBlock()); strings.Contains(got, "in flight") {
 		t.Error("sealed block still rendered as a live block")
 	}
 }
 
-// A restored transcript prints once, banner first, on the first resize
-// (the wrap width has to exist before anything can print), and none of
-// it stays in the live region.
+// A restored transcript renders on the first resize (the wrap width
+// has to exist before anything can render).
 func TestStartupTranscriptPrintsOnResize(t *testing.T) {
 	sess, err := agent.NewSession(t.TempDir())
 	if err != nil {
@@ -442,22 +421,13 @@ func TestStartupTranscriptPrintsOnResize(t *testing.T) {
 	cfg.SetModel("test-model")
 	m := New(cfg, &config.Auth{}, nameOnlyProvider{}, sess, tools.Default(t.TempDir()), nil, t.TempDir())
 
-	if m.printed != 0 || m.lastPrint != "" {
-		t.Fatalf("transcript printed before any resize: printed=%d", m.printed)
-	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
-	printed := ansiStrip(historyOf(m))
+	printed := ansiStrip(m.View().Content)
 	for _, want := range []string{"earlier question", "earlier answer"} {
 		if !strings.Contains(printed, want) {
-			t.Errorf("startup history missing %q:\n%s", want, printed)
+			t.Errorf("viewport missing %q:\n%s", want, printed)
 		}
-	}
-	if m.printed != len(m.messages) {
-		t.Errorf("watermark = %d, want %d", m.printed, len(m.messages))
-	}
-	if got := ansiStrip(m.liveBlocks()); strings.Contains(got, "earlier answer") {
-		t.Error("printed transcript leaked into the live blocks")
 	}
 }
 
@@ -477,15 +447,14 @@ func TestSessionSwitchPrintsTranscript(t *testing.T) {
 	}
 	m.useSession(sess)
 	m.flush()
-	printed := ansiStrip(historyOf(m))
+	printed := ansiStrip(m.View().Content)
 	if !strings.Contains(printed, "picked session history") {
 		t.Errorf("switch history = %q, want the picked transcript", printed)
 	}
 }
 
-// The live region — streaming blocks, popup, input — must never fill
-// the terminal: bubbletea's Println garbles a full-height frame, and
-// taller frames get clipped by the renderer.
+// The full-screen frame is exactly the terminal height: shorter leaves
+// stale rows painted, taller gets clipped by the renderer.
 func TestLiveRegionStaysInsideBudget(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -494,15 +463,10 @@ func TestLiveRegionStaysInsideBudget(t *testing.T) {
 	m.streaming = true
 	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, streaming: true,
 		raw: strings.Repeat("line of a long answer\n", 60), history: true})
-	m = pressKeys(m, "/") // popup open on top of the tall stream
 
-	v := m.View()
-	lines := strings.Split(v.Content, "\n")
-	if len(lines) > m.height-2 {
-		t.Errorf("live frame = %d rows, want <= %d (terminal %d minus safety)", len(lines), m.height-2, m.height)
-	}
-	if !strings.Contains(ansiStrip(v.Content), "line of a long answer") {
-		t.Error("streaming text vanished from the live region")
+	rows := strings.Split(m.View().Content, "\n")
+	if len(rows) != 30 {
+		t.Errorf("frame = %d rows, want exactly 30", len(rows))
 	}
 }
 

@@ -79,33 +79,11 @@ type Model struct {
 	// tea.Println (flush) and are never redrawn; the live region renders
 	// only what is after it — the in-flight streaming turn.
 	messages []uiMessage
-	printed  int
-	// printBannerNext makes the next flush prepend the header
-	// (wordmark, provider/model, session, mode) once: at startup and
-	// whenever the session changes. lastPrint keeps the most recent
-	// chunk for tests.
-	printBannerNext bool
-	lastPrint       string
 
-	// top is the screen row (0-based) the frame's first row occupies and
-	// hModel the frame height as last rendered (see Update). The frame
-	// floats under its content at boot and pins at the bottom edge once
-	// the conversation fills the screen.
-	top    int
-	hModel int
-
-	// tail is the last transientBandTail printed history lines. The
-	// transient band renders them inside the frame (the popup overlays
-	// them when open), so they show above the input with no gap and are
-	// only printed into scrollback when newer lines displace them.
-	tail []string
-
-	// bandExtra is how many rows the transient band has grown past its
-	// base size to fill dead space an overlay transition left below the
-	// frame — the band shows deeper tail history in it instead of
-	// letting the input float. Update adjusts it every pass from the
-	// freshly measured dead space, so it converges.
-	bandExtra int
+	// scroll is how many viewport rows the user has scrolled back from
+	// the live edge with the wheel; 0 is the live edge. Any submit or
+	// incoming stream event snaps back to it.
+	scroll int
 
 	picker     *picker     // session chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
@@ -198,19 +176,18 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	ta.SetHeight(minInputHeight)
 
 	m := Model{
-		cfg:             cfg,
-		auth:            auth,
-		provider:        p,
-		session:         sess,
-		tools:           reg,
-		mcpClients:      mcpClients,
-		workdir:         workdir,
-		textarea:        ta,
-		spinner:         sp,
-		partial:         new(strings.Builder),
-		partialThink:    new(strings.Builder),
-		approvals:       agent.NewBridge(),
-		printBannerNext: true, // the first flush prints the header above the transcript
+		cfg:          cfg,
+		auth:         auth,
+		provider:     p,
+		session:      sess,
+		tools:        reg,
+		mcpClients:   mcpClients,
+		workdir:      workdir,
+		textarea:     ta,
+		spinner:      sp,
+		partial:      new(strings.Builder),
+		partialThink: new(strings.Builder),
+		approvals:    agent.NewBridge(),
 	}
 
 	m.registerTaskTool()
@@ -320,9 +297,7 @@ func (m *Model) useSession(sess *agent.Session) {
 	m.session = sess
 	m.ctxIn, m.ctxOut = 0, 0
 	m.messages = nil
-	m.printed = 0
 	m.replayTranscript(sess)
-	m.printBannerNext = true
 	m.banner()
 }
 
@@ -345,44 +320,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	next, cmd := m.update(msg)
-	m2, ok := next.(Model)
-	if !ok {
-		return next, cmd
-	}
-	// The chat frame is height-stable (the transient band absorbs
-	// transients), so measured height changes come from textarea growth
-	// or overlay transitions. uv renders every frame top-anchored at its
-	// tracked cursor: growth extends downward into dead space first and
-	// scrolls only on overflow; shrink leaves dead rows below. The band
-	// fills dead rows with deeper history (bandExtra) instead of letting
-	// the input float; overflow scrolls and pins.
-	if m2.width > 0 {
-		newH := lipgloss.Height(m2.View().Content)
-		chat := m2.perm == nil && m2.welcome == nil && m2.settings == nil &&
-			m2.toolsPanel == nil && m2.picker == nil
-		if chat {
-			if dead := m2.height - m2.top - newH; dead < 0 {
-				// Overflow: uv scrolled and the frame is pinned.
-				m2.top = m2.height - newH
-				m2.hModel = newH
-				m2.bandExtra = 0
-			} else if dead > 0 {
-				// Dead rows below the frame: grow the band into them,
-				// bounded by kept tail lines that are not already shown
-				// — otherwise an empty tail would fill the space with
-				// blanks, the very gap this design exists to prevent.
-				allowed := min(maxBandExtra, len(m2.tail)-transientBandTail)
-				m2.bandExtra = max(0, min(dead, allowed))
-				m2.hModel = newH + m2.bandExtra
-			} else {
-				m2.hModel = newH
-			}
-		} else {
-			m2.hModel = newH
-		}
-	}
-	return m2, cmd
+	return m.update(msg)
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -414,6 +352,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case streamEventMsg:
+		m.scroll = 0
 		return m, m.handleStreamEvent(msg.ev)
 
 	case streamClosedMsg:
@@ -450,11 +389,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
-	// Wheel events are swallowed on purpose (the View captures the
-	// mouse): the wheel must never scroll the terminal's scrollback out
-	// from under the bottom-pinned frame. History stays reachable via
-	// the scrollbar and terminal search.
+	// The wheel scrolls the conversation viewport (the View captures
+	// the mouse, so the terminal never scrolls on its own).
 	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.scroll += 3
+		case tea.MouseWheelDown:
+			m.scroll -= 3
+		}
 		return m, nil
 
 	// Key releases are ignored outright: only presses drive the app.
@@ -539,22 +482,20 @@ func (m Model) View() tea.View {
 	} else {
 		content = m.chatView()
 	}
-	// Inline program: no alt screen — the terminal keeps its real
-	// scrollback, and the native scrollbar and text selection cover
-	// history. The mouse IS captured (Claude Code parity): the wheel
-	// must not scroll the scrollback out from under the bottom-pinned
-	// frame, so the terminal hands wheel events to the app, which
-	// swallows them. Selection survives via shift+drag, history via the
-	// scrollbar and terminal search.
+	// Full screen (alternate buffer), the way Claude Code runs: the
+	// whole terminal is repainted every frame, so transient overlays
+	// erase cleanly and nothing can leak into scrollback. The mouse is
+	// captured and the wheel scrolls the conversation viewport.
 	v := tea.NewView(content)
+	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
-// chatView assembles the live region: the unprinted (streaming) blocks,
-// the status line, the completion popup while it is open, the mode line
-// while a non-default mode is active, and the input. Finished
-// conversation lives in the terminal's scrollback above.
+// chatView assembles the full screen: the conversation viewport, the
+// status line, the transient overlays (completion popup, mode picker,
+// mode line) floating above the input, and the input. Everything is in
+// the frame, so overlays erase cleanly on close.
 func (m Model) chatView() string {
 	status := m.statusLine()
 	border := inputBorder
@@ -564,14 +505,68 @@ func (m Model) chatView() string {
 	inputBox := border.Render(m.textarea.View())
 	help := m.helpLine()
 
-	var parts []string
-	if live := m.liveBlocks(); live != "" {
-		parts = append(parts, live)
+	var mid []string
+	if m.popup != nil {
+		mid = append(mid, m.popupView()) // floats just above the input
 	}
-	parts = append(parts, m.transientBand()...)
-	parts = append(parts, status)
-	parts = append(parts, inputBox, help)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	if hint := m.modeHint(); hint != "" {
+		mid = append(mid, hint) // permission-mode reminder, Claude-Code style
+	}
+	if m.modePick != nil {
+		mid = append(mid, m.modePickView()) // floats just above the input
+	}
+
+	chrome := 1 + len(mid) + m.textarea.Height() + 2 + 1
+	rows := max(1, m.height-chrome)
+	mid = append(mid, inputBox, help)
+
+	viewport := viewportStyle.Width(m.width).Render(m.messageViewport(rows))
+	content := lipgloss.JoinVertical(lipgloss.Left, viewport, status, strings.Join(mid, "\n"))
+	// The frame must fill the screen exactly: the alt-screen renderer
+	// diffs against the previous frame, and a shorter frame leaves the
+	// old bottom rows painted.
+	out := strings.Split(content, "\n")
+	for len(out) < m.height {
+		out = append(out, "")
+	}
+	return strings.Join(out[:m.height], "\n")
+}
+
+// messageViewport renders the conversation as viewport rows, ending at
+// the live edge unless the user has scrolled back (m.scroll).
+func (m Model) messageViewport(rows int) string {
+	var blocks []string
+	for i := range m.messages {
+		blocks = append(blocks, m.block(i, m.printWidth()))
+	}
+	if streaming := m.streamingBlock(); streaming != "" {
+		blocks = append(blocks, streaming)
+	}
+	var lines []string
+	if len(blocks) > 0 {
+		lines = strings.Split(strings.Join(blocks, "\n\n"), "\n")
+	}
+	offset := len(lines) - rows - m.scroll
+	offset = max(0, min(offset, len(lines)))
+	if offset >= len(lines) {
+		return dimStyle.Render("· nothing yet — say hello")
+	}
+	return strings.Join(lines[offset:], "\n")
+}
+
+// streamingBlock renders the in-flight turn, if any — blocks marked
+// streaming render with the live cursor; sealed ones are plain history.
+func (m Model) streamingBlock() string {
+	var blocks []string
+	for i := range m.messages {
+		if m.messages[i].streaming {
+			blocks = append(blocks, strings.TrimSpace(m.block(i, m.printWidth())))
+		}
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 // header renders the scrollback banner: the gradient wordmark and
@@ -780,6 +775,7 @@ func (m *Model) stopStream() {
 // --- input handling ----------------------------------------------------------
 
 func (m *Model) submit() tea.Cmd {
+	m.scroll = 0
 	input := strings.TrimSpace(m.textarea.Value())
 	m.textarea.Reset()
 	m.closePopup()
@@ -1162,77 +1158,12 @@ func (m *Model) block(i int, width int) string {
 // the live region's one-column side padding.
 func (m Model) printWidth() int { return m.width - 2 }
 
-// flush prints every sealed, not-yet-printed block into the terminal's
-// real scrollback with a single tea.Println and advances the printed
-// watermark — the live region never draws those blocks again. Sealed
-// blocks reach the scrollback as they happen (the user message at
-// submit, tool activity as it lands, the answer at turn end), so a long
-// agentic turn never piles up in the redrawn region. The one-shot
-// banner (header) rides the first flush after startup or a session
-// switch.
+// flush is a compatibility no-op: the conversation renders inside the
+// full-screen frame (see messageViewport), so sealing a block needs no
+// scrollback printing. It remains because a handful of call sites use
+// it as the "something sealed" hook.
 func (m *Model) flush() tea.Cmd {
-	if m.width == 0 {
-		return nil // no wrap width yet; the first WindowSizeMsg flushes
-	}
-	end := m.printed
-	for end < len(m.messages) && !m.messages[end].streaming {
-		end++
-	}
-	var chunk string
-	if m.printBannerNext {
-		m.printBannerNext = false
-		chunk = m.header()
-	}
-	if end > m.printed {
-		blocks := make([]string, 0, end-m.printed)
-		for i := m.printed; i < end; i++ {
-			blocks = append(blocks, strings.TrimSpace(m.block(i, m.printWidth())))
-		}
-		joined := strings.Join(blocks, "\n\n")
-		if chunk == "" {
-			chunk = joined
-		} else {
-			chunk += "\n\n" + joined
-		}
-	}
-	chunk = strings.TrimRight(chunk, "\n")
-
-	// Seal bookkeeping runs first: the view must be the one this chunk
-	// leaves behind.
-	for i := m.printed; i < end; i++ {
-		m.messages[i].rendered = "" // printed blocks never render again
-	}
-	m.printed = end
-
-	// The transient band renders the last transientBandTail history
-	// lines inside the frame — the popup overlays them when open — so
-	// only lines that fall out of that window are printed into the
-	// terminal's scrollback. The frame drifts down as lines are
-	// displaced and, once it reaches the bottom edge, further prints
-	// scroll history up. No blank filler: while the conversation is
-	// shorter than the screen the frame floats under its content,
-	// exactly like the content does.
-	var lines []string
-	if chunk != "" {
-		lines = strings.Split(chunk, "\n")
-	}
-	all := append(append([]string{}, m.tail...), lines...)
-	if len(all) <= tailKeep {
-		m.tail = all
-		return nil // the band absorbs the whole chunk; nothing to print
-	}
-	m.tail = all[len(all)-tailKeep:]
-	printed := all[:len(all)-tailKeep]
-	for i, l := range printed {
-		printed[i] = " " + l // one leading space matches the live region's left edge
-	}
-	wrapped := 0
-	for _, l := range printed {
-		wrapped += 1 + lipgloss.Width(l)/m.width // matches uv's insertAbove scroll math
-	}
-	m.lastPrint = strings.Join(printed, "\n")
-	m.top = min(m.top+wrapped, max(0, m.height-m.hModel))
-	return tea.Println(m.lastPrint)
+	return nil
 }
 
 // flushIf flushes only when a seal actually happened, saving an empty
@@ -1248,65 +1179,6 @@ func (m *Model) invalidateRendered() {
 	for i := range m.messages {
 		m.messages[i].rendered = ""
 	}
-}
-
-// liveBlocks renders the not-yet-printed blocks — the in-flight turn.
-// Sealed blocks have already moved into the terminal's scrollback
-// (flush), so this stays small; a long streaming answer outgrowing the
-// budget scrolls off the top and is not lost: the full text prints when
-// the block seals.
-func (m Model) liveBlocks() string {
-	blocks := make([]string, 0, len(m.messages)-m.printed)
-	for i := m.printed; i < len(m.messages); i++ {
-		blocks = append(blocks, strings.TrimSpace(m.block(i, m.printWidth())))
-	}
-	if len(blocks) == 0 {
-		return ""
-	}
-	out := viewportStyle.Render(strings.Join(blocks, "\n\n"))
-	lines := strings.Split(out, "\n")
-	if budget := m.liveBudget(); len(lines) > budget {
-		lines = lines[len(lines)-budget:]
-	}
-	return strings.Join(lines, "\n")
-}
-
-// liveBudget caps the chat-block rows of the live region. The whole
-// view must stay at least two rows short of the terminal: bubbletea's
-// Println garbles a frame that fills the screen, and the renderer drops
-// the top of taller frames anyway.
-func (m Model) liveBudget() int {
-	return max(1, m.height-2-m.liveChrome())
-}
-
-// liveChrome is the fixed row cost around the chat blocks: the status
-// line, the input box (textarea + 2 border rows), the help line, the
-// completion popup while it is open, the mode picker while it is open,
-// and the mode line while a non-default mode is active.
-// transientBandRows is the band's height with no dead space below the
-// frame: the widest transient (the full command popup: 8 rows + 2
-// border + 1 footer) plus the mode line. transientBandTail is how many
-// history lines the band shows when no transient is open.
-const (
-	transientBandRows = 12 // 11-line popup slot + the mode line
-	transientBandTail = 11 // history lines the band shows at base size
-	tailKeep          = 40 // history lines the tail buffer keeps
-)
-
-// maxBandExtra bounds the band's growth so a huge overlay transition
-// can't demand more deep history than the tail reasonably keeps.
-const maxBandExtra = 20
-
-// bandRows is the band's height for the current render: its base size
-// plus whatever dead space an overlay transition left below the frame —
-// the band fills that space with deeper history instead of letting the
-// input float.
-func (m Model) bandRows() int {
-	return transientBandRows + m.bandExtra
-}
-
-func (m Model) liveChrome() int {
-	return 1 + m.textarea.Height() + 2 + 1 + len(m.transientBand())
 }
 
 // --- helpers -----------------------------------------------------------------

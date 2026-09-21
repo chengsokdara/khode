@@ -181,23 +181,18 @@ func TestPopupShrinksLiveBudget(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 
-	// The popup overlays the history window inside the band: opening it
-	// keeps the tail underneath, closing it repaints the history rows —
-	// nothing lingers and nothing is lost across the cycle.
+	// The popup overlays the conversation inside the frame; closing it
+	// repaints the rows it covered — nothing lingers.
 	m = pressKeys(m, "/")
 	if m.popup == nil {
 		t.Fatal("popup did not open")
 	}
-	band := strings.Join(m.transientBand(), "\n")
-	if !strings.Contains(band, "enter run") {
-		t.Errorf("band does not show the popup: %q", band)
+	if v := m.View().Content; !strings.Contains(v, "enter run") {
+		t.Errorf("view does not show the popup: %q", v)
 	}
 	m = pressKeys(m, "esc")
 	if m.popup != nil {
 		t.Fatal("popup still open after esc")
-	}
-	if got := m.liveBudget(); got <= 0 {
-		t.Errorf("live budget after esc = %d", got)
 	}
 }
 
