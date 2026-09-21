@@ -169,9 +169,12 @@ If something is claimed ✅ but not verified, it says so.
 - Smokes: `npm run smoke` green (exit 0), `smoke:gateway` **211/211**
   (+16 M17, +5 M18), `smoke:m8` **45**, `smoke:m9` **75**, `smoke:m10` **37**,
   `smoke:m11` **ALL PASS (30)**, `smoke:m14` **ALL PASS (24)**
-- DEPLOYED WORKER PREDATES M15/M16/M17/M18 — redeploy with `npm run deploy`
-  when the new surface should go live (remote migrations 0009/0010 already
-  applied; no new migrations in M17/M18).
+- REDEPLOYED 2026-09-21 (session 22): the M15–M18 worker is LIVE at
+  https://khateway.chengsokdara.workers.dev (version 7083678c; no new
+  migrations — 0009/0010 were already applied remotely). Verified on the
+  deployed URL: /health ok, /v1/models list envelope (empty — fresh remote
+  DB), /api/v1/credits 401 envelope without a key, M18 unknown
+  response_format.type → explicit 400 before routing.
 
 ## Verification baseline (2026-09-19, session 21)
 
