@@ -214,10 +214,10 @@
           "n": 1
         },
         "extras": {
-          "seed": 42,
-          "response_format": {
-            "type": "json_object"
-          }
+          "seed": 42
+        },
+        "responseFormat": {
+          "type": "json_object"
         }
       }
     }
@@ -591,6 +591,134 @@
       "status": 400,
       "message": "stream_options.include_usage must be a boolean",
       "param": "stream_options.include_usage",
+      "code": null
+    }
+  },
+  {
+    "name": "M18: response_format json_object → canonical responseFormat",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "response_format": {
+        "type": "json_object"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "responseFormat": {
+          "type": "json_object"
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "M18: response_format json_schema (openai-chat nesting) → canonical",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "calendar",
+          "strict": true,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "date"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "calendar",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "date"
+            ],
+            "additionalProperties": false
+          },
+          "strict": true
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "M18: response_format unknown type → 400 explicit",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "response_format": {
+        "type": "audio"
+      }
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "response_format.type must be 'json_object', 'json_schema'",
+      "param": "response_format",
       "code": null
     }
   }

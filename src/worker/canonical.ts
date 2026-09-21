@@ -100,6 +100,22 @@ export interface CanonicalChatOptions {
   parallelToolCalls?: boolean | null;
 }
 
+/**
+ * M18: structured-output / JSON-mode control, normalized from the openai chat
+ * `response_format` param and the responses `text.format` param. Adapters map
+ * it per target dialect (openai re-emits verbatim; gemini responseMimeType +
+ * responseSchema; anthropic a best-effort system directive).
+ */
+export interface CanonicalResponseFormat {
+  type: 'json_object' | 'json_schema';
+  /** json_schema only: the declared schema name. */
+  name?: string;
+  /** json_schema only: the JSON Schema the output must conform to. */
+  schema?: unknown;
+  /** json_schema only: strict mode wish (adapters interpret per dialect). */
+  strict?: boolean;
+}
+
 export interface CanonicalChatRequest {
   messages: CanonicalMessage[];
   stream: boolean;
@@ -107,6 +123,8 @@ export interface CanonicalChatRequest {
   streamIncludeUsage?: boolean;
   /** M17: reasoning/thinking control normalized from the three client dialects. */
   reasoning?: CanonicalReasoning | null;
+  /** M18: JSON mode / structured outputs, null/absent = plain text. */
+  responseFormat?: CanonicalResponseFormat | null;
   options: CanonicalChatOptions;
   /** Client fields Khateway does not interpret; adapters pass them through where the upstream dialect allows. */
   extras: Record<string, unknown>;

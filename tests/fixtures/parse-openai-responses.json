@@ -320,5 +320,48 @@
       "param": "tool_choice",
       "code": null
     }
+  },
+  {
+    "name": "M18: text.format json_schema (flat responses shape) → canonical responseFormat",
+    "body": {
+      "model": "gpt-5",
+      "input": "hi",
+      "text": {
+        "format": {
+          "type": "json_schema",
+          "name": "step",
+          "schema": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "step",
+          "schema": {
+            "type": "object"
+          }
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
   }
 ]

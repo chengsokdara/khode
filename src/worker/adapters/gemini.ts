@@ -85,6 +85,46 @@ function partsFor(m: CanonicalMessage, functionNameById: Map<string, string>): R
 }
 
 /**
+ * M18: maps the canonical responseFormat onto Gemini's schema dialect.
+ * `responseSchema` accepts an OpenAPI-3.0 subset — the recursive cleaner
+ * below keeps the fields Gemini honors (type/format/description/nullable/
+ * enum/properties/required/items/propertyOrdering) and drops the rest
+ * (`$schema`, `additionalProperties`, …), lowercasing types onto the
+ * OpenAPI vocabulary. `json_object` (no schema) returns null — the MIME
+ * type alone is the contract there.
+ */
+const GEMINI_SCHEMA_KEYS: readonly string[] = [
+  'type', 'format', 'description', 'nullable', 'enum', 'maxItems', 'minItems', 'properties', 'required', 'items', 'propertyOrdering',
+];
+
+function geminiSchemaNode(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(geminiSchemaNode);
+  if (!node || typeof node !== 'object') return node;
+  const src = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(src)) {
+    const v = src[key];
+    if (v === undefined) continue;
+    if (key === 'type' && typeof v === 'string') {
+      out.type = v.toLowerCase();
+    } else if (GEMINI_SCHEMA_KEYS.includes(key)) {
+      out[key] = key === 'properties' && v && typeof v === 'object'
+        ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, sub]) => [k, geminiSchemaNode(sub)]))
+        : key === 'items'
+          ? geminiSchemaNode(v)
+          : v;
+    }
+    // every other JSON-Schema keyword is dropped (Gemini would reject or ignore it)
+  }
+  return out;
+}
+
+function geminiResponseSchema(rf: NonNullable<CanonicalChatRequest['responseFormat']>): Record<string, unknown> | null {
+  if (rf.type !== 'json_schema' || !rf.schema || typeof rf.schema !== 'object') return null;
+  return geminiSchemaNode(rf.schema) as Record<string, unknown>;
+}
+
+/**
  * Maps canonical reasoning (M17) — with the openai-dialect `reasoning_effort`
  * / `thinking.budget_tokens` extras as a legacy fallback — onto
  * `generationConfig.thinkingConfig`. `minimal` disables thinking (budget 0 —
@@ -207,6 +247,12 @@ export async function buildGeminiGenerateContentRequest(
   }
   const thinkingConfig = thinkingConfigFor(req);
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
+  // M18: JSON mode / structured outputs → responseMimeType (+ responseSchema).
+  if (req.responseFormat) {
+    generationConfig.responseMimeType = 'application/json';
+    const responseSchema = geminiResponseSchema(req.responseFormat);
+    if (responseSchema) generationConfig.responseSchema = responseSchema;
+  }
   if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig;
   // NOTE: remaining client extras are openai/anthropic-dialect fields Gemini
   // would reject — dropped deliberately (same stance as the anthropic adapter).

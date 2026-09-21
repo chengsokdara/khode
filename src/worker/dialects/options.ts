@@ -44,6 +44,63 @@ export function canonicalReasoningContent(parts: { text?: string; signature?: st
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+// ------------------------------------------------------ M18 response format
+
+/**
+ * Validates + normalizes a JSON-mode / structured-output param onto the
+ * canonical shape. Two dialect shapes arrive here:
+ * - openai chat `response_format`: `{type:'json_object'}` or
+ *   `{type:'json_schema', json_schema:{name, strict?, schema}}`
+ * - responses `text.format`: `{type:'json_object'}` or
+ *   `{type:'json_schema', name, schema, strict?}` (flat)
+ * `shape` picks the reader. Anything else → explicit error.
+ */
+export function responseFormatOption(
+  v: unknown,
+  param: string,
+  shape: 'openai-chat' | 'responses',
+): { err?: string; val?: import('../canonical').CanonicalResponseFormat } {
+  if (v === undefined || v === null) return {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { err: `${param} must be an object` };
+  const raw = v as Record<string, unknown>;
+  if (raw.type === 'json_object') return { val: { type: 'json_object' } };
+  if (raw.type === 'text') return {}; // responses dialect: plain text (default)
+  if (raw.type === 'json_schema') {
+    if (shape === 'openai-chat') {
+      const inner = raw.json_schema;
+      if (!inner || typeof inner !== 'object' || Array.isArray(inner)) {
+        return { err: `${param}.json_schema must be an object` };
+      }
+      const j = inner as Record<string, unknown>;
+      if (typeof j.name !== 'string' || !j.name) return { err: `${param}.json_schema.name must be a string` };
+      if (j.schema === undefined || j.schema === null || typeof j.schema !== 'object') {
+        return { err: `${param}.json_schema.schema must be an object` };
+      }
+      return {
+        val: {
+          type: 'json_schema',
+          name: j.name,
+          schema: j.schema,
+          ...(j.strict === true ? { strict: true } : {}),
+        },
+      };
+    }
+    if (typeof raw.name !== 'string' || !raw.name) return { err: `${param}.name must be a string` };
+    if (raw.schema === undefined || raw.schema === null || typeof raw.schema !== 'object') {
+      return { err: `${param}.schema must be an object` };
+    }
+    return {
+      val: {
+        type: 'json_schema',
+        name: raw.name,
+        schema: raw.schema,
+        ...(raw.strict === true ? { strict: true } : {}),
+      },
+    };
+  }
+  return { err: `${param}.type must be 'json_object', 'json_schema'${shape === 'responses' ? " or 'text'" : ''}` };
+}
+
 export function floatOption(v: unknown, param: string, lo: number, hi: number): OptResult {
   if (v === undefined) return { val: undefined };
   if (v === null) return { val: null };

@@ -1259,5 +1259,210 @@
       },
       "timeoutMs": 60000
     }
+  },
+  {
+    "adapter": "openai",
+    "name": "M18: response_format json_schema re-emitted in the openai-chat nesting",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "name": "OpenAI (smoke)",
+        "baseUrl": "https://api.openai.com/v1"
+      },
+      "baseUrl": "https://api.openai.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "responseFormat": {
+        "type": "json_schema",
+        "name": "step",
+        "strict": true,
+        "schema": {
+          "type": "object"
+        }
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "model": "gpt-5",
+        "stream": false,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "step",
+            "strict": true,
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "gemini",
+    "name": "M18: response_format json_schema → responseMimeType + cleaned responseSchema",
+    "cand": {
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "responseFormat": {
+        "type": "json_schema",
+        "name": "recipe",
+        "schema": {
+          "type": "OBJECT",
+          "properties": {
+            "name": {
+              "type": "STRING",
+              "description": "name"
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        }
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "responseMimeType": "application/json",
+          "responseSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "name"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M18: response_format json_object → best-effort JSON system directive",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "responseFormat": {
+        "type": "json_object"
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "system": "Respond with ONLY a valid JSON object (no prose, no code fences)."
+      },
+      "timeoutMs": 60000
+    }
   }
 ]

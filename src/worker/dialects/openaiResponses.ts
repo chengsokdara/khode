@@ -15,8 +15,8 @@
 // reasoning fail with an explicit 400 pointer — never silently mis-shaped.
 // Errors use the OpenAI error envelope (shared with the chat dialect;
 // rendered by routes/gateway.ts via openAiError).
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalRole, CanonicalToolCall } from '../canonical';
-import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, toolChoiceOption, toolDefsOption } from './options';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalResponseFormat, CanonicalRole, CanonicalToolCall } from '../canonical';
+import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, responseFormatOption, toolChoiceOption, toolDefsOption } from './options';
 import { toolInputToArguments } from './openaiChat';
 import { translateSseStream, type SseOut } from './sse';
 
@@ -112,6 +112,17 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
       if (effort.err) return parseErr(effort.err, 'reasoning.effort');
       reasoning = canonicalReasoning(effort.val);
     }
+  }
+
+  // M18: text.format → canonical responseFormat ({type:'text'} → none).
+  let responseFormat: CanonicalResponseFormat | null = null;
+  if (raw.text !== undefined && raw.text !== null) {
+    if (!raw.text || typeof raw.text !== 'object' || Array.isArray(raw.text)) {
+      return parseErr('text must be an object', 'text');
+    }
+    const fmt = responseFormatOption((raw.text as Record<string, unknown>).format, 'text.format', 'responses');
+    if (fmt.err) return parseErr(fmt.err, 'text.format');
+    responseFormat = fmt.val ?? null;
   }
   for (const key of STATE_KEYS) {
     if (key in raw) {
@@ -260,7 +271,7 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
 
   // No extras: responses-only params would be rejected by the translated
   // upstream dialects, so everything unconsumed above is dropped (see header).
-  return { ok: true, model, request: { messages, stream, ...(reasoning ? { reasoning } : {}), options, extras: {} } };
+  return { ok: true, model, request: { messages, stream, ...(reasoning ? { reasoning } : {}), ...(responseFormat ? { responseFormat } : {}), options, extras: {} } };
 }
 
 // ------------------------------------------------ responses ← upstream (JSON)

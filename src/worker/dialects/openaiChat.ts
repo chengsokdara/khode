@@ -4,8 +4,8 @@
 // error JSON shape, mapping upstream failures into that shape, and the M4
 // cross-dialect half that translates anthropic messages/streams into openai
 // completions/chunks (the reverse lives in dialects/anthropicMessages.ts).
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalRole, CanonicalToolCall } from '../canonical';
-import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalResponseFormat, CanonicalRole, CanonicalToolCall } from '../canonical';
+import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, responseFormatOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
 import { translateSseStream } from './sse';
 
 export interface OpenAiErrorBody {
@@ -307,9 +307,19 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
     reasoning = canonicalReasoning(effort.val);
   }
 
+  // M18: response_format → canonical (json_object / json_schema). Parsed out
+  // of extras; the openai adapter re-emits it explicitly, the anthropic and
+  // gemini adapters translate it.
+  let responseFormat: CanonicalResponseFormat | null = null;
+  if (raw.response_format !== undefined) {
+    const rf = responseFormatOption(raw.response_format, 'response_format', 'openai-chat');
+    if (rf.err) return parseErr(rf.err, 'response_format');
+    responseFormat = rf.val ?? null;
+  }
+
   // Everything we did not consume above rides along untouched.
   const {
-    model: _m, messages: _msgs, stream: _s, stream_options: _so, usage: _usage, reasoning_effort: _re, temperature: _t, top_p: _tp, max_tokens: _mt, max_completion_tokens: _mct,
+    model: _m, messages: _msgs, stream: _s, stream_options: _so, usage: _usage, reasoning_effort: _re, response_format: _rf, temperature: _t, top_p: _tp, max_tokens: _mt, max_completion_tokens: _mct,
     stop: _st, n: _n, tools: _tools, tool_choice: _tch, parallel_tool_calls: _ptc, ...extras
   } = raw;
 
@@ -321,6 +331,7 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
       stream,
       ...(streamIncludeUsage !== undefined ? { streamIncludeUsage } : {}),
       ...(reasoning ? { reasoning } : {}),
+      ...(responseFormat ? { responseFormat } : {}),
       options,
       extras,
     },

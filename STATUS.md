@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-21 (session 22 — M17 reasoning/thinking)
+Last updated: 2026-09-21 (session 22 — M17 reasoning + M18 structured outputs)
 
 ## How to use this file
 
@@ -11,6 +11,32 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **M18 — structured outputs / JSON mode ✅ complete (session 22,
+  2026-09-21)** — the last package in the approved M15→M18 sequence. Shipped:
+  - **Canonical** `CanonicalResponseFormat` ({type:'json_object'} |
+    {type:'json_schema', name?, schema?, strict?}) + `responseFormat?` on the
+    request. Shared validator `responseFormatOption(v, param, shape)` in
+    dialects/options.ts reads both wire shapes (openai chat nested
+    `json_schema` object; responses flat + `{type:'text'}` passthrough).
+  - **Parsers**: openai chat `response_format` and responses `text.format`
+    parse onto canonical (unknown type → explicit 400; no longer riding
+    extras — the openai adapter re-emits explicitly, so openai→openai wire
+    behavior is unchanged while translated paths gain the feature).
+  - **Adapters**: openai re-emits verbatim; gemini →
+    `generationConfig.responseMimeType:'application/json'` +
+    `responseSchema` (recursive cleaner keeps only the OpenAPI-subset keys
+    Gemini honors — type lowercased, $schema/additionalProperties/… dropped);
+    anthropic → best-effort system JSON directive (json_schema embeds the
+    schema; documented NOT a hard guarantee — the upgrade path is
+    single-tool emulation, deliberately not built; MEMORY contract).
+  - **Cache keys**: `reasoning` (M17 catch-up) + `responseFormat` ride
+    cacheKeyInput ONLY when present — spread, not unconditional null fields —
+    so pre-M17 cache entries stay valid.
+  - **/v1/models supported_parameters** gains 'response_format' on the
+    anthropic + gemini adapter lists.
+  - Tests: +8 vitest → **304** (parse ×4, adapters ×3, cache-key projection);
+    smoke_gateway +5 M18 cells → **211** (verbatim re-emit, anthropic
+    directive, gemini schema cleaning, responses text.format, invalid 400).
 - **M17 — reasoning/thinking end-to-end ✅ complete (session 22, 2026-09-21)**
   (user: "continue" — M17 was next in the approved sequence). Shipped:
   - **Canonical**: `CanonicalReasoning` ({effort?, budgetTokens?}) on the
@@ -48,8 +74,10 @@ If something is claimed ✅ but not verified, it says so.
     `claude-think` + `gem-think`: param in/out, history re-emission,
     effort→budget in all 3 faces, thought surfacing in all 3 faces, history
     dropped for gemini).
-- **Next: M18 — structured outputs / JSON mode** (last package in the
-  approved sequence).
+- **Next: none scheduled — the approved M15→M18 sequence is COMPLETE.**
+  Remaining polish lives in ROADMAP.md ("Also queued") + the M17 contract's
+  deliberate cuts (anthropic json_schema tool emulation, client provider
+  routing prefs, prompt-cache_control passthrough).
 - **M16 — OpenRouter client-parity pack ✅ complete (session 21, 2026-09-19)**
   (after M15 hardening + real deploy, same session). Shipped:
   - **`GET /v1/models` enrichment** (additive DTO): `pricing` as OpenRouter-
@@ -133,14 +161,17 @@ If something is claimed ✅ but not verified, it says so.
     node_modules/.wrangler/web-dist/.dev.vars/.video_agent/.zcode; commits:
     initial (M1–M14) + M15 hardening.
 
-## Verification baseline (2026-09-21, session 22)
+## Verification baseline (2026-09-21, session 22 — final, post-M18)
 
 - `npm run check` — clean (worker + web + test tsconfigs)
-- `npm test` — **296/296** (+12 M17 reasoning goldens)
+- `npm test` — **304/304** (+12 M17 reasoning goldens, +8 M18)
 - `npm run build:web` — clean (408.3 KB js / 112.4 KB gzip)
-- Smokes post-M17: `npm run smoke` green (exit 0), `smoke:gateway` **206/206**
-  (+16 M17), `smoke:m8` **45**, `smoke:m9` **75**, `smoke:m10` **37**,
+- Smokes: `npm run smoke` green (exit 0), `smoke:gateway` **211/211**
+  (+16 M17, +5 M18), `smoke:m8` **45**, `smoke:m9` **75**, `smoke:m10` **37**,
   `smoke:m11` **ALL PASS (30)**, `smoke:m14` **ALL PASS (24)**
+- DEPLOYED WORKER PREDATES M15/M16/M17/M18 — redeploy with `npm run deploy`
+  when the new surface should go live (remote migrations 0009/0010 already
+  applied; no new migrations in M17/M18).
 
 ## Verification baseline (2026-09-19, session 21)
 

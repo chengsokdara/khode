@@ -209,8 +209,8 @@ const ADAPTER_SUPPORTED_PARAMS: Record<UpstreamAdapter, string[]> = {
     'n', 'tools', 'tool_choice', 'parallel_tool_calls', 'response_format', 'seed',
     'presence_penalty', 'frequency_penalty', 'logprobs', 'logit_bias',
   ],
-  anthropic: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'metadata'],
-  gemini: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'reasoning_effort'],
+  anthropic: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'response_format', 'metadata'],
+  gemini: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'reasoning_effort', 'response_format'],
 };
 
 /** Parses providers.adapters JSON defensively (shared with routing's parser contract). */

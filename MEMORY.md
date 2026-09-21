@@ -247,6 +247,27 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
 
 ## Decisions already made (do not re-litigate without asking)
 
+- **M18 structured-outputs contract (session 22, do not regress)**:
+  - **Canonical**: `responseFormat {type:'json_object'|'json_schema', name?,
+    schema?, strict?}`; validated by `responseFormatOption(v, param, shape)`
+    (shape 'openai-chat' reads the nested `json_schema` object; 'responses'
+    reads the flat shape + accepts `{type:'text'}` as none). Unknown types →
+    explicit 400.
+  - **Adapter stances**: openai re-emits verbatim (nested form). Gemini:
+    `responseMimeType:'application/json'` + `responseSchema` through the
+    recursive cleaner (keeps type/format/description/nullable/enum/maxItems/
+    minItems/properties/required/items/propertyOrdering; lowercases type;
+    drops $schema/additionalProperties/etc.) — json_object sends the MIME
+    type only. Anthropic: BEST-EFFORT system directive ("Respond with ONLY a
+    JSON object…"; json_schema embeds the schema) — documented as not a hard
+    guarantee; the upgrade path is single-tool emulation (forced tool_choice
+    + response-side unwrapping), a deliberate cut this session.
+  - **Cache**: reasoning + responseFormat ride cacheKeyInput ONLY when
+    present (spread) — never add unconditional fields to the projection; it
+    would invalidate every stored entry.
+  - response_format is parsed OUT of openai-chat extras (canonical home);
+    unknown top-level params still ride extras as before.
+
 - **M17 reasoning/thinking contract (session 22, do not regress)**:
   - **reasoning_content is the openai-face convention** (DeepSeek/GLM — the
     same field this gateway accepts in history and emits on both JSON and

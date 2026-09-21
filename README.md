@@ -172,8 +172,12 @@ npm run deploy
 | M12 ✅ | Native Gemini adapter: `generateContent` upstream (thinking budgets, native multiparts) — OpenAI-compat endpoint still available |
 | M13 ✅ | `POST /v1/embeddings`: OpenAI Embeddings API face, openai-compatible + native-gemini upstreams, logged + priced like chat |
 | M14 ✅ | Playground: in-admin chat tester over the real gateway via session-scoped client keys, streamed render + per-request log card |
+| M15 ✅ | Pre-launch hardening: atomic webhook credit, log indexes + bounded sums, validation ordering, error scrub — and the real deploy |
+| M16 ✅ | OpenRouter parity: /v1/models pricing + supported_parameters, /api/v1 key/credit APIs, legacy /v1/completions, attribution headers, x-ratelimit headers, SSE keep-alives |
+| M17 ✅ | Reasoning/thinking end-to-end: anthropic thinking, openai reasoning_effort/reasoning_content, responses reasoning — translated across the full matrix |
+| M18 ✅ | Structured outputs / JSON mode: response_format + text.format translated to openai, gemini (responseMimeType/responseSchema) and anthropic upstreams |
 
-**MVP complete + M8 public foundations + M9 orgs + M10 rate limiting + M11 semantic cache + M12 native Gemini + M13 embeddings + M14 playground.**
+**MVP complete + M8–M18: public foundations, orgs, rate limiting, semantic cache, native Gemini, embeddings, playground, hardening + real deploy, OpenRouter parity, reasoning, structured outputs.**
 See [`STATUS.md`](STATUS.md) for the verification baseline and
 [`ROADMAP.md`](ROADMAP.md) for what's next.
 

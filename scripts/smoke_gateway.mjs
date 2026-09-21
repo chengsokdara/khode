@@ -2250,6 +2250,57 @@ const mock = await startMockUpstream();
   check('M17 openai-face reasoning_content history dropped for gemini upstreams', !hasThought, JSON.stringify(gemContents).slice(0, 200));
 
   // ==================================================================
+  // M18 — structured outputs / JSON mode: response_format/text.format on
+  // every client face × every upstream adapter.
+  // ==================================================================
+
+  // openai client json_object × openai upstream: re-emitted verbatim
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-chat', response_format: { type: 'json_object' }, messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check('M18 openai→openai: response_format re-emitted verbatim', JSON.stringify(lastReq.body?.response_format) === '{"type":"json_object"}', JSON.stringify(lastReq.body?.response_format));
+
+  // openai client json_schema × anthropic upstream: system JSON directive
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-claude', max_tokens: 512,
+    response_format: { type: 'json_schema', json_schema: { name: 's', schema: { type: 'object' } } },
+    messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M18 openai→anthropic: json_schema becomes a JSON-only system directive',
+    typeof lastReq.body?.system === 'string' && lastReq.body.system.startsWith('Respond with ONLY a JSON object') && lastReq.body.system.includes('"type":"object"'),
+    String(lastReq.body?.system)?.slice(0, 160),
+  );
+
+  // openai client json_schema × gemini upstream: responseMimeType + responseSchema
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-gemini',
+    response_format: { type: 'json_schema', json_schema: { name: 'r', schema: { type: 'object', properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false } } },
+    messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M18 openai→gemini: responseMimeType + responseSchema (JSON-schema keywords cleaned)',
+    lastReq.body?.generationConfig?.responseMimeType === 'application/json' && JSON.stringify(lastReq.body?.generationConfig?.responseSchema) === '{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}',
+    JSON.stringify(lastReq.body?.generationConfig),
+  );
+
+  // responses client text.format × openai upstream
+  await fetchOrPost('/v1/responses', JSON.stringify({
+    model: 'mock-chat', text: { format: { type: 'json_object' } }, input: 'hi',
+  }));
+  check('M18 responses→openai: text.format json_object reaches the upstream', JSON.stringify(lastReq.body?.response_format) === '{"type":"json_object"}', JSON.stringify(lastReq.body?.response_format));
+
+  // invalid response_format type → 400 explicit
+  const m18bad = await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-chat', response_format: { type: 'audio' }, messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M18 response_format unknown type → 400 explicit',
+    m18bad.status === 400 && /response_format.type/.test(m18bad.body?.error?.message ?? ''),
+    JSON.stringify(m18bad.body),
+  );
+
+  // ==================================================================
   // M16 — OpenRouter client-parity pack: /v1/models pricing +
   // supported_parameters, legacy /v1/completions (JSON + SSE + log row +
   // attribution headers), and the client /api/v1 key/credit endpoints.

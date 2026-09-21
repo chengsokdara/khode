@@ -188,6 +188,16 @@ export async function buildAnthropicMessagesRequest(
   }
   // NOTE: remaining client extras are openai-dialect fields (frequency_penalty,
   // seed, …) that the Messages API would reject — dropped deliberately.
+  // M18: the Messages dialect has no native JSON mode — a best-effort system
+  // directive stands in (documented: not a hard guarantee; the upgrade path
+  // is single-tool emulation, deliberately not built yet).
+  if (req.responseFormat) {
+    const directive =
+      req.responseFormat.type === 'json_schema'
+        ? `Respond with ONLY a JSON object (no prose, no code fences) conforming exactly to this JSON schema:\n${JSON.stringify(req.responseFormat.schema)}`
+        : 'Respond with ONLY a valid JSON object (no prose, no code fences).';
+    system.push(directive);
+  }
   if (system.length > 0) body.system = system.join('\n\n');
   body.messages = merged.map((t) => ({ role: t.role, content: t.blocks }));
   body.model = cand.model.upstreamModel;

@@ -79,6 +79,21 @@ export async function buildOpenAiChatRequest(
   // vocabulary — o-series/GLM-style upstreams accept it; explicit budgets
   // have no openai-side param and stay gateway-only).
   if (req.reasoning?.effort) body.reasoning_effort = req.reasoning.effort;
+  // M18: JSON mode / structured outputs re-emitted explicitly (parsed out of
+  // extras at parse time — no double-ride).
+  if (req.responseFormat) {
+    body.response_format =
+      req.responseFormat.type === 'json_object'
+        ? { type: 'json_object' }
+        : {
+            type: 'json_schema',
+            json_schema: {
+              name: req.responseFormat.name,
+              ...(req.responseFormat.strict !== undefined ? { strict: req.responseFormat.strict } : {}),
+              schema: req.responseFormat.schema,
+            },
+          };
+  }
 
   const o = req.options;
   if (o.temperature !== undefined && o.temperature !== null) body.temperature = o.temperature;

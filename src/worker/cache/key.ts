@@ -62,6 +62,11 @@ export function cacheKeyInput(request: CanonicalChatRequest, modelSlug: string):
       parallelToolCalls: request.options.parallelToolCalls ?? null,
     },
     extras: request.extras,
+    // M17/M18: ride ONLY when present — adding these as unconditional null
+    // fields would invalidate every existing entry (the projection is hashed
+    // verbatim); spreading keeps pre-M17 keys stable.
+    ...(request.reasoning ? { reasoning: request.reasoning } : {}),
+    ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
   };
 }
 

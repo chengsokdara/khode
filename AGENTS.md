@@ -75,7 +75,13 @@ items), budgets mapped per upstream (anthropic thinking param clamped ≥1024
 floor or dropped, gemini thinkingConfig + includeThoughts, openai
 reasoning_effort re-emit), `reasoning_content` ↔ thinking blocks ↔ responses
 reasoning items/SSE events across the whole matrix, history reasoning kept
-for anthropic and dropped for openai/gemini upstreams.
+for anthropic and dropped for openai/gemini upstreams. **M18 done** —
+structured outputs / JSON mode: canonical `responseFormat` from openai chat
+`response_format` + responses `text.format`, re-emitted verbatim to openai
+upstreams, mapped to gemini `responseMimeType`+`responseSchema` (schema
+cleaned to the OpenAPI subset), best-effort system JSON directive on
+anthropic (documented non-guarantee); cache keys include reasoning +
+responseFormat only when present.
 **Keyless-native default** (khode integration): /v1 is served
 anonymously unless `client_key_enforcement` is switched on (admin settings).
 
@@ -240,7 +246,8 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             discovery/import + the M12 native-gemini matrix + the M13 embeddings
                             branch + the M16 parity cells (models pricing, legacy /v1/completions
                             incl. attribution headers, /api/v1) + the M17 thinking
-                            matrix (claude-think + gem-think mock faces) — 206 checks as of 2026-09-21)
+                            matrix (claude-think + gem-think mock faces) + the M18 structured-
+                            outputs cells — 211 checks as of 2026-09-21)
 scripts/smoke_m8.mjs       — accounts/balance/webhook e2e vs wrangler dev :8787 (signup → credit →
                             debit math → 429 → signed LS webhook → idempotency; 42 checks + 2 M16 /api/v1 checks = 45)
 scripts/smoke_m9.mjs       — orgs/teams e2e vs wrangler dev :8787 (2 orgs coexist, join codes,
