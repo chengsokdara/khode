@@ -128,7 +128,14 @@ func (m *Model) settingsKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	if s.form != nil {
-		return m.formKey(msg)
+		cmd, flash, closed := m.formKey(msg, s.form)
+		if flash != "" {
+			s.savedMsg = flash
+		}
+		if closed {
+			s.form = nil
+		}
+		return cmd
 	}
 
 	switch s.view {
@@ -228,8 +235,7 @@ func (m *Model) cycleSetting(dir int) {
 // providers, so settings may be nil. Key changes save through
 // auth.Save instead.
 func (m *Model) saveSettings(what string) {
-	if err := m.cfg.Save(); err != nil {
-		m.lastErr = err.Error()
+	if !m.saveConfig() {
 		return
 	}
 	flash := "✓ saved " + what
@@ -239,6 +245,16 @@ func (m *Model) saveSettings(what string) {
 	if m.welcome != nil {
 		m.welcome.savedMsg = flash
 	}
+}
+
+// saveConfig persists config.json, reporting whether it worked; a
+// failure is recorded in lastErr for the next status-line slot.
+func (m *Model) saveConfig() bool {
+	if err := m.cfg.Save(); err != nil {
+		m.lastErr = err.Error()
+		return false
+	}
+	return true
 }
 
 // switchProvider persists a provider change and rebuilds the client, so
@@ -402,6 +418,13 @@ func (m *Model) mcpListKey(msg tea.KeyMsg) tea.Cmd {
 
 // openMCPForm edits the named server, or a new one when name is "".
 func (m *Model) openMCPForm(name string) {
+	m.settings.form = m.newMCPServerForm(name)
+	m.settings.form.focus()
+}
+
+// newMCPServerForm builds the add/edit form for one MCP server: name,
+// command, args, env, and the risk enum. An empty name is a new server.
+func (m *Model) newMCPServerForm(name string) *serverForm {
 	sc := m.cfg.MCPServers[name] // zero value when new
 	inputs := make([]textinput.Model, 4)
 	for i := range inputs {
@@ -423,8 +446,7 @@ func (m *Model) openMCPForm(name string) {
 			enum = i
 		}
 	}
-	m.settings.form = &serverForm{kind: formMCPServer, origName: name, inputs: inputs, enum: enum}
-	m.settings.form.focus()
+	return &serverForm{kind: formMCPServer, origName: name, inputs: inputs, enum: enum}
 }
 
 // --- hook list ---------------------------------------------------------------
@@ -543,22 +565,24 @@ func (f *serverForm) cycleEnum(dir int) {
 	f.enum = ((f.enum+dir)%n + n) % n
 }
 
-func (m *Model) formKey(msg tea.KeyMsg) tea.Cmd {
-	s := m.settings
-	f := s.form
+// formKey handles one key for an open form. It reports closed=true when
+// the form should close (esc or a successful commit) and flash carries
+// the outcome for the hosting surface to show (settings footer, /mcp
+// dialog).
+func (m *Model) formKey(msg tea.KeyMsg, f *serverForm) (cmd tea.Cmd, flash string, closed bool) {
 	key := msg.String()
 
 	// The save row: enter commits, up walks back.
 	if f.field == len(f.inputs)+1 {
 		switch key {
 		case "enter", "space":
-			return m.commitForm()
+			return m.commitForm(f)
 		case "up", "k", "ctrl+p":
 			f.field--
 		case "esc":
-			s.form = nil
+			return nil, "", true
 		}
-		return nil
+		return nil, "", false
 	}
 
 	// The enum row: ←/→/enter cycle.
@@ -574,50 +598,47 @@ func (m *Model) formKey(msg tea.KeyMsg) tea.Cmd {
 		case "down", "tab", "ctrl+n":
 			f.field++
 		case "esc":
-			s.form = nil
+			return nil, "", true
 		}
-		return nil
+		return nil, "", false
 	}
 
 	// Text rows: navigation keys move between fields; everything else
 	// reaches the focused input.
 	switch key {
 	case "esc":
-		s.form = nil
-		return nil
+		return nil, "", true
 	case "up", "k", "ctrl+p":
 		if f.field > 0 {
 			f.field--
 			f.focus()
 		}
-		return nil
+		return nil, "", false
 	case "down", "tab", "ctrl+n", "enter":
 		f.field++
 		f.focus()
-		return nil
+		return nil, "", false
 	}
-	var cmd tea.Cmd
-	f.inputs[f.field], cmd = f.inputs[f.field].Update(msg)
-	return cmd
+	var inputCmd tea.Cmd
+	f.inputs[f.field], inputCmd = f.inputs[f.field].Update(msg)
+	return inputCmd, "", false
 }
 
-// commitForm validates and saves the open form. A saved MCP server also
-// kicks off the reconciliation that starts (or restarts) it live.
-func (m *Model) commitForm() tea.Cmd {
-	s := m.settings
-	f := s.form
+// commitForm validates and saves the open form. It returns the outcome
+// flash, closed=true when the form should close, and the reconcile cmd —
+// a saved MCP server kicks off the reconciliation that starts (or
+// restarts) it live.
+func (m *Model) commitForm(f *serverForm) (cmd tea.Cmd, flash string, closed bool) {
 	switch f.kind {
 	case formMCPServer:
 		name := strings.TrimSpace(f.inputs[0].Value())
 		command := strings.TrimSpace(f.inputs[1].Value())
 		if name == "" || command == "" {
-			s.savedMsg = "✗ name and command are required"
-			return nil
+			return nil, "✗ name and command are required", false
 		}
 		if name != f.origName {
 			if _, exists := m.cfg.MCPServers[name]; exists {
-				s.savedMsg = "✗ a server named " + name + " already exists"
-				return nil
+				return nil, "✗ a server named " + name + " already exists", false
 			}
 			delete(m.cfg.MCPServers, f.origName)
 		}
@@ -630,21 +651,21 @@ func (m *Model) commitForm() tea.Cmd {
 			Env:     strings.Fields(f.inputs[3].Value()),
 			Risk:    riskChoices[f.enum],
 		}
-		s.form = nil
-		m.saveSettings("mcp server " + name)
 		// An edit to a running server must restart it for the new
 		// command/env/risk to take effect.
 		var restart []string
 		if _, running := m.mcpClients[name]; running {
 			restart = []string{name}
 		}
-		return m.applyMCPCmd(restart)
+		if !m.saveConfig() {
+			return m.applyMCPCmd(restart), "✗ saving config failed", true
+		}
+		return m.applyMCPCmd(restart), "✓ saved mcp server " + name, true
 
 	case formHook:
 		command := strings.TrimSpace(f.inputs[0].Value())
 		if command == "" {
-			s.savedMsg = "✗ a hook needs a command"
-			return nil
+			return nil, "✗ a hook needs a command", false
 		}
 		h := config.Hook{Command: command, Tools: strings.Fields(f.inputs[1].Value())}
 		if f.origIdx >= 0 {
@@ -659,10 +680,12 @@ func (m *Model) commitForm() tea.Cmd {
 		} else {
 			m.cfg.Hooks.PostTool = append(m.cfg.Hooks.PostTool, h)
 		}
-		s.form = nil
 		// A fresh hooks.Runner is built per turn from cfg.Hooks, so the
 		// change is live without further plumbing.
-		m.saveSettings("hook saved · applies next turn")
+		if !m.saveConfig() {
+			return nil, "✗ saving config failed", true
+		}
+		return nil, "✓ saved hook · applies next turn", true
 
 	case formProvider:
 		name := strings.TrimSpace(f.inputs[0].Value())
@@ -672,12 +695,10 @@ func (m *Model) commitForm() tea.Cmd {
 			kind = "anthropic"
 		}
 		if name == "" || baseURL == "" {
-			s.savedMsg = "✗ name and base url are required"
-			return nil
+			return nil, "✗ name and base url are required", false
 		}
 		if name != f.origName && m.providerNameTaken(name, f.origName) {
-			s.savedMsg = "✗ a provider named " + name + " already exists"
-			return nil
+			return nil, "✗ a provider named " + name + " already exists", false
 		}
 		if m.cfg.CustomProviders == nil {
 			m.cfg.CustomProviders = map[string]config.CustomProvider{}
@@ -698,17 +719,21 @@ func (m *Model) commitForm() tea.Cmd {
 		fresh := f.origName == ""
 		// A new provider becomes active immediately so its api key and
 		// model can be set without hunting for it; an edit to the
-		// active provider re-authenticates with the new endpoint.
+		// active provider re-authenticates with the new endpoint. The
+		// form stays open either way, like the settings flow it serves.
 		if fresh || m.cfg.Provider == name {
 			m.switchProvider(name)
-		} else {
-			m.saveSettings("provider " + name + " (" + kind + ")")
+			if fresh {
+				return nil, "✓ provider " + name + " activated · set its api key and model", false
+			}
+			return nil, "", false
 		}
-		if fresh {
-			s.savedMsg = "✓ provider " + name + " activated · set its api key and model"
+		if !m.saveConfig() {
+			return nil, "✗ saving config failed", false
 		}
+		return nil, "✓ saved provider " + name + " (" + kind + ")", false
 	}
-	return nil
+	return nil, "", false
 }
 
 // --- live MCP reconciliation ---------------------------------------------------
@@ -832,7 +857,7 @@ func (m *Model) settingsView() string {
 	var body []string
 	switch {
 	case s.form != nil:
-		body = s.formView()
+		body = serverFormView(s.form)
 	case s.view == viewProviderList:
 		title = dialogTitle("settings · providers", "n new custom · enter switch/edit · d remove")
 		body = m.providerListView()
@@ -1032,10 +1057,10 @@ func (m *Model) hookListView() []string {
 	return listWindow(out, cur, listMaxRows(m.height))
 }
 
-// formView renders the open form: label + live input per text row, then
-// the enum row and the save row.
-func (s *settings) formView() []string {
-	f := s.form
+// serverFormView renders an open form: label + live input per text row,
+// then the enum row and the save row. It is host-agnostic so both the
+// settings dialog and the /mcp panel's add form render identically.
+func serverFormView(f *serverForm) []string {
 	labels := f.labels()
 	rows := make([]string, 0, len(labels)+2)
 	for i, l := range labels {

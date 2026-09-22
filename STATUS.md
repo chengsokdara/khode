@@ -88,9 +88,15 @@ server's launch line and tool names. enter starts or restarts the
 highlighted server through the shared `applyMCPCmd` (whose reconcile
 also heals any other stopped server), space toggles all of the server's
 tools for this session (all-on ↔ all-off, the /tools semantics in bulk),
-esc closes. Statuses render from live state (`m.mcpClients` + registry
-prefix scans) every frame; `applyMCPResult` clears the dialog's busy
-marks, and the old `mcpStatus()` text is gone.
+and n opens the add form right in the dialog — the same fields and
+commit machinery as /settings, made host-agnostic (`formKey`/`commitForm`
+take the form and return the outcome flash; `newMCPServerForm` builds
+it, `serverFormView` renders it for both surfaces). A committed add
+persists, kicks the live reconcile, closes the form, and lands the
+cursor on the new row with a ✓ flash; a duplicate name keeps the form
+open with a ✗ flash. Statuses render from live state (`m.mcpClients` +
+registry prefix scans) every frame; `applyMCPResult` clears the dialog's
+busy marks, and the old `mcpStatus()` text is gone.
 
 **Bottom-pinned inline frame (2026-09-19):** the chat input now sits
 glued to the terminal's bottom edge at all times — the full-screen
@@ -440,3 +446,4 @@ Backlog (no committed order):
 | 2026-09-22 | `/model` picker dialog: bare `/model` opens a centered chooser (cached list + type-to-filter + f fetch/auto-fetch-on-empty, `applyFetchedModels` routes results), `/model <name>` direct-set unchanged, completion row runs bare `/model` at once | (this commit) |
 | 2026-09-22 | Fix: `/sessions` + esc quit the app on young sessions — the picker guessed "startup picker" from `len(m.messages) > 1`; the mode is now an explicit `startup` flag (`OpenStartupPicker` for `--resume`, whose esc still quits) so a chat-opened picker always closes | (this commit) |
 | 2026-09-22 | `/mcp` servers dialog: sorted per-server rows with live status glyph, tool count (+ session-disabled), risk badge, launch-line detail; enter starts/restarts via `applyMCPCmd` (busy-marked until `applyMCPResult`), space bulk-toggles the server's tools session-scoped; printed `mcpStatus()` removed | (this commit) |
+| 2026-09-22 | `/mcp` gains n-add: the settings server form is now host-agnostic (`formKey`/`commitForm` take the form + return a flash, `newMCPServerForm`/`serverFormView` shared) and the dialog hosts it — add without visiting /settings; committed adds persist, reconcile live, and land the cursor on the new row | (this commit) |

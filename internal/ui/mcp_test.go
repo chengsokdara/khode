@@ -150,7 +150,7 @@ func TestMCPPanelEmptyConfig(t *testing.T) {
 	m = next.(Model)
 	m.openMCPPanel()
 
-	if v := m.View().Content; !strings.Contains(v, "no MCP servers configured") {
+	if v := m.View().Content; !strings.Contains(v, "no MCP servers yet · n add one") {
 		t.Errorf("empty view = %q", v)
 	}
 	if cmd := m.mcpPanelKey(keyMsg("enter")); cmd != nil {
@@ -158,5 +158,76 @@ func TestMCPPanelEmptyConfig(t *testing.T) {
 	}
 	if cmd := m.mcpPanelKey(keyMsg(" ")); cmd != nil {
 		t.Error("space on an empty list did work")
+	}
+}
+
+// n opens the add form in the dialog itself; a committed form persists
+// the server, kicks the reconcile, closes, and lands the cursor on the
+// new row.
+func TestMCPPanelAddServer(t *testing.T) {
+	m := newSettingsModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.openMCPPanel()
+
+	// n opens the form on an empty config; esc cancels without adding.
+	if cmd := m.mcpPanelKey(keyMsg("n")); cmd != nil {
+		t.Fatal("n scheduled work")
+	}
+	if m.mcpPanel.form == nil {
+		t.Fatal("n did not open the add form")
+	}
+	m.mcpPanelKey(keyMsg("esc"))
+	if m.mcpPanel.form != nil {
+		t.Fatal("esc did not close the form")
+	}
+
+	// Fill name, command; leave args/env empty; walk past the risk
+	// enum to the save row and commit.
+	keys := []string{"n", "g", "x", "tab", "u", "v", "x", "tab", "tab", "tab", "tab", "enter"}
+	for _, k := range keys {
+		if cmd := m.mcpPanelKey(keyMsg(k)); k == "enter" && cmd == nil {
+			t.Fatal("commit scheduled no reconcile")
+		}
+	}
+	if m.mcpPanel.form != nil {
+		t.Fatal("form open after commit")
+	}
+	sc, ok := m.cfg.MCPServers["gx"]
+	if !ok {
+		t.Fatalf("server not saved: %v", m.cfg.MCPServers)
+	}
+	if sc.Command != "uvx" {
+		t.Errorf("command = %q, want uvx", sc.Command)
+	}
+	if p := m.mcpPanel; p.names[0] != "gx" || p.cursor != 0 {
+		t.Errorf("post-add list/cursor = %v/%d, want gx at 0", p.names, p.cursor)
+	}
+	if p := m.mcpPanel; !strings.HasPrefix(p.flash, "✓ saved mcp server gx") {
+		t.Errorf("flash = %q", p.flash)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if _, ok := cfg.MCPServers["gx"]; !ok {
+		t.Error("server not persisted")
+	}
+
+	// A duplicate name is rejected and keeps the form open for fixing.
+	// (The loop's leading n opens the form; g,x spell the name.)
+	for _, k := range []string{"n", "g", "x", "tab", "c", "tab", "tab", "tab", "tab", "enter"} {
+		m.mcpPanelKey(keyMsg(k))
+	}
+	if m.mcpPanel.form == nil {
+		t.Fatal("duplicate commit closed the form")
+	}
+	if p := m.mcpPanel; !strings.HasPrefix(p.flash, "✗ a server named gx already exists") {
+		t.Errorf("flash = %q", p.flash)
+	}
+	// Cancel leaves the config untouched.
+	m.mcpPanelKey(keyMsg("esc"))
+	if _, ok := m.cfg.MCPServers["c"]; ok {
+		t.Error("cancelled form still saved a server")
 	}
 }

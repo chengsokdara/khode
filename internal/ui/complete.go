@@ -29,7 +29,7 @@ var slashCommands = []slashCommand{
 	{"mode", "[name]", "permission mode picker · shift+tab cycles"},
 	{"compact", "", "summarize older turns to shrink the context"},
 	{"tools", "", "browse and toggle tools the model can call"},
-	{"mcp", "", "MCP servers · restart, toggle tools"},
+	{"mcp", "", "MCP servers · add, restart, toggle tools"},
 	{"exit", "", "leave khode"},
 	{"quit", "", "alias of /exit"},
 }
