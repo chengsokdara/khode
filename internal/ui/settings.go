@@ -1394,10 +1394,23 @@ func (m *Model) fetchModelsCmd() tea.Cmd {
 }
 
 // applyFetchedModels stores a finished fetch into whichever consumer is
-// open: the settings model picker, or the walkthrough's model step.
-// Stale results — neither consumer open, or the provider switched
-// meanwhile — are dropped on the floor.
+// open: the /model dialog, the settings model picker, or the
+// walkthrough's model step. Stale results — nothing open, or the
+// provider switched meanwhile — are dropped on the floor.
 func (m *Model) applyFetchedModels(msg modelsFetchedMsg) {
+	if p := m.modelPick; p != nil && p.provider == msg.provider {
+		p.fetching = false
+		if msg.err != nil {
+			p.status = clip("fetch failed: "+msg.err.Error(), 56) +
+				dimStyle.Render("  · f retry")
+			return
+		}
+		m.cacheModelChoices(msg.provider, msg.models)
+		p.all = msg.models
+		m.refreshModelPick()
+		return
+	}
+
 	if s := m.settings; s != nil && s.models != nil && s.view == viewModels && s.models.provider == msg.provider {
 		p := s.models
 		p.fetching = false
@@ -1406,10 +1419,7 @@ func (m *Model) applyFetchedModels(msg modelsFetchedMsg) {
 				dimStyle.Render("  · n add manually · f retry")
 			return
 		}
-		m.cfg.SetModelChoices(msg.provider, msg.models)
-		if err := m.cfg.Save(); err != nil {
-			m.lastErr = err.Error()
-		}
+		m.cacheModelChoices(msg.provider, msg.models)
 		p.list = msg.models
 		p.cursor = p.index(activeModel(m.cfg))
 		if len(p.list) == 0 {
@@ -1431,12 +1441,18 @@ func (m *Model) applyFetchedModels(msg modelsFetchedMsg) {
 	}
 	// Cache the list even before a pick: Model() falls back to the first
 	// cached choice, and /settings → model reopens it without a re-fetch.
-	m.cfg.SetModelChoices(msg.provider, msg.models)
+	m.cacheModelChoices(msg.provider, msg.models)
+	w.models = msg.models
+	w.mCur = 0
+}
+
+// cacheModelChoices persists a fetched list as the provider's cached
+// choices; a save failure surfaces as lastErr, not a dead fetch.
+func (m *Model) cacheModelChoices(provider string, models []string) {
+	m.cfg.SetModelChoices(provider, models)
 	if err := m.cfg.Save(); err != nil {
 		m.lastErr = err.Error()
 	}
-	w.models = msg.models
-	w.mCur = 0
 }
 
 // modelPickerView renders the list (sliding window when long) with the

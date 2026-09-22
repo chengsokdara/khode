@@ -86,6 +86,7 @@ type Model struct {
 	scroll int
 
 	picker     *picker     // session chooser overlay; nil when closed
+	modelPick  *modelPick  // /model chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
 	toolsPanel *toolsPanel // /tools overlay; nil when closed
 	welcome    *welcome    // first-run walkthrough; nil when closed
@@ -399,6 +400,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
+		if m.modelPick != nil {
+			return m, m.modelPickKey(msg)
+		}
 		if m.modePick != nil {
 			// The mode picker answers first; keys it skips fall through,
 			// so ctrl+c still reaches the base switch below.
@@ -470,6 +474,8 @@ func (m Model) View() tea.View {
 		content = m.toolsView()
 	} else if m.picker != nil {
 		content = m.pickerView()
+	} else if m.modelPick != nil {
+		content = m.modelPickView()
 	} else {
 		content = m.chatView()
 	}
@@ -597,7 +603,6 @@ func (m Model) streamingBlock() string {
 	}
 	return strings.Join(blocks, "\n\n")
 }
-
 
 // helpLine renders the bottom key reference: key names faint cyan,
 // verbs dim.
@@ -1013,16 +1018,14 @@ func (m *Model) command(input string) tea.Cmd {
 
 	case "/model":
 		if len(parts) < 2 {
-			m.messages = append(m.messages, uiMessage{role: "system",
-				raw: fmt.Sprintf("usage: /model <name> (current: %s/%s)", m.provider.Name(), m.cfg.Model())})
-		} else {
-			m.cfg.SetModel(parts[1])
-			if err := m.cfg.Save(); err != nil {
-				m.lastErr = err.Error()
-			}
-			m.messages = append(m.messages, uiMessage{role: "system",
-				raw: fmt.Sprintf("model → %s/%s", m.provider.Name(), m.cfg.Model())})
+			return m.openModelPick()
 		}
+		m.cfg.SetModel(parts[1])
+		if err := m.cfg.Save(); err != nil {
+			m.lastErr = err.Error()
+		}
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("model → %s/%s", m.provider.Name(), m.cfg.Model())})
 
 	case "/exit", "/quit":
 		return tea.Quit

@@ -63,6 +63,21 @@ One-glance project state. Update at the end of **every** task (see
 
 Phase 7 complete — nothing in khode needs hand-editing config.json.
 
+**/model picker dialog (2026-09-22):** bare `/model` opens a centered
+model chooser (`internal/ui/modelpick.go`, the /sessions dialog shape)
+instead of printing a usage line: the provider's cached choices with the
+active model dotted and the cursor pre-set on it, type-to-filter
+(case-insensitive substring; j/k spell — arrows and ctrl+p/n navigate,
+the one picker without vim keys), and `f` to fetch the endpoint's live
+list through the shared `fetchModelsCmd` (auto-fetch on open when the
+cache is empty; results land via a `modelPick` branch in
+`applyFetchedModels`; a failed fetch shows a status note with f retry).
+enter commits via `cfg.SetModel` + save with the usual notice — the
+switch is effective next turn, since each turn's Runner reads
+`cfg.Model()`. `/model <name>` still sets directly, and the completion
+table's model row now takes no args so popup-enter runs bare `/model`
+immediately (one enter opens the picker).
+
 **Bottom-pinned inline frame (2026-09-19):** the chat input now sits
 glued to the terminal's bottom edge at all times — the full-screen
 inline look of Claude Code — instead of floating under the banner with
@@ -408,3 +423,4 @@ Backlog (no committed order):
 | 2026-09-19 | Fixes from the first pinned run: mouse capture restored (wheel swallowed — Claude Code parity; the wheel must not scroll the scrollback under a full-screen frame) and the header built one column short — flush's alignment prefix was wrapping the rule onto a second row and could push the mode chip off | (this commit) |
 | 2026-09-19 | Transient rendering settled after three iterations (pad → pad+drain → fixed band): the chat frame now carries a FIXED 12-row transient band (popup/picker/mode line or blanks) — the frame's height never changes, the same-size repaint erases transients, nothing moves; pad/drain machinery deleted | (this commit) |
 | 2026-09-21 | Full-screen rendering: reverted the inline+scrollback experiment after five rounds of renderer artifacts; khode runs on the alternate buffer with an in-app conversation viewport (wheel-scrollable), popup overlays erase cleanly, input pinned at the bottom; all inline printing machinery deleted | (this commit) |
+| 2026-09-22 | `/model` picker dialog: bare `/model` opens a centered chooser (cached list + type-to-filter + f fetch/auto-fetch-on-empty, `applyFetchedModels` routes results), `/model <name>` direct-set unchanged, completion row runs bare `/model` at once | (this commit) |
