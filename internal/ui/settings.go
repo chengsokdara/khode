@@ -862,7 +862,7 @@ func (m *Model) settingsView() string {
 
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
 		title, "", strings.Join(body, "\n"), "", footer))
-	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (s *settings) rowsView(m *Model) []string {

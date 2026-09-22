@@ -129,5 +129,5 @@ func (m *Model) toolsView() string {
 		"",
 		footer,
 	))
-	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }

@@ -81,7 +81,7 @@ func (m *Model) permView() string {
 	help := keyHint("y", "allow") + dimStyle.Render("  ·  ") +
 		keyHint("n/esc", "deny")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
-	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // planView renders the plan-approval dialog: the plan text plus the
@@ -92,7 +92,7 @@ func (m *Model) planView(req agent.Request) string {
 	help := keyHint("y", "approve — implement") + dimStyle.Render("  ·  ") +
 		keyHint("n/esc", "keep planning")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
-	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // clipPlain wraps a plain-text dialog body: lines clipped, the whole

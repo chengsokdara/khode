@@ -91,7 +91,7 @@ func (m *Model) pickerView() string {
 		"",
 		footer,
 	))
-	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // clip shortens s to n runes with an ellipsis.
