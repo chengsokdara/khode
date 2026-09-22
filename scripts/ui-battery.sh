@@ -70,15 +70,15 @@ ck "textarea grew" "line two" 1
 snug "input snug while multiline"
 send C-u; w 0.3
 
-echo "== 8. WHEEL SCROLLS THE VIEWPORT =="
+echo "== 8. PGUP/PGDN SCROLL THE VIEWPORT =="
 for i in 1 2 3 4 5 6; do send "/help"; w 0.3; send Enter; w 0.5; done
 w 0.5
 top_before=$(grab | grep -v '^[[:space:]]*$' | head -1)
-wheel; wheel; wheel; w 0.7
+send PgUp; send PgUp; w 0.7
 top_after=$(grab | grep -v '^[[:space:]]*$' | head -1)
-if [ "$top_before" != "$top_after" ]; then echo "  PASS: wheel scrolled back"; pass=$((pass+1)); else echo "  FAIL: wheel did nothing"; fail=$((fail+1)); fi
-wheeld; wheeld; wheeld; w 0.7
-snug "wheel down returns to live edge"
+if [ "$top_before" != "$top_after" ]; then echo "  PASS: pgup scrolled back"; pass=$((pass+1)); else echo "  FAIL: pgup did nothing"; fail=$((fail+1)); fi
+send PgDn; send PgDn; w 0.7
+snug "pgdn returns to live edge"
 
 echo "== 9. EXIT =="
 send C-u; w 0.3; send "/exit"; w 0.4; send Enter; w 1.2

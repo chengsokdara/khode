@@ -198,7 +198,6 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 	reg.Register(agent.NewPlanTool(m.approvals, modeFn))
 
 	m.replayTranscript(sess)
-	m.banner()
 	return m
 }
 
@@ -237,16 +236,6 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 			}
 		}
 	}
-}
-
-// banner seeds the one notice a fresh chat starts with. The header
-// already carries version, provider/model, session, and mode, so the
-// banner only points at the commands that aren't visible anywhere.
-func (m *Model) banner() {
-	m.messages = append(m.messages, uiMessage{
-		role: "system",
-		raw:  "/help commands · /settings config",
-	})
 }
 
 // registerTaskTool (re)registers the task tool against the current
@@ -298,7 +287,6 @@ func (m *Model) useSession(sess *agent.Session) {
 	m.ctxIn, m.ctxOut = 0, 0
 	m.messages = nil
 	m.replayTranscript(sess)
-	m.banner()
 }
 
 // --- tea.Model -------------------------------------------------------------
@@ -389,15 +377,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
-	// The wheel scrolls the conversation viewport (the View captures
-	// the mouse, so the terminal never scrolls on its own).
+	// The mouse is not captured: wheel events (if a terminal still
+	// reports them) are ignored, drag selects text natively.
 	case tea.MouseWheelMsg:
-		switch msg.Button {
-		case tea.MouseWheelUp:
-			m.scroll += 3
-		case tea.MouseWheelDown:
-			m.scroll -= 3
-		}
 		return m, nil
 
 	// Key releases are ignored outright: only presses drive the app.
@@ -453,6 +435,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.String() == "shift+tab":
 			m.cycleMode()
 			return m, nil
+		// pgup/pgdn scroll the conversation viewport (the mouse is not
+		// captured, so drag selects text natively and the wheel belongs
+		// to nothing — the alt buffer has no scrollback to move).
+		case msg.String() == "pgup":
+			m.scroll += max(1, m.height-6)
+			return m, nil
+		case msg.String() == "pgdown":
+			m.scroll = max(0, m.scroll-max(1, m.height-6))
+			return m, nil
 		}
 		// The wheel is captured and swallowed (see View); every other
 		// key reaches the textarea.
@@ -485,10 +476,12 @@ func (m Model) View() tea.View {
 	// Full screen (alternate buffer), the way Claude Code runs: the
 	// whole terminal is repainted every frame, so transient overlays
 	// erase cleanly and nothing can leak into scrollback. The mouse is
-	// captured and the wheel scrolls the conversation viewport.
+	// deliberately NOT captured: drag selects any visible text natively
+	// (alt-buffer rows are real screen cells), and the wheel scrolls
+	// nothing — there is no scrollback behind the alt buffer. Viewport
+	// scrolling lives on pgup/pgdn.
 	v := tea.NewView(content)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
@@ -608,12 +601,18 @@ func (m Model) helpLine() string {
 		{"enter", "send"},
 		{"shift+enter", "newline"},
 		{"shift+tab", "mode"},
+		{"pgup/pgdn", "history"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
 	}
 	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
 		parts = append(parts, helpKey.Render(h.k)+dimStyle.Render(" "+h.v))
+	}
+	// Drop hints from the end until the line fits: a wrapped help line
+	// would spill a lone fragment onto an extra row.
+	for len(parts) > 1 && lipgloss.Width(strings.Join(parts, dimStyle.Render(" · ")))+1 > m.width {
+		parts = parts[:len(parts)-1]
 	}
 	return dimStyle.Width(m.width).Render(strings.Join(parts, dimStyle.Render(" · ")))
 }

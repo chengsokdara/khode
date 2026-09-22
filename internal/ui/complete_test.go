@@ -106,7 +106,7 @@ func TestTabFillsWithoutRunning(t *testing.T) {
 	if got := m.textarea.Value(); got != "/compact " {
 		t.Errorf("tab filled %q, want /compact with a trailing space", got)
 	}
-	if len(m.messages) != 1 { // only the startup banner
+	if len(m.messages) != 0 { // no banner anymore
 		t.Errorf("tab ran the command: %d messages", len(m.messages))
 	}
 }
@@ -123,8 +123,8 @@ func TestEnterRunsArglessCommand(t *testing.T) {
 	if m.textarea.Value() != "" {
 		t.Errorf("textarea = %q after running help, want empty", m.textarea.Value())
 	}
-	if len(m.messages) != 2 {
-		t.Fatalf("help appended %d messages, want banner + help", len(m.messages))
+	if len(m.messages) != 1 {
+		t.Fatalf("help appended %d messages, want just help", len(m.messages))
 	}
 	raw := m.messages[len(m.messages)-1].raw
 	for _, c := range slashCommands {
@@ -142,7 +142,7 @@ func TestEnterFillsCommandWithArgs(t *testing.T) {
 	if got := m.textarea.Value(); got != "/mode " {
 		t.Errorf("enter filled %q, want /mode ready for its argument", got)
 	}
-	for _, msg := range m.messages[1:] {
+	for _, msg := range m.messages {
 		if strings.Contains(msg.raw, "usage: /mode") {
 			t.Error("enter ran /mode instead of filling it")
 		}
@@ -157,7 +157,7 @@ func TestEnterFillsOnlyWhileStreaming(t *testing.T) {
 	if got := m.textarea.Value(); got != "/help " {
 		t.Errorf("mid-stream enter filled %q, want /help without running", got)
 	}
-	if len(m.messages) != 1 {
+	if len(m.messages) != 0 {
 		t.Errorf("mid-stream enter ran the command: %d messages", len(m.messages))
 	}
 }

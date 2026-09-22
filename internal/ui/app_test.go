@@ -38,7 +38,8 @@ func newTestModel(t *testing.T) Model {
 
 // The program runs full screen (alternate buffer): the whole terminal
 // is repainted every frame, so overlays erase cleanly and nothing
-// leaks into scrollback. The mouse is captured for viewport scrolling.
+// leaks into scrollback. The mouse is NOT captured: drag selects any
+// visible text natively, and the wheel has no scrollback to move.
 func TestFullScreenView(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -48,28 +49,12 @@ func TestFullScreenView(t *testing.T) {
 	if !v.AltScreen {
 		t.Error("view is not on the alt screen; overlays cannot erase")
 	}
-	if v.MouseMode != tea.MouseModeCellMotion {
-		t.Errorf("mouse mode = %v, want cell motion (viewport wheel)", v.MouseMode)
+	if v.MouseMode != tea.MouseModeNone {
+		t.Errorf("mouse mode = %v, want none (native text selection)", v.MouseMode)
 	}
 }
 
 // The wheel scrolls the conversation viewport and snaps back on input.
-func TestWheelEventsScrollViewport(t *testing.T) {
-	m := newTestModel(t)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = next.(Model)
-
-	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, Y: 5})
-	m = next.(Model)
-	if m.scroll != 3 {
-		t.Fatalf("scroll = %d after wheel up, want 3", m.scroll)
-	}
-	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, Y: 5})
-	m = next.(Model)
-	if m.scroll != 0 {
-		t.Fatalf("scroll = %d after wheel down, want 0", m.scroll)
-	}
-}
 
 func TestModifierEnterInsertsNewline(t *testing.T) {
 	m := newTestModel(t)
@@ -483,5 +468,30 @@ func TestStatusLineShowsModeAndModel(t *testing.T) {
 	}
 	if !strings.Contains(status, "test-model") {
 		t.Errorf("status line missing the model: %q", status)
+	}
+}
+
+// pgup/pgdn slide the conversation viewport; pgdown clamps at the live
+// edge.
+func TestPgUpPgDnScrollViewport(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	next, _ = m.Update(keyMsg("pgup"))
+	m = next.(Model)
+	if m.scroll <= 0 {
+		t.Fatalf("scroll = %d after pgup, want > 0", m.scroll)
+	}
+	before := m.scroll
+	next, _ = m.Update(keyMsg("pgdown"))
+	m = next.(Model)
+	if m.scroll >= before {
+		t.Fatalf("scroll = %d after pgdown, want < %d", m.scroll, before)
+	}
+	next, _ = m.Update(keyMsg("pgdown"))
+	m = next.(Model)
+	if m.scroll != 0 {
+		t.Fatalf("scroll = %d, want clamped at 0", m.scroll)
 	}
 }
