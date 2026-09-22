@@ -71,12 +71,16 @@ snug "input snug while multiline"
 send C-u; w 0.3
 
 echo "== 8. PGUP/PGDN SCROLL THE VIEWPORT =="
-for i in 1 2 3 4 5 6; do send "/help"; w 0.3; send Enter; w 0.5; done
+# Distinct single-line seals, enough to overflow the viewport at this
+# size: identical blocks would make every scroll window look the same,
+# and too few lines give the scroll clamp nothing to slide.
+count=$((H/2+12))
+for i in $(seq 1 $count); do send "/model test-$i"; w 0.25; send Enter; w 0.45; done
 w 0.5
-top_before=$(grab | grep -v '^[[:space:]]*$' | head -1)
+frame_before=$(grab | md5)
 send PgUp; send PgUp; w 0.7
-top_after=$(grab | grep -v '^[[:space:]]*$' | head -1)
-if [ "$top_before" != "$top_after" ]; then echo "  PASS: pgup scrolled back"; pass=$((pass+1)); else echo "  FAIL: pgup did nothing"; fail=$((fail+1)); fi
+frame_after=$(grab | md5)
+if [ "$frame_before" != "$frame_after" ]; then echo "  PASS: pgup scrolled back"; pass=$((pass+1)); else echo "  FAIL: pgup did nothing"; fail=$((fail+1)); fi
 send PgDn; send PgDn; w 0.7
 snug "pgdn returns to live edge"
 

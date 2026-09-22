@@ -485,10 +485,30 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// chatView assembles the full screen: the conversation viewport, the
-// status line, the transient overlays (completion popup, mode picker,
-// mode line) floating above the input, and the input. Everything is in
-// the frame, so overlays erase cleanly on close.
+// header renders the sticky frame header: the gradient wordmark and
+// provider/model on the left, the session and a permission-mode chip
+// on the right, over a quiet rule.
+func (m Model) header() string {
+	left := logo() +
+		dimStyle.Render(fmt.Sprintf("  v%s · %s/%s", Version, m.provider.Name(), m.modelLabel()))
+	right := dimStyle.Render(clip(m.session.Name(), 24)) + " " + modeChip.Render(string(m.mode()))
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 2 {
+		right = ""
+		gap = m.width - lipgloss.Width(left)
+		if gap < 0 {
+			gap = 0
+		}
+	}
+	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, m.width)))
+	return left + strings.Repeat(" ", gap) + right + "\n" + rule
+}
+
+// chatView assembles the full screen, spanning the terminal's whole
+// height: the khode header pinned to the top rows, the command hints
+// under it, the conversation viewport filling the middle, and the
+// status + input block pinned to the bottom edge. Everything is in the
+// frame, so overlays erase cleanly on close.
 func (m Model) chatView() string {
 	status := m.statusLine()
 	border := inputBorder
@@ -509,22 +529,32 @@ func (m Model) chatView() string {
 		mid = append(mid, m.modePickView()) // floats just above the input
 	}
 
-	chrome := 1 + len(mid) + m.textarea.Height() + 2 + 1
-	rows := max(1, m.height-chrome)
-	mid = append(mid, inputBox, help)
+	header := m.header()
+	hints := dimStyle.Render(" · /help commands · /settings config")
+	chrome := 3 + 1 + len(mid) + m.textarea.Height() + 2 + 1 // header 2, hints, status, mid, input, help
+	vrows := max(1, m.height-chrome)
 
-	viewport := viewportStyle.Width(m.width).Render(m.messageViewport(rows))
-	content := lipgloss.JoinVertical(lipgloss.Left, viewport, status, strings.Join(mid, "\n"))
-	// The frame fills the screen exactly, pinned to the bottom edge the
-	// way Claude Code's is: spare rows go ABOVE the content, leaving the
-	// empty area for history to grow into. (The alt-screen renderer
-	// diffs against the previous frame, so the frame must be a constant
-	// height — a shorter one would leave the old bottom rows painted.)
-	out := strings.Split(content, "\n")
-	for len(out) < m.height {
-		out = append([]string{""}, out...)
+	// The viewport fills the middle; a conversation shorter than it
+	// pads above, the way a full-height layout leaves the middle open.
+	vlines := strings.Split(
+		viewportStyle.Width(m.width).Render(m.messageViewport(vrows)), "\n")
+	for len(vlines) < vrows {
+		vlines = append([]string{""}, vlines...)
 	}
-	return strings.Join(out[len(out)-m.height:], "\n")
+
+	parts := append(strings.Split(header, "\n"), hints)
+	parts = append(parts, vlines...)
+	parts = append(parts, status)
+	parts = append(parts, mid...)
+	parts = append(parts, inputBox, help)
+	out := strings.Split(lipgloss.JoinVertical(lipgloss.Left, parts...), "\n")
+	if len(out) > m.height {
+		out = out[len(out)-m.height:]
+	}
+	for len(out) < m.height {
+		out = append(out, "")
+	}
+	return strings.Join(out, "\n")
 }
 
 // messageViewport renders the conversation as viewport rows, ending at
@@ -568,31 +598,6 @@ func (m Model) streamingBlock() string {
 	return strings.Join(blocks, "\n\n")
 }
 
-// header renders the scrollback banner: the gradient wordmark and
-// provider/model on the left, the session and a permission-mode chip on
-// the right, over a quiet rule. It prints once into the terminal's real
-// scrollback at startup and on session switches (flush); the status
-// line carries the mode and model live. The right side yields when the
-// terminal is too narrow for both. Everything is built one column short
-// of the terminal width: flush prefixes every printed line with a space
-// for the left-edge alignment, and a full-width rule would wrap its
-// last character onto a second row.
-func (m Model) header() string {
-	left := logo() +
-		dimStyle.Render(fmt.Sprintf("  v%s · %s/%s", Version, m.provider.Name(), m.modelLabel()))
-	right := dimStyle.Render(clip(m.session.Name(), 24)) + " " + modeChip.Render(string(m.mode()))
-	w := m.width - 1
-	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 2 {
-		right = ""
-		gap = w - lipgloss.Width(left)
-		if gap < 0 {
-			gap = 0
-		}
-	}
-	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, w)))
-	return left + strings.Repeat(" ", gap) + right + "\n" + rule
-}
 
 // helpLine renders the bottom key reference: key names faint cyan,
 // verbs dim.
