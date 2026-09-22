@@ -15,6 +15,7 @@ import (
 type picker struct {
 	entries []agent.Info
 	cursor  int
+	startup bool // opened with no chat behind it (--resume); esc quits
 }
 
 // OpenPicker shows the session chooser over the chat view.
@@ -22,8 +23,15 @@ func (m *Model) OpenPicker(entries []agent.Info) {
 	m.picker = &picker{entries: entries}
 }
 
+// OpenStartupPicker shows the session chooser before any chat exists
+// (--resume): esc quits instead of closing, since there is no chat to
+// go back to.
+func (m *Model) OpenStartupPicker(entries []agent.Info) {
+	m.picker = &picker{entries: entries, startup: true}
+}
+
 // pickerKey handles input while the picker is open. Esc closes the
-// overlay when a chat is behind it and quits otherwise (startup picker).
+// overlay; the startup picker's esc quits because nothing is behind it.
 func (m *Model) pickerKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c":
@@ -40,11 +48,10 @@ func (m *Model) pickerKey(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		return m.openPicked()
 	case "esc", "q":
-		if len(m.messages) > 1 {
-			m.picker = nil
-		} else {
+		if m.picker.startup {
 			return tea.Quit
 		}
+		m.picker = nil
 	}
 	return nil
 }

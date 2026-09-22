@@ -181,7 +181,7 @@ func main() {
 
 	m := ui.New(cfg, auth, provider, sess, registry, mcpClients, workdir)
 	if pickerEntries != nil {
-		m.OpenPicker(pickerEntries)
+		m.OpenStartupPicker(pickerEntries)
 	} else if key == "" && len(cfg.CustomProviders) == 0 && len(cfg.ModelChoices) == 0 {
 		// First run — no credentials, no custom provider, no model ever
 		// chosen — walks through setup. A keyless setup (Ollama) or an
