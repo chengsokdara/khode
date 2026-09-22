@@ -784,6 +784,9 @@ func (m *Model) applyMCPCmd(restart []string) tea.Cmd {
 // clients into the UI-owned map and reports the outcome in chat (the
 // overlay may have been closed while the handshake ran).
 func (m *Model) applyMCPResult(msg mcpApplyMsg) {
+	if p := m.mcpPanel; p != nil {
+		p.busy = nil // every reconcile the /mcp dialog kicked has settled
+	}
 	for _, name := range msg.removed {
 		delete(m.mcpClients, name)
 	}

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -89,6 +88,7 @@ type Model struct {
 	modelPick  *modelPick  // /model chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
 	toolsPanel *toolsPanel // /tools overlay; nil when closed
+	mcpPanel   *mcpPanel   // /mcp overlay; nil when closed
 	welcome    *welcome    // first-run walkthrough; nil when closed
 	popup      *cmdPopup   // slash-command completion above the input; nil when hidden
 	modePick   *modePicker // /mode chooser above the input; nil when closed
@@ -397,6 +397,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.toolsPanel != nil {
 			return m, m.toolsKey(msg)
 		}
+		if m.mcpPanel != nil {
+			return m, m.mcpPanelKey(msg)
+		}
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
@@ -472,6 +475,8 @@ func (m Model) View() tea.View {
 		content = m.settingsView()
 	} else if m.toolsPanel != nil {
 		content = m.toolsView()
+	} else if m.mcpPanel != nil {
+		content = m.mcpPanelView()
 	} else if m.picker != nil {
 		content = m.pickerView()
 	} else if m.modelPick != nil {
@@ -884,43 +889,6 @@ func (m *Model) cycleMode() {
 	}
 }
 
-// mcpStatus reports every configured MCP server and how many of its
-// tools made it into the registry; a configured server with zero tools
-// failed to start or to answer tools/list at launch.
-func (m *Model) mcpStatus() string {
-	if len(m.cfg.MCPServers) == 0 {
-		return "no MCP servers configured · add one with /settings → mcp servers"
-	}
-	names := make([]string, 0, len(m.cfg.MCPServers))
-	for n := range m.cfg.MCPServers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
-	var lines []string
-	for _, n := range names {
-		prefix := "mcp__" + n + "__"
-		count := 0
-		for _, tn := range m.tools.Names() {
-			if strings.HasPrefix(tn, prefix) {
-				count++
-			}
-		}
-		if count == 0 {
-			lines = append(lines, fmt.Sprintf("%s — unavailable (see launch warnings)", n))
-			continue
-		}
-		var toolNames []string
-		for _, tn := range m.tools.Names() {
-			if strings.HasPrefix(tn, prefix) {
-				toolNames = append(toolNames, strings.TrimPrefix(tn, prefix))
-			}
-		}
-		lines = append(lines, fmt.Sprintf("%s — %d tools: %s", n, count, strings.Join(toolNames, ", ")))
-	}
-	return strings.Join(lines, "\n")
-}
-
 // runCompact summarizes older turns now, off the UI goroutine. The loop
 // config mirrors startTurn so the forced compaction matches what the
 // next automatic one would do.
@@ -967,7 +935,7 @@ func (m *Model) command(input string) tea.Cmd {
 		m.openTools()
 
 	case "/mcp":
-		m.messages = append(m.messages, uiMessage{role: "system", raw: m.mcpStatus()})
+		m.openMCPPanel()
 
 	case "/compact":
 		if m.streaming {

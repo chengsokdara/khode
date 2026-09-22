@@ -78,6 +78,20 @@ switch is effective next turn, since each turn's Runner reads
 table's model row now takes no args so popup-enter runs bare `/model`
 immediately (one enter opens the picker).
 
+**/mcp servers dialog (2026-09-22):** `/mcp` opens a centered server
+list (`internal/ui/mcp.go`, the /tools panel shape) instead of printing
+a status block: one row per configured server (sorted) with a live
+status glyph (● running / ○ unavailable / spinner while a reconcile is
+in flight), registered tool count with session-disabled count, and the
+server's risk class; a detail block under the list shows the highlighted
+server's launch line and tool names. enter starts or restarts the
+highlighted server through the shared `applyMCPCmd` (whose reconcile
+also heals any other stopped server), space toggles all of the server's
+tools for this session (all-on ↔ all-off, the /tools semantics in bulk),
+esc closes. Statuses render from live state (`m.mcpClients` + registry
+prefix scans) every frame; `applyMCPResult` clears the dialog's busy
+marks, and the old `mcpStatus()` text is gone.
+
 **Bottom-pinned inline frame (2026-09-19):** the chat input now sits
 glued to the terminal's bottom edge at all times — the full-screen
 inline look of Claude Code — instead of floating under the banner with
@@ -425,3 +439,4 @@ Backlog (no committed order):
 | 2026-09-21 | Full-screen rendering: reverted the inline+scrollback experiment after five rounds of renderer artifacts; khode runs on the alternate buffer with an in-app conversation viewport (wheel-scrollable), popup overlays erase cleanly, input pinned at the bottom; all inline printing machinery deleted | (this commit) |
 | 2026-09-22 | `/model` picker dialog: bare `/model` opens a centered chooser (cached list + type-to-filter + f fetch/auto-fetch-on-empty, `applyFetchedModels` routes results), `/model <name>` direct-set unchanged, completion row runs bare `/model` at once | (this commit) |
 | 2026-09-22 | Fix: `/sessions` + esc quit the app on young sessions — the picker guessed "startup picker" from `len(m.messages) > 1`; the mode is now an explicit `startup` flag (`OpenStartupPicker` for `--resume`, whose esc still quits) so a chat-opened picker always closes | (this commit) |
+| 2026-09-22 | `/mcp` servers dialog: sorted per-server rows with live status glyph, tool count (+ session-disabled), risk badge, launch-line detail; enter starts/restarts via `applyMCPCmd` (busy-marked until `applyMCPResult`), space bulk-toggles the server's tools session-scoped; printed `mcpStatus()` removed | (this commit) |
