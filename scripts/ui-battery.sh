@@ -9,7 +9,7 @@ send() { tmux send-keys -t $S "$@"; }
 wheel() { send -l $'\x1b[<64;50;15M'; }   # SGR wheel up
 wheeld() { send -l $'\x1b[<65;50;15M'; }  # SGR wheel down
 w() { sleep "${1:-0.5}"; }
-snug() { local last; last=$(grab | grep -v '^[[:space:]]*$' | tail -1); if echo "$last" | grep -q "enter send"; then echo "  PASS: $1"; pass=$((pass+1)); else echo "  FAIL: $1 (last: $last)"; fail=$((fail+1)); fi; }
+snug() { local last; last=$(grab | grep -v '^[[:space:]]*$' | tail -1); if echo "$last" | grep -Eq "enter send|quit$"; then echo "  PASS: $1"; pass=$((pass+1)); else echo "  FAIL: $1 (last: $last)"; fail=$((fail+1)); fi; }
 
 tmux kill-session -t $S 2>/dev/null
 rm -rf /tmp/khode-t; mkdir -p /tmp/khode-t

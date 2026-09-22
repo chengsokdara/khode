@@ -522,14 +522,16 @@ func (m Model) chatView() string {
 
 	viewport := viewportStyle.Width(m.width).Render(m.messageViewport(rows))
 	content := lipgloss.JoinVertical(lipgloss.Left, viewport, status, strings.Join(mid, "\n"))
-	// The frame must fill the screen exactly: the alt-screen renderer
-	// diffs against the previous frame, and a shorter frame leaves the
-	// old bottom rows painted.
+	// The frame fills the screen exactly, pinned to the bottom edge the
+	// way Claude Code's is: spare rows go ABOVE the content, leaving the
+	// empty area for history to grow into. (The alt-screen renderer
+	// diffs against the previous frame, so the frame must be a constant
+	// height — a shorter one would leave the old bottom rows painted.)
 	out := strings.Split(content, "\n")
 	for len(out) < m.height {
-		out = append(out, "")
+		out = append([]string{""}, out...)
 	}
-	return strings.Join(out[:m.height], "\n")
+	return strings.Join(out[len(out)-m.height:], "\n")
 }
 
 // messageViewport renders the conversation as viewport rows, ending at
@@ -546,12 +548,16 @@ func (m Model) messageViewport(rows int) string {
 	if len(blocks) > 0 {
 		lines = strings.Split(strings.Join(blocks, "\n\n"), "\n")
 	}
-	offset := len(lines) - rows - m.scroll
-	offset = max(0, min(offset, len(lines)))
-	if offset >= len(lines) {
+	if len(lines) == 0 {
 		return dimStyle.Render("· nothing yet — say hello")
 	}
-	return strings.Join(lines[offset:], "\n")
+	// A fixed window of exactly `rows` lines, ending `scroll` lines
+	// above the live edge: the frame must stay terminal-height, so
+	// scrolling slides the window instead of adding rows to it.
+	start := len(lines) - rows - m.scroll
+	start = max(0, min(start, len(lines)-1))
+	end := min(start+rows, len(lines))
+	return strings.Join(lines[start:end], "\n")
 }
 
 // streamingBlock renders the in-flight turn, if any — blocks marked

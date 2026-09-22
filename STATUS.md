@@ -98,7 +98,7 @@ constraint. khode now runs FULL SCREEN on the alternate buffer
 (tea.View.AltScreen) the way Claude Code does: the whole terminal
 repaints every frame, so the popup overlays the conversation and
 erases cleanly on close, nothing can leak into scrollback, and the
-input sits at the bottom of a frame that is exactly terminal-height.
+input sits at the bottom of a frame that is exactly terminal-height — spare rows pad ABOVE the content (the frame is bottom-pinned; the empty area at boot is where history grows), and the viewport is a fixed-size window that slides when the wheel scrolls, never changing the frame's height.
 The conversation renders in an in-app viewport (sealed blocks from
 their render cache plus the streaming block), the captured mouse wheel
 scrolls it (m.scroll, snapping to the live edge on submit and stream
