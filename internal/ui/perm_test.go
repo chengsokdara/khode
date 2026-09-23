@@ -13,6 +13,7 @@ import (
 	"khode/internal/perm"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // startDialog asks a permission through the model's bridge the way the
@@ -261,6 +262,55 @@ func TestPermScrollbarGeometry(t *testing.T) {
 	check(sbTop, "██")                        // thumb starts at the window top (offset 0)
 	check(sbTop+sbThumbTop+sbThumbSize, "░░") // first track row below the thumb
 	check(sbTop+sbRows-1, "░░")               // track runs to the last body row
+}
+
+// Plans with lines that overflow the body width — long list items
+// (indent is applied after glamour wraps), code blocks (chroma never
+// word-wraps) — must not punch gaps in the scrollbar: every row of the
+// window carries a gutter glyph and the drawn window is exactly sbRows
+// tall.
+func TestPermScrollbarNoGapsWithOverflow(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	var plan strings.Builder
+	plan.WriteString("# plan\n\n")
+	for i := range 30 {
+		fmt.Fprintf(&plan, "- step %02d needs %s\n", i, strings.Repeat("detail ", 20))
+	}
+	plan.WriteString("```\nGET /api/todos -> " + strings.Repeat("token_", 25) + " end\n```\n")
+	m.perm = &agent.Request{Kind: agent.KindPlan, Preview: plan.String()}
+	m.View()
+
+	if sbRows == 0 {
+		t.Fatal("expected a scrollable plan")
+	}
+	lines := strings.Split(ansiStrip(m.View().Content), "\n")
+	if len(lines) < sbTop+sbRows {
+		t.Fatalf("frame shorter than the recorded window: %d < %d", len(lines), sbTop+sbRows)
+	}
+	for i := range sbRows {
+		runes := []rune(lines[sbTop+i])
+		if got := string(runes[sbCol : sbCol+2]); got != "░░" && got != "██" {
+			t.Errorf("window row %d missing the gutter at col %d: %q", i, sbCol, got)
+		}
+	}
+}
+
+// wrapOverflow re-wraps only the lines wider than the limit; lines that
+// fit pass through byte-identical.
+func TestWrapOverflow(t *testing.T) {
+	out := wrapOverflow([]string{"short", strings.Repeat("word ", 30), "ok"}, 40)
+	if out[0] != "short" || out[len(out)-1] != "ok" {
+		t.Errorf("wrapOverflow changed lines that fit: %q", out)
+	}
+	for _, l := range out {
+		if lipgloss.Width(l) > 40 {
+			t.Errorf("wrapped line exceeds the width: %q", l)
+		}
+	}
 }
 
 // The scrollbar gutter is two cells wide and interactive: grabbing the

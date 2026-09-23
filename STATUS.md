@@ -10,6 +10,19 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Scrollbar cutoff fix (2026-09-23):** the dialog scrollbar showed gaps
+because some plan lines rendered wider than the body — glamour applies
+list indent *after* wrapping (a packed list line = wrap width + indent)
+and chroma code blocks never word-wrap — so the body's pad style wrapped
+those lines onto a second physical row that had no gutter glyph, cutting
+the bar into segments and desyncing the recorded window height. Three
+layers now: plan markdown wraps at `bodyWidth − planWrapSlack` (6 cols
+of indent headroom), any line still wider is re-wrapped ANSI-aware
+(`wrapOverflow`, reflow/wordwrap), and the body pad carries `MaxWidth`
+as the final guard — one logical line is always exactly one physical
+row, and a regression test walks every window row asserting the gutter
+is present.
+
 **User slab redesign (2026-09-23):** the first slab pass had two real
 problems in the live terminal — the text carried no explicit
 foreground and fell back to the terminal default (dark, unreadable on
@@ -521,3 +534,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | User messages render as full-width dark-green slab cards (`userCard`/`hexUserBg`, `❯` inside the band) — green = you vs khode's cyan answer bars, container vs open prose; multi-line input reads as one card | (this commit) |
 | 2026-09-23 | Scrollbar fixes + interaction: unified 2-cell glyphs (`██` thumb / `░░` track, brighter track), pgdn overshoot fixed (`scrollPerm` clamps to the real body height — no more frozen bottom until extra pages unwind), and the scrollbar is mouse-interactive (grab+drag scrubs, track click pages, release ends); geometry recorded per render and pinned to the drawn glyphs by test | (this commit) |
 | 2026-09-23 | User slab redesign: explicit light text on the band (terminal default rendered dark-on-green), slab hugs content instead of spanning the terminal, long lines word-wrap with a hanging indent under the `❯`; `muesli/reflow/wordwrap` promoted to a direct dependency | (this commit) |
+| 2026-09-23 | Scrollbar cutoff fix: plan lines wider than the body (list indent after wrap, chroma code blocks) wrapped onto gutter-less physical rows, cutting the bar — plan markdown now wraps with 6 cols of indent headroom, overflowing lines re-wrap ANSI-aware (`wrapOverflow`), and the body pad has a `MaxWidth` guard; regression test walks every window row for gutter presence | (this commit) |

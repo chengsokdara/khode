@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 // permRequestMsg carries one permission question from the agent loop.
@@ -142,6 +143,11 @@ func dialogLines(key string, width int, render func() string) []string {
 	return dlgLines
 }
 
+// planWrapSlack is how much narrower than the body glamour wraps plan
+// markdown: list indents and quote tokens are applied after wrapping
+// and can push a packed line past the wrap width by a few columns.
+const planWrapSlack = 6
+
 // permBodyLines renders the open dialog's body to lines — plan markdown,
 // a colorized diff, a command preview, or a placeholder. Views and the
 // scroll handlers share it so both see the same content height.
@@ -150,8 +156,10 @@ func (m *Model) permBodyLines() []string {
 	w := permBodyWidth(m.width)
 	if req.Kind == agent.KindPlan {
 		preview := req.Preview
-		return dialogLines("plan\x00"+preview, w,
-			func() string { return renderMarkdown(preview, w) })
+		return dialogLines("plan\x00"+preview, w, func() string {
+			lines := strings.Split(renderMarkdown(preview, w-planWrapSlack), "\n")
+			return strings.Join(wrapOverflow(lines, w), "\n")
+		})
 	}
 	switch {
 	case req.Call.Name == "bash":
@@ -166,6 +174,22 @@ func (m *Model) permBodyLines() []string {
 	default:
 		return []string{dimStyle.Render("(no preview available)")}
 	}
+}
+
+// wrapOverflow re-wraps ANSI lines wider than w (chroma code blocks
+// never word-wrap, and indents can push a line past its wrap width) so
+// every logical line renders as one physical row and the scrollbar
+// gutter stays aligned. Lines that already fit pass through untouched.
+func wrapOverflow(lines []string, w int) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if lipgloss.Width(l) <= w {
+			out = append(out, l)
+			continue
+		}
+		out = append(out, strings.Split(wordwrap.String(l, w), "\n")...)
+	}
+	return out
 }
 
 // Scrollbar geometry in screen coordinates, recorded by the last render
@@ -194,7 +218,10 @@ func (m Model) dialogWindow(lines []string) string {
 		return strings.Join(lines, "\n")
 	}
 	offset := clampScroll(m.permScroll, total, rows)
-	pad := lipgloss.NewStyle().Width(permBodyWidth(m.width))
+	// Width pads short lines to the body width; MaxWidth hard-truncates
+	// anything still wider, so one logical line can never spill onto a
+	// second physical row and knock the gutter out of alignment.
+	pad := lipgloss.NewStyle().Width(permBodyWidth(m.width)).MaxWidth(permBodyWidth(m.width))
 	thumbSize := max(1, rows*rows/total)
 	thumbPos := offset * (rows - thumbSize) / (total - rows)
 	sbRows, sbMaxOffset = rows, total-rows
