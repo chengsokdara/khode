@@ -10,6 +10,24 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Scrollbar fixes + mouse interaction (2026-09-23):** three fixes to
+the dialog scrollbar from real use. The glyphs are now one family — a
+two-cell gutter with a cyan full-block `██` thumb over a light-shade
+`░░` track (the old `▐`-next-to-`│` misaligned and read as a broken,
+disconnected bar in iTerm2) — and the track brightened to `colDim`
+(`colBorder` was nearly invisible on black). The pgdn overshoot bug is
+fixed: `scrollPerm` now clamps against the real rendered body height
+(`permBodyLines`, shared with the views) instead of a coarse bound, so
+pgdn past the end stops at the last window and the very next pgup
+scrolls back — before, every extra page piled onto the offset and had
+to be unwound. And the scrollbar is interactive: clicking the thumb
+grabs it and dragging scrubs the window (motion → offset through the
+thumb's travel range), clicking the track pages toward the click,
+release ends the grab. Geometry (gutter column, window rows, thumb
+span) is recorded by each render into package state the mouse handlers
+hit-test against; a `TestPermScrollbarGeometry` test pins the recorded
+coordinates to the glyphs the view actually drew.
+
 **Green slab cards for user messages (2026-09-23):** user input now
 renders as a full-width dark-green band (`userCard`, `hexUserBg
 #123524`) with the bold green `❯` inside it — container vs open prose
@@ -491,3 +509,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Scrollable markdown dialogs + live streaming markdown: plan dialog renders aurora markdown in a scroll window (cached per text+width), tool dialog shows the whole diff; ↑↓/jk line, pgup/pgdn page, home/end jumps, cyan `▐` scrollbar gutter when the body overflows; streaming assistant text renders markdown live (streaming renders no longer populate the block cache — fixes stuck cursors on mid-turn seals); aurora `Text` style drops its color so headings/blockquotes keep their tints (glamour renders text as block⊕Text, Text always won) | (this commit) |
 | 2026-09-23 | Mouse captured for the wheel (`MouseModeCellMotion`): the alt-screen "wheel belongs to nothing" assumption was wrong in iTerm2, which scrolls its own scrollback and let the user wheel out of the TUI; wheel now scrolls the open dialog's body or the chat viewport (3 lines/tick), selection via the terminal override (shift/option-drag) | (this commit) |
 | 2026-09-23 | User messages render as full-width dark-green slab cards (`userCard`/`hexUserBg`, `❯` inside the band) — green = you vs khode's cyan answer bars, container vs open prose; multi-line input reads as one card | (this commit) |
+| 2026-09-23 | Scrollbar fixes + interaction: unified 2-cell glyphs (`██` thumb / `░░` track, brighter track), pgdn overshoot fixed (`scrollPerm` clamps to the real body height — no more frozen bottom until extra pages unwind), and the scrollbar is mouse-interactive (grab+drag scrubs, track click pages, release ends); geometry recorded per render and pinned to the drawn glyphs by test | (this commit) |

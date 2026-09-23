@@ -31,10 +31,9 @@ func permBodyRows(height int) int {
 	return max(6, height-12)
 }
 
-// permScrollMax bounds the dialog scroll offset so one keypress can
-// always reach either end without knowing the body height; the view
-// clamps the offset to the real content.
-const permScrollMax = 1 << 20
+// permScrollJump is a "reach the end" delta for end/G: clampScroll pins
+// it to the real content height.
+const permScrollJump = 1 << 20
 
 // permKey handles input while the approval dialog is open: y allows the
 // pending call, n and esc decline it, shift+tab cycles the permission
@@ -62,22 +61,63 @@ func (m *Model) permKey(msg tea.KeyMsg) tea.Cmd {
 	case "pgdown":
 		m.scrollPerm(permBodyRows(m.height))
 	case "home", "g":
-		m.scrollPerm(-permScrollMax)
+		m.permScroll = 0
 	case "end", "G":
-		m.scrollPerm(permScrollMax)
+		m.scrollPerm(permScrollJump)
 	}
 	return nil
 }
 
-// scrollPerm moves the open dialog's scroll offset, clamped to a coarse
-// bound; dialogWindow pins it to the actual content height.
+// scrollPerm moves the open dialog's scroll offset, clamped to the
+// rendered body height so keys past either end never pile up overshoot
+// (a coarse bound would freeze the view until the overshoot unwinds).
 func (m *Model) scrollPerm(delta int) {
-	m.permScroll = max(0, min(permScrollMax, m.permScroll+delta))
+	if m.perm == nil {
+		return
+	}
+	m.permScroll = clampScroll(m.permScroll+delta, len(m.permBodyLines()), permBodyRows(m.height))
 }
 
 // clampScroll pins an offset to the last full window over total lines.
 func clampScroll(offset, total, rows int) int {
 	return max(0, min(offset, total-rows))
+}
+
+// mousePermClick handles a left press while the approval dialog is open:
+// on the thumb it starts a drag (remembering where in the thumb the
+// pointer landed), on the track it pages toward the click.
+func (m *Model) mousePermClick(msg tea.MouseClickMsg) {
+	if m.perm == nil || sbRows == 0 || msg.Button != tea.MouseLeft {
+		return
+	}
+	if msg.X != sbCol && msg.X != sbCol+1 {
+		return
+	}
+	row := msg.Y - sbTop
+	if row < 0 || row >= sbRows {
+		return
+	}
+	switch {
+	case row >= sbThumbTop && row < sbThumbTop+sbThumbSize:
+		m.permDragging = true
+		m.permGrabOff = row - sbThumbTop
+	case row < sbThumbTop:
+		m.scrollPerm(-permBodyRows(m.height))
+	default:
+		m.scrollPerm(permBodyRows(m.height))
+	}
+}
+
+// mousePermDrag scrubs the thumb while a grab is held: the pointer's
+// window row maps back through the thumb's travel range to an offset.
+func (m *Model) mousePermDrag(msg tea.MouseMotionMsg) {
+	if m.perm == nil || !m.permDragging || msg.Button != tea.MouseLeft {
+		return
+	}
+	if travel := sbRows - sbThumbSize; travel > 0 {
+		pos := msg.Y - sbTop - m.permGrabOff
+		m.permScroll = max(0, min(sbMaxOffset, pos*sbMaxOffset/travel))
+	}
 }
 
 // The open dialog's rendered body is cached: glamour runs once per plan
@@ -102,29 +142,82 @@ func dialogLines(key string, width int, render func() string) []string {
 	return dlgLines
 }
 
+// permBodyLines renders the open dialog's body to lines — plan markdown,
+// a colorized diff, a command preview, or a placeholder. Views and the
+// scroll handlers share it so both see the same content height.
+func (m *Model) permBodyLines() []string {
+	req := *m.perm
+	w := permBodyWidth(m.width)
+	if req.Kind == agent.KindPlan {
+		preview := req.Preview
+		return dialogLines("plan\x00"+preview, w,
+			func() string { return renderMarkdown(preview, w) })
+	}
+	switch {
+	case req.Call.Name == "bash":
+		return []string{
+			cmdStyle.Render("$ " + clip(req.Preview, w-2)),
+			dimStyle.Render("runs in " + m.workdir),
+		}
+	case req.Preview != "":
+		preview := req.Preview
+		return dialogLines("diff\x00"+preview, w,
+			func() string { return colorizeDiff(preview, w) })
+	default:
+		return []string{dimStyle.Render("(no preview available)")}
+	}
+}
+
+// Scrollbar geometry in screen coordinates, recorded by the last render
+// of the open dialog so the mouse handlers can hit-test the gutter and
+// drag the thumb (the UI runs on one goroutine, so no locking).
+var (
+	sbCol       int // gutter's left column
+	sbTop       int // first body window row
+	sbRows      int // body window height; 0 when the body fit without a scrollbar
+	sbThumbTop  int // thumb's first row within the window
+	sbThumbSize int
+	sbMaxOffset int // total − rows; 0 when the body fits
+)
+
 // dialogWindow slices the dialog body to permBodyRows at the scroll
-// offset. An overflowing body draws a scrollbar gutter down the right
-// edge; rows are padded to the body width first so the gutter column
-// stays aligned across ANSI-styled lines.
+// offset. An overflowing body draws a two-column scrollbar gutter down
+// the right edge (light-shade track, full-block thumb — one glyph
+// family, so track and thumb stay aligned in any font); rows are padded
+// to the body width first so the gutter column stays aligned across
+// ANSI-styled lines.
 func (m Model) dialogWindow(lines []string) string {
 	rows := permBodyRows(m.height)
 	total := len(lines)
 	if total <= rows {
+		sbRows, sbMaxOffset = 0, 0
 		return strings.Join(lines, "\n")
 	}
 	offset := clampScroll(m.permScroll, total, rows)
 	pad := lipgloss.NewStyle().Width(permBodyWidth(m.width))
 	thumbSize := max(1, rows*rows/total)
 	thumbPos := offset * (rows - thumbSize) / (total - rows)
+	sbRows, sbMaxOffset = rows, total-rows
+	sbThumbTop, sbThumbSize = thumbPos, thumbSize
 	out := make([]string, 0, rows)
 	for i := range rows {
-		gutter := scrollTrack.Render("│")
+		gutter := scrollTrack.Render("░░")
 		if i >= thumbPos && i < thumbPos+thumbSize {
-			gutter = scrollThumb.Render("▐")
+			gutter = scrollThumb.Render("██")
 		}
 		out = append(out, pad.Render(lines[offset+i])+"  "+gutter)
 	}
 	return strings.Join(out, "\n")
+}
+
+// renderPermBox assembles the dialog frame, centers it, and records the
+// scrollbar's screen geometry: the body starts four rows into the box
+// (border, padding, title, blank) and is left-aligned three columns in.
+func (m Model) renderPermBox(title, body, help string) string {
+	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
+	sbCol = (m.width-lipgloss.Width(box))/2 + permBodyWidth(m.width) + 5
+	sbTop = (m.height-lipgloss.Height(box))/2 + 4
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // scrollHints is the leading footer fragment of a dialog whose body
@@ -179,22 +272,7 @@ func (m *Model) permView() string {
 	if target := requestTarget(req.Call.Input); target != "" {
 		title += dimStyle.Render(" · " + clip(target, 60))
 	}
-
-	w := permBodyWidth(m.width)
-	var lines []string
-	switch {
-	case req.Call.Name == "bash":
-		lines = []string{
-			cmdStyle.Render("$ " + clip(req.Preview, w-2)),
-			dimStyle.Render("runs in " + m.workdir),
-		}
-	case req.Preview != "":
-		preview := req.Preview
-		lines = dialogLines("diff\x00"+preview, w,
-			func() string { return colorizeDiff(preview, w) })
-	default:
-		lines = []string{dimStyle.Render("(no preview available)")}
-	}
+	lines := m.permBodyLines()
 
 	help := keyHint("y", "allow") + dimStyle.Render("  ·  ") +
 		keyHint("n/esc", "deny") + dimStyle.Render("  ·  ") +
@@ -202,28 +280,21 @@ func (m *Model) permView() string {
 	if len(lines) > permBodyRows(m.height) {
 		help = scrollHints() + help
 	}
-	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
-		title, "", m.dialogWindow(lines), "", help))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return m.renderPermBox(title, m.dialogWindow(lines), help)
 }
 
 // planView renders the plan-approval dialog: the plan rendered as
 // markdown in a scrollable window, plus the consequence of approving.
 func (m *Model) planView(req agent.Request) string {
 	title := dialogTitle("plan", "approve to switch to accept-edits")
-	w := permBodyWidth(m.width)
-	preview := req.Preview
-	lines := dialogLines("plan\x00"+preview, w,
-		func() string { return renderMarkdown(preview, w) })
+	lines := m.permBodyLines()
 
 	help := keyHint("y", "approve — implement") + dimStyle.Render("  ·  ") +
 		keyHint("n/esc", "keep planning")
 	if len(lines) > permBodyRows(m.height) {
 		help = scrollHints() + help
 	}
-	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
-		title, "", m.dialogWindow(lines), "", help))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return m.renderPermBox(title, m.dialogWindow(lines), help)
 }
 
 // requestTarget extracts a path argument for the dialog title.

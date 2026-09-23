@@ -95,9 +95,11 @@ var (
 	answerBarFinal    = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(colCyan).PaddingLeft(1)
 
 	// scrollThumb/scrollTrack draw the approval dialog's scrollbar
-	// gutter: a bright thumb over a quiet track.
+	// gutter, two cells wide: a cyan full-block thumb over a quiet
+	// light-shade track. One glyph family keeps them aligned in any
+	// font (a half-block next to a line does not line up in iTerm2).
 	scrollThumb = lipgloss.NewStyle().Foreground(colCyan)
-	scrollTrack = lipgloss.NewStyle().Foreground(colBorder)
+	scrollTrack = lipgloss.NewStyle().Foreground(colDim)
 
 	// helpKey dims the bottom-line key names without hiding them.
 	helpKey = lipgloss.NewStyle().Foreground(colCyan).Faint(true)

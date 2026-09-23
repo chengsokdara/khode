@@ -141,7 +141,7 @@ func TestPlanDialogScrolls(t *testing.T) {
 	// Content assertions run on the ANSI-stripped view: glamour renders
 	// spaces as their own styled runs, splitting word pairs.
 	v := ansiStrip(m.View().Content)
-	if !strings.Contains(v, "line 00") || !strings.Contains(m.View().Content, "▐") {
+	if !strings.Contains(v, "line 00") || !strings.Contains(m.View().Content, "██") {
 		t.Errorf("opening view missing the plan top or the scrollbar: %q", m.View().Content)
 	}
 
@@ -189,8 +189,150 @@ func TestPlanDialogScrolls(t *testing.T) {
 	m.perm = &agent.Request{Kind: agent.KindPlan, Preview: "# tiny\njust one thing"}
 	m.permScroll = 0
 	v = m.View().Content
-	if strings.Contains(v, "▐") || strings.Contains(ansiStrip(v), "scroll") {
+	if strings.Contains(v, "██") || strings.Contains(ansiStrip(v), "scroll") {
 		t.Errorf("short plan grew scrollbar furniture: %s", ansiStrip(v))
+	}
+}
+
+// pgdn past the end must not pile up overshoot: the offset clamps to
+// the last window, so the very next pgup scrolls back. (The old coarse
+// clamp let the offset grow forever, freezing the view at the bottom
+// until every extra page was unwound with pgup.)
+func TestPermScrollClampsAtEnds(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	var plan strings.Builder
+	plan.WriteString("# plan\n")
+	for i := range 60 {
+		fmt.Fprintf(&plan, "- line %02d\n", i)
+	}
+	m.perm = &agent.Request{Kind: agent.KindPlan, Preview: plan.String()}
+	m.View() // render once so the body height is cached
+
+	rows := permBodyRows(30)
+	for range 5 {
+		next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		m = next.(Model)
+	}
+	total := len(m.permBodyLines())
+	if want := total - rows; m.permScroll != want {
+		t.Errorf("permScroll after 5 pgdowns = %d, want %d (the last window)", m.permScroll, want)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m = next.(Model)
+	if want := total - rows - rows; m.permScroll != want {
+		t.Errorf("permScroll after one pgup = %d, want %d", m.permScroll, want)
+	}
+}
+
+// The recorded scrollbar geometry must point at the glyphs the view
+// actually drew — the mouse handlers trust it blind.
+func TestPermScrollbarGeometry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	var plan strings.Builder
+	plan.WriteString("# plan\n")
+	for i := range 60 {
+		fmt.Fprintf(&plan, "- line %02d\n", i)
+	}
+	m.perm = &agent.Request{Kind: agent.KindPlan, Preview: plan.String()}
+	m.View()
+
+	lines := strings.Split(ansiStrip(m.View().Content), "\n")
+	check := func(row int, want string) {
+		t.Helper()
+		if row < 0 || row >= len(lines) {
+			t.Fatalf("geometry row %d outside the frame", row)
+		}
+		runes := []rune(lines[row])
+		if sbCol+2 > len(runes) {
+			t.Fatalf("gutter column %d outside row %d", sbCol, row)
+		}
+		if got := string(runes[sbCol : sbCol+2]); got != want {
+			t.Errorf("glyphs at row %d col %d = %q, want %q", row, sbCol, got, want)
+		}
+	}
+	check(sbTop, "██")                        // thumb starts at the window top (offset 0)
+	check(sbTop+sbThumbTop+sbThumbSize, "░░") // first track row below the thumb
+	check(sbTop+sbRows-1, "░░")               // track runs to the last body row
+}
+
+// The scrollbar gutter is two cells wide and interactive: grabbing the
+// thumb and dragging scrubs the window, clicking the track pages,
+// release ends the drag, and clicks off the gutter do nothing.
+func TestPermScrollbarMouse(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	var plan strings.Builder
+	plan.WriteString("# plan\n")
+	for i := range 60 {
+		fmt.Fprintf(&plan, "- line %02d\n", i)
+	}
+	m.perm = &agent.Request{Kind: agent.KindPlan, Preview: plan.String()}
+
+	v := m.View().Content
+	if !strings.Contains(v, "██") || !strings.Contains(v, "░░") {
+		t.Errorf("scrollbar glyphs missing: %q", v)
+	}
+	rows, thumbTop := sbRows, sbThumbTop
+	if rows == 0 {
+		t.Fatal("scrollbar geometry not recorded by the render")
+	}
+
+	// A click off the gutter leaves the dialog alone.
+	next, _ = m.Update(tea.MouseClickMsg{X: 0, Y: sbTop, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.permDragging || m.permScroll != 0 {
+		t.Error("click outside the gutter moved the dialog")
+	}
+
+	// Grab the thumb and drag to the bottom of the track.
+	next, _ = m.Update(tea.MouseClickMsg{X: sbCol, Y: sbTop + thumbTop, Button: tea.MouseLeft})
+	m = next.(Model)
+	if !m.permDragging {
+		t.Fatal("click on the thumb did not start a drag")
+	}
+	next, _ = m.Update(tea.MouseMotionMsg{X: sbCol, Y: sbTop + rows - 1, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.permScroll != sbMaxOffset {
+		t.Errorf("drag to the bottom = %d, want %d", m.permScroll, sbMaxOffset)
+	}
+
+	// Release ends the grab; motion afterwards is inert.
+	next, _ = m.Update(tea.MouseReleaseMsg{X: sbCol, Y: sbTop + rows - 1, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.permDragging {
+		t.Error("release did not end the drag")
+	}
+	next, _ = m.Update(tea.MouseMotionMsg{X: sbCol, Y: sbTop, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.permScroll != sbMaxOffset {
+		t.Error("motion after release moved the dialog")
+	}
+
+	// Grab again and scrub back to the very top.
+	next, _ = m.Update(tea.MouseClickMsg{X: sbCol, Y: sbTop + sbThumbTop, Button: tea.MouseLeft})
+	m = next.(Model)
+	next, _ = m.Update(tea.MouseMotionMsg{X: sbCol, Y: sbTop, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.permScroll != 0 {
+		t.Errorf("drag to the top = %d, want 0", m.permScroll)
+	}
+
+	// Clicking the track below the thumb pages down.
+	next, _ = m.Update(tea.MouseClickMsg{X: sbCol, Y: sbTop + sbThumbTop + sbThumbSize, Button: tea.MouseLeft})
+	m = next.(Model)
+	if want := permBodyRows(30); m.permScroll != min(want, sbMaxOffset) {
+		t.Errorf("track click below the thumb = %d, want a page down", m.permScroll)
 	}
 }
 

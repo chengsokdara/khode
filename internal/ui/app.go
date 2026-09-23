@@ -93,6 +93,11 @@ type Model struct {
 	// the top. It resets whenever a new question opens the dialog.
 	permScroll int
 
+	// permDragging marks a thumb grab on the dialog's scrollbar, with
+	// the row the pointer started at inside the thumb.
+	permDragging bool
+	permGrabOff  int
+
 	picker     *picker     // session chooser overlay; nil when closed
 	modelPick  *modelPick  // /model chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
@@ -391,6 +396,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.perm = &msg.req
 		m.permScroll = 0
+		m.permDragging = false
 		return m, nil // dialog open; the pump resumes when it is answered
 
 	case mcpApplyMsg:
@@ -401,12 +407,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
-	// The mouse is captured for the wheel (MouseModeCellMotion in View):
-	// without it, terminals like iTerm2 scroll their own scrollback out
-	// from under the alt buffer and the app never sees the wheel. The
-	// wheel scrolls the conversation, or the open dialog's body; text
-	// selection still works through the terminal's override (shift-drag,
-	// option-drag in iTerm2).
+	// The mouse is captured for the wheel and the dialog scrollbars
+	// (MouseModeCellMotion in View): without it, terminals like iTerm2
+	// scroll their own scrollback out from under the alt buffer and the
+	// app never sees the tick. The wheel scrolls the conversation, or
+	// the open dialog's body; clicks and drags drive the dialog's
+	// scrollbar. Text selection still works through the terminal's
+	// override (shift-drag, option-drag in iTerm2).
 	case tea.MouseWheelMsg:
 		switch msg.Button {
 		case tea.MouseWheelUp:
@@ -422,6 +429,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scroll = max(0, m.scroll-wheelStep)
 			}
 		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		m.mousePermClick(msg)
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		m.mousePermDrag(msg)
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		m.permDragging = false
 		return m, nil
 
 	// Key releases are ignored outright: only presses drive the app.
