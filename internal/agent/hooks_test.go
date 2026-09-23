@@ -24,7 +24,7 @@ func TestPreToolHookVetoReachesModelAsError(t *testing.T) {
 		},
 	}}
 	r, _ := newTestRunner(t, p, &fakeTool{})
-	r.Mode = perm.ModeAuto // even auto mode cannot overrule a hook veto
+	r.Mode = staticMode(perm.ModeAuto) // even auto mode cannot overrule a hook veto
 	r.Hooks = hooks.New(config.Hooks{PreTool: []config.Hook{
 		{Command: `echo "echo is banned" >&2; exit 2`},
 	}}, t.TempDir())

@@ -49,12 +49,16 @@ func callOnce(name string) []llm.Event {
 	}}}
 }
 
+// staticMode wraps a fixed mode for Runner.Mode, which the loop re-reads
+// per tool call.
+func staticMode(m perm.Mode) func() perm.Mode { return func() perm.Mode { return m } }
+
 func TestRunnerAskApproveRunsTool(t *testing.T) {
 	p := &fakeProvider{responses: [][]llm.Event{callOnce("echo"), {llm.TextDeltaEvent{Text: "ok"}}}}
 	tool := &gatedTool{risk: perm.RiskWrite}
 	appr := &stubApprover{answers: []bool{true}}
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModeAsk
+	r.Mode = staticMode(perm.ModeAsk)
 	r.Approver = appr
 
 	drain(t, r.Run(t.Context(), "go"))
@@ -80,7 +84,7 @@ func TestRunnerAskDeclineFeedsBack(t *testing.T) {
 	tool := &gatedTool{risk: perm.RiskWrite}
 	appr := &stubApprover{answers: []bool{false}}
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModeAsk
+	r.Mode = staticMode(perm.ModeAsk)
 	r.Approver = appr
 
 	drain(t, r.Run(t.Context(), "go"))
@@ -99,7 +103,7 @@ func TestRunnerNilApproverDeclines(t *testing.T) {
 	p := &fakeProvider{responses: [][]llm.Event{callOnce("echo"), {llm.TextDeltaEvent{Text: "fine"}}}}
 	tool := &gatedTool{risk: perm.RiskExec}
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModeAsk
+	r.Mode = staticMode(perm.ModeAsk)
 
 	drain(t, r.Run(t.Context(), "go"))
 
@@ -113,7 +117,7 @@ func TestRunnerPlanModeDeniesWithoutAsking(t *testing.T) {
 	tool := &gatedTool{risk: perm.RiskWrite}
 	appr := &stubApprover{answers: []bool{true}} // would approve, but must not be asked
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModePlan
+	r.Mode = staticMode(perm.ModePlan)
 	r.Approver = appr
 
 	drain(t, r.Run(t.Context(), "go"))
@@ -132,7 +136,7 @@ func TestRunnerAcceptEditsAutoApprovesWrites(t *testing.T) {
 	tool := &gatedTool{risk: perm.RiskWrite}
 	appr := &stubApprover{}
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModeAcceptEdits
+	r.Mode = staticMode(perm.ModeAcceptEdits)
 	r.Approver = appr
 
 	drain(t, r.Run(t.Context(), "go"))
@@ -150,7 +154,7 @@ func TestRunnerReadToolsNeverAsk(t *testing.T) {
 	tool := &gatedTool{risk: perm.RiskRead}
 	appr := &stubApprover{}
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModeAsk
+	r.Mode = staticMode(perm.ModeAsk)
 	r.Approver = appr
 
 	drain(t, r.Run(t.Context(), "go"))
@@ -169,7 +173,7 @@ func TestRunnerBridgeApproval(t *testing.T) {
 	p := &fakeProvider{responses: [][]llm.Event{callOnce("echo"), {llm.TextDeltaEvent{Text: "ok"}}}}
 	tool := &gatedTool{risk: perm.RiskWrite}
 	r, sess := newTestRunner(t, p, tool)
-	r.Mode = perm.ModeAsk
+	r.Mode = staticMode(perm.ModeAsk)
 	bridge := NewBridge()
 	r.Approver = bridge
 
@@ -187,7 +191,7 @@ func TestRunnerBridgeApproval(t *testing.T) {
 	// Now approve: the call runs for real.
 	p2 := &fakeProvider{responses: [][]llm.Event{callOnce("echo"), {llm.TextDeltaEvent{Text: "ok"}}}}
 	r2, sess2 := newTestRunner(t, p2, tool)
-	r2.Mode = perm.ModeAsk
+	r2.Mode = staticMode(perm.ModeAsk)
 	bridge2 := NewBridge()
 	r2.Approver = bridge2
 	go func() {
@@ -237,4 +241,36 @@ func TestBridgeRoundTrip(t *testing.T) {
 	b2.Approve(ictx, req, perm.RiskWrite, "diff")
 	<-done
 	late.Answer(true) // nobody is waiting; must not block
+}
+
+// TestRunnerMidTurnModeSwitchStopsAsking models shift+tab during an open
+// dialog: the first write still asks, the user approves and switches to
+// accept-edits, and the next write runs without consulting the approver.
+func TestRunnerMidTurnModeSwitchStopsAsking(t *testing.T) {
+	p := &fakeProvider{responses: [][]llm.Event{
+		callOnce("echo"), callOnce("echo"), {llm.TextDeltaEvent{Text: "ok"}},
+	}}
+	tool := &gatedTool{risk: perm.RiskWrite}
+	appr := &stubApprover{answers: []bool{true}}
+	r, _ := newTestRunner(t, p, tool)
+	// The mode is whatever the UI last set: ask until the first approval,
+	// accept-edits from it on (the user cycled while answering).
+	r.Mode = func() perm.Mode {
+		if len(appr.seen) > 0 {
+			return perm.ModeAcceptEdits
+		}
+		return perm.ModeAsk
+	}
+	r.Approver = appr
+
+	evs := drain(t, r.Run(t.Context(), "go"))
+	if _, ok := evs[len(evs)-1].(llm.DoneEvent); !ok {
+		t.Fatalf("last event = %T, want DoneEvent", evs[len(evs)-1])
+	}
+	if len(appr.seen) != 1 {
+		t.Errorf("approver consulted %d times, want exactly once (before the switch)", len(appr.seen))
+	}
+	if len(tool.got) != 2 {
+		t.Errorf("tool executed %d times, want 2", len(tool.got))
+	}
 }

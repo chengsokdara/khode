@@ -24,18 +24,39 @@ func permPreviewMax(height int) int {
 }
 
 // permKey handles input while the approval dialog is open: y allows the
-// pending call, n and esc decline it.
+// pending call, n and esc decline it, shift+tab cycles the permission
+// mode — and lets the cycle resolve the dialog itself when the new mode
+// would have allowed the pending call outright.
 func (m *Model) permKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c":
 		m.stopStream()
 		return tea.Quit
+	case "shift+tab":
+		m.cycleMode()
+		return m.autoResolvePerm()
 	case "y", "Y", "enter":
 		return m.answerPerm(true)
 	case "n", "N", "esc":
 		return m.answerPerm(false)
 	}
 	return nil
+}
+
+// autoResolvePerm approves an open dialog when the just-switched mode
+// allows the pending call: staying in ask mode must not keep blocking a
+// call the user has effectively cleared. Asks the new mode still poses
+// (bash under accept-edits) or denies (plan mode) stay open for a
+// manual answer, and plan approvals are never auto-resolved — that
+// choice stays the user's.
+func (m *Model) autoResolvePerm() tea.Cmd {
+	if m.perm == nil || m.perm.Kind != agent.KindTool {
+		return nil
+	}
+	if perm.Decide(m.mode(), m.perm.Risk) != perm.DecisionAllow {
+		return nil
+	}
+	return m.answerPerm(true)
 }
 
 // answerPerm resolves the open dialog and resumes the event pump.
@@ -79,7 +100,8 @@ func (m *Model) permView() string {
 	}
 
 	help := keyHint("y", "allow") + dimStyle.Render("  ·  ") +
-		keyHint("n/esc", "deny")
+		keyHint("n/esc", "deny") + dimStyle.Render("  ·  ") +
+		keyHint("shift+tab", "cycle mode")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }

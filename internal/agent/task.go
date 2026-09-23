@@ -84,7 +84,7 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 		Model:     t.cfg.Model(),
 		MaxTokens: t.cfg.MaxTokens(),
 		System:    t.subagentSystem(),
-		Mode:      t.cfg.Mode(),
+		Mode:      t.cfg.Mode, // live: subagents follow mid-turn switches too
 		Approver:  t.cfg.Approver,
 	}
 	if t.cfg.Hooks != nil {

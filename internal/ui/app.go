@@ -437,8 +437,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.submit()
 		// shift+tab walks the permission modes. It only lands here when
 		// no overlay is open — welcome and settings use it for their own
-		// navigation — and cycling mid-turn is fine: the in-flight turn
-		// keeps its mode snapshot, the next one picks the new mode up.
+		// navigation — and it applies to the in-flight turn immediately:
+		// the loop re-reads the mode before every tool call, and a
+		// pending dialog auto-approves when the new mode allows it.
 		case msg.String() == "shift+tab":
 			m.cycleMode()
 			return m, nil
@@ -846,7 +847,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 		Model:     m.cfg.Model(),
 		MaxTokens: m.cfg.MaxTokens,
 		System:    agent.SystemPrompt(m.workdir),
-		Mode:      m.mode(),
+		Mode:      func() perm.Mode { return m.mode() },
 		Approver:  m.approvals,
 		Hooks:     hooks.New(m.cfg.Hooks, m.workdir),
 	}
@@ -900,7 +901,7 @@ func (m *Model) runCompact() tea.Cmd {
 		Model:     m.cfg.Model(),
 		MaxTokens: m.cfg.MaxTokens,
 		System:    agent.SystemPrompt(m.workdir),
-		Mode:      m.mode(),
+		Mode:      func() perm.Mode { return m.mode() },
 		Approver:  m.approvals,
 	}
 	return func() tea.Msg {

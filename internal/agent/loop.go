@@ -32,8 +32,10 @@ type Runner struct {
 	System    string
 	// MaxRounds bounds the tool loop; 0 means DefaultMaxRounds.
 	MaxRounds int
-	// Mode selects the permission policy; empty means perm.DefaultMode.
-	Mode perm.Mode
+	// Mode selects the permission policy, re-read before every tool call
+	// so a mid-turn mode switch applies to the rest of the running turn;
+	// nil means perm.DefaultMode.
+	Mode func() perm.Mode
 	// Approver resolves perm.DecisionAsk outcomes; nil declines them.
 	Approver Approver
 	// Hooks runs the user's lifecycle hooks around tool calls; nil
@@ -203,9 +205,9 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 		return "", fmt.Errorf("tool %q is disabled — the user turned it off in /tools", c.Name)
 	}
 
-	mode := r.Mode
-	if mode == "" {
-		mode = perm.DefaultMode
+	mode := perm.DefaultMode
+	if r.Mode != nil {
+		mode = r.Mode()
 	}
 	risk := r.Tools.RiskOf(c.Name)
 	decision := perm.Decide(mode, risk)

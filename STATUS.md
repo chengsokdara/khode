@@ -10,6 +10,22 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Live mode switching mid-turn (2026-09-23):** mode changes apply to the
+running turn immediately. `agent.Runner.Mode` is a `func() perm.Mode`
+re-read before every tool call (the same live-closure pattern the plan
+and task tools already used over `cfg.PermissionMode`), so shift+tab or
+`/mode` while the agent works steers the rest of the turn — switching to
+accept-edits/auto stops the asks (subagents included), switching to
+plan/ask resumes them. The approval dialog joins in instead of
+swallowing the key: `permKey` cycles the mode on shift+tab, and when the
+new mode would have allowed the pending call outright
+(`perm.Decide(mode, req.Risk) == DecisionAllow`) the dialog answers
+itself (`autoResolvePerm`) and the turn continues. Asks the new mode
+still poses (bash under accept-edits) or denies (plan mode) stay open
+for a manual answer, and plan-approval dialogs are never auto-resolved —
+only the allow direction is automatic. The dialog footer shows the
+`shift+tab mode` hint.
+
 Phase 7 complete — nothing in khode needs hand-editing config.json.
 
 **Live khateway wiring (2026-09-23):** khode runs against the deployed
@@ -167,9 +183,10 @@ ask mode; its row is counted in `liveChrome`. Bare `/mode` opens an
 interactive picker above the input in the command-popup grammar (↑/↓ +
 enter applies via `setMode` with the usual notice, esc dismisses, the
 active mode is marked "(current)"); `/mode <name>` and the /settings
-mode row are unchanged. Cycling mid-turn is allowed — the in-flight
-turn keeps its Runner mode snapshot and the next turn picks the new
-mode up.
+mode row are unchanged. Cycling mid-turn applies immediately — the
+Runner re-reads the mode before every tool call, and a pending dialog
+auto-approves when the new mode allows it (see live mode switching,
+2026-09-23).
 
 **Inline transcript rendering (2026-09-19):** khode no longer runs in the
 alt screen. Sealed chat blocks are `tea.Println`'d into the terminal's
@@ -405,3 +422,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-22 | `/mcp` gains n-add: the settings server form is now host-agnostic (`formKey`/`commitForm` take the form + return a flash, `newMCPServerForm`/`serverFormView` shared) and the dialog hosts it — add without visiting /settings; committed adds persist, reconcile live, and land the cursor on the new row | (this commit) |
 | 2026-09-23 | Dedicated `ROADMAP.md`: the phase checklist + Next backlog moved out of STATUS.md (which keeps Now + Changelog and points at the new file); doc-sync rule and cross-references updated in RULES/AGENTS/MEMORY/README | f2618dd |
 | 2026-09-23 | khode pointed at the deployed khateway via `base_urls` (user config, no repo change); anonymous auth + the khateway↔khode streaming seam verified end-to-end through khode's llm stack; the deployed gateway's one registered model currently 504s on a stalled upstream | (this commit) |
+| 2026-09-23 | Live mode switching: `Runner.Mode` is a func re-read per tool call (mid-turn shift+tab/`/mode` applies at once, subagents included); the approval dialog cycles modes on shift+tab and auto-approves when the new mode allows the pending call; exec asks under accept-edits and plan dialogs stay manual | (this commit) |
