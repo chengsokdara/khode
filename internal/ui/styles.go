@@ -40,6 +40,7 @@ var (
 	colGreen   = lipgloss.Color(hexGreen)
 	colGreenHi = lipgloss.Color(hexGreenHi)
 	colMint    = lipgloss.Color(hexMint)
+	colText    = lipgloss.Color(hexText)
 	colResult  = lipgloss.Color(hexResult)
 	colDim     = lipgloss.Color(hexDim)
 	colBorder  = lipgloss.Color(hexBorder)
@@ -56,11 +57,12 @@ var (
 	// userMark is the ❯ prompt on user messages.
 	userMark = lipgloss.NewStyle().Bold(true).Foreground(colGreen)
 
-	// userCard bands user messages onto a full-width dark-green slab:
-	// green reads as "you" against khode's cyan answer bars, and the
-	// container-vs-prose shape keeps the two apart when scanning a long
-	// transcript.
-	userCard    = lipgloss.NewStyle().Background(colUserBg).Padding(0, 1)
+	// userCard bands user messages onto a dark-green slab that hugs
+	// the text. The light foreground is load-bearing: with no explicit
+	// color the text falls back to the terminal default, which drowns
+	// on a filled band. Width is set per render so the card wraps
+	// without painting the full terminal edge to edge.
+	userCard    = lipgloss.NewStyle().Background(colUserBg).Foreground(colText).Padding(0, 1)
 	cmdStyle    = lipgloss.NewStyle().Foreground(colGreenHi)
 	systemStyle = lipgloss.NewStyle().Foreground(colDim).Italic(true)
 	errorStyle  = lipgloss.NewStyle().Foreground(colErr).Bold(true)

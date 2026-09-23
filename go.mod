@@ -8,6 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/anthropics/anthropic-sdk-go v1.73.0
 	github.com/charmbracelet/glamour v1.0.0
+	github.com/muesli/reflow v0.3.0
 	github.com/openai/openai-go v1.12.0
 )
 
@@ -37,7 +38,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.27 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

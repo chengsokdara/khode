@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/muesli/reflow/wordwrap"
+
 	"khode/internal/agent"
 	"khode/internal/config"
 	"khode/internal/debug"
@@ -1199,9 +1201,15 @@ func (m *Model) block(i int, width int) string {
 		}
 		out = style.Width(width).Render(prefix + body)
 	case msg.role == llm.RoleUser:
-		// User input rides the green slab card: a full-width band that
-		// reads as "you" against khode's cyan answer bars.
-		out = userCard.Width(width).Render(userMark.Render("❯ ") + msg.raw)
+		// User input rides a green slab that hugs the text: wrapped to
+		// the chat width with a hanging indent under the ❯, never
+		// stretched across the terminal edge to edge.
+		wrapped := wordwrap.String(msg.raw, width-4)
+		wlines := strings.Split(wrapped, "\n")
+		for i, l := range wlines {
+			wlines[i] = clip(l, width-2)
+		}
+		out = userCard.Render(userMark.Render("❯ ") + strings.Join(wlines, "\n  "))
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
 			// Live text rides the same markdown pipeline, re-run per

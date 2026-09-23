@@ -10,6 +10,16 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**User slab redesign (2026-09-23):** the first slab pass had two real
+problems in the live terminal — the text carried no explicit
+foreground and fell back to the terminal default (dark, unreadable on
+green), and the band painted the full terminal width even for a
+three-word message. The slab now hugs the content: text is explicitly
+light (`colText` on the band), long lines word-wrap at the chat width
+with a two-space hanging indent under the `❯` (reflow/wordwrap, now a
+direct dep), and the band width is the widest wrapped line — green
+cards, not green wallpaper.
+
 **Scrollbar fixes + mouse interaction (2026-09-23):** three fixes to
 the dialog scrollbar from real use. The glyphs are now one family — a
 two-cell gutter with a cyan full-block `██` thumb over a light-shade
@@ -510,3 +520,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Mouse captured for the wheel (`MouseModeCellMotion`): the alt-screen "wheel belongs to nothing" assumption was wrong in iTerm2, which scrolls its own scrollback and let the user wheel out of the TUI; wheel now scrolls the open dialog's body or the chat viewport (3 lines/tick), selection via the terminal override (shift/option-drag) | (this commit) |
 | 2026-09-23 | User messages render as full-width dark-green slab cards (`userCard`/`hexUserBg`, `❯` inside the band) — green = you vs khode's cyan answer bars, container vs open prose; multi-line input reads as one card | (this commit) |
 | 2026-09-23 | Scrollbar fixes + interaction: unified 2-cell glyphs (`██` thumb / `░░` track, brighter track), pgdn overshoot fixed (`scrollPerm` clamps to the real body height — no more frozen bottom until extra pages unwind), and the scrollbar is mouse-interactive (grab+drag scrubs, track click pages, release ends); geometry recorded per render and pinned to the drawn glyphs by test | (this commit) |
+| 2026-09-23 | User slab redesign: explicit light text on the band (terminal default rendered dark-on-green), slab hugs content instead of spanning the terminal, long lines word-wrap with a hanging indent under the `❯`; `muesli/reflow/wordwrap` promoted to a direct dependency | (this commit) |

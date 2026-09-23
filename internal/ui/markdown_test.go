@@ -10,6 +10,8 @@ import (
 	"khode/internal/config"
 	"khode/internal/llm"
 	"khode/internal/tools"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Sealed assistant prose must come out of glamour styled (ANSI present,
@@ -43,26 +45,45 @@ func TestRenderMarkdownAuroraTheme(t *testing.T) {
 	}
 }
 
-// User messages ride a full-width dark-green slab (green = you vs
-// khode's cyan bars): the ❯ lands inside the band and every padded
-// line — wrapped or blank — carries the background, so multi-line
-// input reads as one card.
+// User messages ride a dark-green slab that hugs the text (green = you
+// vs khode's cyan bars). The text carries an explicit light foreground —
+// the terminal default drowns on a filled band — wrapped lines hang
+// indent under the ❯, and the band never spans the full terminal width.
 func TestUserMessageRendersSlab(t *testing.T) {
 	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
 	m.messages = append(m.messages, uiMessage{
 		role: llm.RoleUser,
-		raw:  "fix the mobile login bug\n\nthe token expires too early",
+		raw:  "fix the mobile login bug\n\nthe token expires way too early right when the app goes to the background and the refresh flow drops the session on the floor",
 	})
-	out := m.block(0, 60)
+	out := m.block(0, 80)
 	// #123524 is the slab background: 18, 53, 36 in SGR terms.
 	if !strings.Contains(out, "48;2;18;53;36") {
 		t.Errorf("user message missing the slab background: %q", out)
 	}
-	if !strings.Contains(ansiStrip(out), "❯ fix the mobile login bug") {
-		t.Errorf("slab lost the prompt mark or text: %s", ansiStrip(out))
+	// #DCE9E5 is the light text color: explicit, since the terminal
+	// default is unreadable on the band.
+	if !strings.Contains(out, "38;2;220;233;229") {
+		t.Errorf("slab text missing the light foreground: %q", out)
 	}
-	if got := len(strings.Split(ansiStrip(out), "\n")); got != 3 {
-		t.Errorf("multi-line slab rendered %d lines, want 3 (both paragraphs on the band)", got)
+	stripped := ansiStrip(out)
+	if !strings.Contains(stripped, "❯ fix the mobile login bug") {
+		t.Errorf("slab lost the prompt mark or text: %s", stripped)
+	}
+	if got := len(strings.Split(stripped, "\n")); got != 4 {
+		t.Errorf("multi-line slab rendered %d lines, want 4 (blank line kept, long paragraph wrapped)", got)
+	}
+	// The band hugs the content: wrapped lines stay inside the wrap
+	// budget and hang indent under the ❯.
+	lines := strings.Split(stripped, "\n")
+	for _, i := range []int{2, 3} {
+		if widest := len([]rune(lines[i])); widest > 80 {
+			t.Errorf("slab stretched to %d columns, want content-width", widest)
+		}
+		if !strings.HasPrefix(lines[i], "  ") {
+			t.Errorf("wrapped line does not hang indent: %q", lines[i])
+		}
 	}
 }
 
