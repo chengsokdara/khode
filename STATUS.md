@@ -12,6 +12,20 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 Phase 7 complete — nothing in khode needs hand-editing config.json.
 
+**Live khateway wiring (2026-09-23):** khode runs against the deployed
+khateway — `base_urls.khateway = https://khateway.chengsokdara.workers.dev/v1`
+and `models.khateway = deepseek-v4.1-flash-free` in the user config
+(no code change; the built-in `DefaultKhatewayEndpoint` stays
+`localhost:8787` for local dev, `KHATEWAY_BASE_URL` still overrides all).
+Verified through khode's own stack: protocol + endpoint resolution,
+anonymous-key auth accepted by the gateway, and a full streaming turn
+with usage against a khateway serving a live upstream model. Caveat:
+the deployed gateway's single registered model currently 504s — its
+kiosapi.com upstream route stalls (glm/deepseek/mimo hang;
+`north-mini-code` and `atria-dawn-preview` answer) — and khode's
+transient-retry doubles the wait before surfacing it; registering a
+live model in the gateway dashboard is the khateway-side fix.
+
 **/model picker dialog (2026-09-22):** bare `/model` opens a centered
 model chooser (`internal/ui/modelpick.go`, the /sessions dialog shape)
 instead of printing a usage line: the provider's cached choices with the
@@ -389,4 +403,5 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-22 | Fix: `/sessions` + esc quit the app on young sessions — the picker guessed "startup picker" from `len(m.messages) > 1`; the mode is now an explicit `startup` flag (`OpenStartupPicker` for `--resume`, whose esc still quits) so a chat-opened picker always closes | (this commit) |
 | 2026-09-22 | `/mcp` servers dialog: sorted per-server rows with live status glyph, tool count (+ session-disabled), risk badge, launch-line detail; enter starts/restarts via `applyMCPCmd` (busy-marked until `applyMCPResult`), space bulk-toggles the server's tools session-scoped; printed `mcpStatus()` removed | (this commit) |
 | 2026-09-22 | `/mcp` gains n-add: the settings server form is now host-agnostic (`formKey`/`commitForm` take the form + return a flash, `newMCPServerForm`/`serverFormView` shared) and the dialog hosts it — add without visiting /settings; committed adds persist, reconcile live, and land the cursor on the new row | (this commit) |
-| 2026-09-23 | Dedicated `ROADMAP.md`: the phase checklist + Next backlog moved out of STATUS.md (which keeps Now + Changelog and points at the new file); doc-sync rule and cross-references updated in RULES/AGENTS/MEMORY/README | (this commit) |
+| 2026-09-23 | Dedicated `ROADMAP.md`: the phase checklist + Next backlog moved out of STATUS.md (which keeps Now + Changelog and points at the new file); doc-sync rule and cross-references updated in RULES/AGENTS/MEMORY/README | f2618dd |
+| 2026-09-23 | khode pointed at the deployed khateway via `base_urls` (user config, no repo change); anonymous auth + the khateway↔khode streaming seam verified end-to-end through khode's llm stack; the deployed gateway's one registered model currently 504s on a stalled upstream | (this commit) |
