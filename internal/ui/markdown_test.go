@@ -43,6 +43,29 @@ func TestRenderMarkdownAuroraTheme(t *testing.T) {
 	}
 }
 
+// User messages ride a full-width dark-green slab (green = you vs
+// khode's cyan bars): the ❯ lands inside the band and every padded
+// line — wrapped or blank — carries the background, so multi-line
+// input reads as one card.
+func TestUserMessageRendersSlab(t *testing.T) {
+	m := newTestModel(t)
+	m.messages = append(m.messages, uiMessage{
+		role: llm.RoleUser,
+		raw:  "fix the mobile login bug\n\nthe token expires too early",
+	})
+	out := m.block(0, 60)
+	// #123524 is the slab background: 18, 53, 36 in SGR terms.
+	if !strings.Contains(out, "48;2;18;53;36") {
+		t.Errorf("user message missing the slab background: %q", out)
+	}
+	if !strings.Contains(ansiStrip(out), "❯ fix the mobile login bug") {
+		t.Errorf("slab lost the prompt mark or text: %s", ansiStrip(out))
+	}
+	if got := len(strings.Split(ansiStrip(out), "\n")); got != 3 {
+		t.Errorf("multi-line slab rendered %d lines, want 3 (both paragraphs on the band)", got)
+	}
+}
+
 // Streaming text rides the same markdown pipeline as sealed prose, with
 // the cursor trailing the last line. Nothing may land in the render
 // cache while streaming: the seal must produce the sealed view, not

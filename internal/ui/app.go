@@ -1180,7 +1180,9 @@ func (m *Model) block(i int, width int) string {
 		}
 		out = style.Width(width).Render(prefix + body)
 	case msg.role == llm.RoleUser:
-		out = userMark.Render("❯ ") + lipgloss.NewStyle().Width(width).Render(msg.raw)
+		// User input rides the green slab card: a full-width band that
+		// reads as "you" against khode's cyan answer bars.
+		out = userCard.Width(width).Render(userMark.Render("❯ ") + msg.raw)
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
 			// Live text rides the same markdown pipeline, re-run per

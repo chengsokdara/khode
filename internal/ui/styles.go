@@ -29,6 +29,7 @@ const (
 	hexDim     = "#5C6B73"
 	hexBorder  = "#24544E"
 	hexChipBg  = "#0F3532"
+	hexUserBg  = "#123524"
 	hexErr     = "#F87171"
 	hexWarn    = "#FBBF24"
 )
@@ -43,15 +44,23 @@ var (
 	colDim     = lipgloss.Color(hexDim)
 	colBorder  = lipgloss.Color(hexBorder)
 	colChipBg  = lipgloss.Color(hexChipBg)
+	colUserBg  = lipgloss.Color(hexUserBg)
 	colErr     = lipgloss.Color(hexErr)
 	colWarn    = lipgloss.Color(hexWarn)
 )
 
 // Central component styles so views stay consistent.
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(colCyanHi).Padding(0, 1)
-	dimStyle    = lipgloss.NewStyle().Foreground(colDim)
-	userMark    = lipgloss.NewStyle().Bold(true).Foreground(colGreen)
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colCyanHi).Padding(0, 1)
+	dimStyle   = lipgloss.NewStyle().Foreground(colDim)
+	// userMark is the ❯ prompt on user messages.
+	userMark = lipgloss.NewStyle().Bold(true).Foreground(colGreen)
+
+	// userCard bands user messages onto a full-width dark-green slab:
+	// green reads as "you" against khode's cyan answer bars, and the
+	// container-vs-prose shape keeps the two apart when scanning a long
+	// transcript.
+	userCard    = lipgloss.NewStyle().Background(colUserBg).Padding(0, 1)
 	cmdStyle    = lipgloss.NewStyle().Foreground(colGreenHi)
 	systemStyle = lipgloss.NewStyle().Foreground(colDim).Italic(true)
 	errorStyle  = lipgloss.NewStyle().Foreground(colErr).Bold(true)

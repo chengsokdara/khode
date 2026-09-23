@@ -10,6 +10,14 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Green slab cards for user messages (2026-09-23):** user input now
+renders as a full-width dark-green band (`userCard`, `hexUserBg
+#123524`) with the bold green `❯` inside it — container vs open prose
+against khode's cyan answer bars, so the two are distinguishable at a
+glance when scanning a long transcript, not just by a small glyph.
+Multi-line input reads as one card: `Width()` pads/wraps every line
+onto the band. User text stays raw (no markdown — input is literal).
+
 **Scrollable markdown dialogs + live streaming markdown (2026-09-23):**
 both approval dialogs are now scrollable readers instead of 20-line
 truncated previews. The plan dialog renders the plan through the same
@@ -482,3 +490,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Distinct agent-output UI: answer bars (bright cyan on the turn's final answer, dim teal mid-turn), aurora glamour theme with a cached renderer replacing `WithAutoStyle`'s colorless fallback, bright streaming text, mid-tone tool results, per-turn final marking live + on replay; two raw-substring assertions moved to `ansiStrip` | (this commit) |
 | 2026-09-23 | Scrollable markdown dialogs + live streaming markdown: plan dialog renders aurora markdown in a scroll window (cached per text+width), tool dialog shows the whole diff; ↑↓/jk line, pgup/pgdn page, home/end jumps, cyan `▐` scrollbar gutter when the body overflows; streaming assistant text renders markdown live (streaming renders no longer populate the block cache — fixes stuck cursors on mid-turn seals); aurora `Text` style drops its color so headings/blockquotes keep their tints (glamour renders text as block⊕Text, Text always won) | (this commit) |
 | 2026-09-23 | Mouse captured for the wheel (`MouseModeCellMotion`): the alt-screen "wheel belongs to nothing" assumption was wrong in iTerm2, which scrolls its own scrollback and let the user wheel out of the TUI; wheel now scrolls the open dialog's body or the chat viewport (3 lines/tick), selection via the terminal override (shift/option-drag) | (this commit) |
+| 2026-09-23 | User messages render as full-width dark-green slab cards (`userCard`/`hexUserBg`, `❯` inside the band) — green = you vs khode's cyan answer bars, container vs open prose; multi-line input reads as one card | (this commit) |
