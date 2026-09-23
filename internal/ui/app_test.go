@@ -38,8 +38,9 @@ func newTestModel(t *testing.T) Model {
 
 // The program runs full screen (alternate buffer): the whole terminal
 // is repainted every frame, so overlays erase cleanly and nothing
-// leaks into scrollback. The mouse is NOT captured: drag selects any
-// visible text natively, and the wheel has no scrollback to move.
+// leaks into scrollback. The mouse is captured for the wheel: without
+// mouse reporting, terminals like iTerm2 scroll their own scrollback
+// out from under the alt buffer and the app never sees the tick.
 func TestFullScreenView(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -49,12 +50,53 @@ func TestFullScreenView(t *testing.T) {
 	if !v.AltScreen {
 		t.Error("view is not on the alt screen; overlays cannot erase")
 	}
-	if v.MouseMode != tea.MouseModeNone {
-		t.Errorf("mouse mode = %v, want none (native text selection)", v.MouseMode)
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("mouse mode = %v, want cell motion (wheel scrolling)", v.MouseMode)
 	}
 }
 
-// The wheel scrolls the conversation viewport and snaps back on input.
+// The wheel scrolls the conversation viewport; with an approval dialog
+// open it scrolls the dialog body instead and leaves the chat scroll
+// alone.
+func TestWheelScrolls(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = next.(Model)
+	if m.scroll != wheelStep {
+		t.Errorf("scroll after wheel up = %d, want %d", m.scroll, wheelStep)
+	}
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = next.(Model)
+	if m.scroll != 0 {
+		t.Errorf("scroll after wheel down = %d, want 0", m.scroll)
+	}
+	// Down at the live edge stays clamped.
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = next.(Model)
+	if m.scroll != 0 {
+		t.Errorf("scroll below the live edge = %d, want 0", m.scroll)
+	}
+
+	req := agent.Request{Kind: agent.KindPlan, Preview: strings.Repeat("- item\n", 60)}
+	m.perm = &req
+	m.permScroll = 0
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = next.(Model)
+	if m.permScroll != wheelStep {
+		t.Errorf("dialog scroll after wheel down = %d, want %d", m.permScroll, wheelStep)
+	}
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = next.(Model)
+	if m.permScroll != 0 {
+		t.Errorf("dialog scroll after wheel up = %d, want 0", m.permScroll)
+	}
+	if m.scroll != 0 {
+		t.Errorf("wheel with a dialog open moved the chat scroll: %d", m.scroll)
+	}
+}
 
 func TestModifierEnterInsertsNewline(t *testing.T) {
 	m := newTestModel(t)

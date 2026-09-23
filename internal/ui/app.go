@@ -32,6 +32,10 @@ const (
 	Version        = "0.1.0"
 	minInputHeight = 1
 	maxInputHeight = 6
+
+	// wheelStep is how many lines one wheel tick scrolls, the
+	// conventional three-line notches of a mouse wheel.
+	wheelStep = 3
 )
 
 // uiMessageKind separates the block styles inside the chat pane.
@@ -397,9 +401,27 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
-	// The mouse is not captured: wheel events (if a terminal still
-	// reports them) are ignored, drag selects text natively.
+	// The mouse is captured for the wheel (MouseModeCellMotion in View):
+	// without it, terminals like iTerm2 scroll their own scrollback out
+	// from under the alt buffer and the app never sees the wheel. The
+	// wheel scrolls the conversation, or the open dialog's body; text
+	// selection still works through the terminal's override (shift-drag,
+	// option-drag in iTerm2).
 	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.perm != nil {
+				m.scrollPerm(-wheelStep)
+			} else {
+				m.scroll += wheelStep
+			}
+		case tea.MouseWheelDown:
+			if m.perm != nil {
+				m.scrollPerm(wheelStep)
+			} else {
+				m.scroll = max(0, m.scroll-wheelStep)
+			}
+		}
 		return m, nil
 
 	// Key releases are ignored outright: only presses drive the app.
@@ -462,9 +484,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.String() == "shift+tab":
 			m.cycleMode()
 			return m, nil
-		// pgup/pgdn scroll the conversation viewport (the mouse is not
-		// captured, so drag selects text natively and the wheel belongs
-		// to nothing — the alt buffer has no scrollback to move).
+		// pgup/pgdn page the conversation viewport (the wheel scrolls it
+		// too — see the MouseWheelMsg case).
 		case msg.String() == "pgup":
 			m.scroll += max(1, m.height-6)
 			return m, nil
@@ -507,12 +528,15 @@ func (m Model) View() tea.View {
 	// Full screen (alternate buffer), the way Claude Code runs: the
 	// whole terminal is repainted every frame, so transient overlays
 	// erase cleanly and nothing can leak into scrollback. The mouse is
-	// deliberately NOT captured: drag selects any visible text natively
-	// (alt-buffer rows are real screen cells), and the wheel scrolls
-	// nothing — there is no scrollback behind the alt buffer. Viewport
-	// scrolling lives on pgup/pgdn.
+	// captured for the wheel only: without mouse reporting, terminals
+	// like iTerm2 scroll their own scrollback out from under the alt
+	// buffer (the wheel would scroll the user out of the TUI) and the
+	// app never sees the tick. Text selection survives through the
+	// terminal's override — shift-drag in most terminals, option-drag
+	// in iTerm2.
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 

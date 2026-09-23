@@ -190,11 +190,8 @@ func main() {
 		m.OpenWelcome()
 	}
 
-	// The program runs inline (no alt screen, no mouse capture — nothing
-	// is declared on the View): sealed turns are tea.Println'd into the
-	// terminal's real scrollback, so the native scrollbar, wheel, and
-	// text selection cover history while khode redraws only the live
-	// region at the bottom.
+	// Alt screen, wheel capture, and frame layout are declared on the
+	// View itself (see ui.Model.View), not program options.
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fatal(err)

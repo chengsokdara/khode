@@ -24,7 +24,16 @@ aligned across ANSI lines (`perm.go`: `permBodyWidth`/`permBodyRows`,
 pgup/pgdn a page (the window height), home/end and g/G jump to the ends;
 y/n/enter/esc/shift+tab still answer, and the footer gains
 `↑↓/pgup/pgdn scroll · home/end jump` hints only while the body
-overflows. The offset lives on `Model.permScroll` and resets whenever a
+overflows. The wheel scrolls too: the mouse is now captured for the
+wheel (`MouseModeCellMotion` on the View) because without mouse
+reporting iTerm2 scrolls its own scrollback out from under the alt
+buffer — the user could wheel clean out of the TUI, and the dialog
+never saw the tick. A wheel tick over an open dialog scrolls its body;
+over the chat it scrolls the viewport (`wheelStep` = 3 lines; note the
+directions are opposites — `permScroll` counts from the top,
+`m.scroll` back from the live edge). Text selection survives through
+the terminal's override (shift-drag, option-drag in iTerm2). The offset
+lives on `Model.permScroll` and resets whenever a
 new question opens the dialog. Streaming assistant text now renders
 markdown live (same pipeline as sealed prose, cursor still trailing) —
 the raw-plain streaming view is gone. Two latent bugs fell out of that:
@@ -472,3 +481,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Live mode switching: `Runner.Mode` is a func re-read per tool call (mid-turn shift+tab/`/mode` applies at once, subagents included); the approval dialog cycles modes on shift+tab and auto-approves when the new mode allows the pending call; exec asks under accept-edits and plan dialogs stay manual | (this commit) |
 | 2026-09-23 | Distinct agent-output UI: answer bars (bright cyan on the turn's final answer, dim teal mid-turn), aurora glamour theme with a cached renderer replacing `WithAutoStyle`'s colorless fallback, bright streaming text, mid-tone tool results, per-turn final marking live + on replay; two raw-substring assertions moved to `ansiStrip` | (this commit) |
 | 2026-09-23 | Scrollable markdown dialogs + live streaming markdown: plan dialog renders aurora markdown in a scroll window (cached per text+width), tool dialog shows the whole diff; ↑↓/jk line, pgup/pgdn page, home/end jumps, cyan `▐` scrollbar gutter when the body overflows; streaming assistant text renders markdown live (streaming renders no longer populate the block cache — fixes stuck cursors on mid-turn seals); aurora `Text` style drops its color so headings/blockquotes keep their tints (glamour renders text as block⊕Text, Text always won) | (this commit) |
+| 2026-09-23 | Mouse captured for the wheel (`MouseModeCellMotion`): the alt-screen "wheel belongs to nothing" assumption was wrong in iTerm2, which scrolls its own scrollback and let the user wheel out of the TUI; wheel now scrolls the open dialog's body or the chat viewport (3 lines/tick), selection via the terminal override (shift/option-drag) | (this commit) |
