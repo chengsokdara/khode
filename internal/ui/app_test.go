@@ -167,7 +167,7 @@ func TestToolBlocksRender(t *testing.T) {
 
 	var sawCall, sawResult, sawFinal bool
 	for i, msg := range m.messages {
-		out := m.block(i, 80)
+		out := ansiStrip(m.block(i, 80))
 		switch msg.kind {
 		case kindToolCall:
 			if !strings.Contains(out, "⏺ read") || !strings.Contains(out, `"path":"README.md"`) {
@@ -273,7 +273,7 @@ func TestThinkingBlockSeparatesFromAnswer(t *testing.T) {
 
 	var sawThink, sawAnswer bool
 	for i, msg := range m.messages {
-		out := m.block(i, 80)
+		out := ansiStrip(m.block(i, 80))
 		switch {
 		case msg.kind == kindThinking:
 			sawThink = true

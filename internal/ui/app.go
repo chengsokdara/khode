@@ -26,7 +26,6 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/glamour"
 )
 
 const (
@@ -56,6 +55,7 @@ type uiMessage struct {
 	streaming bool
 	isErr     bool
 	full      bool // tool results meant to be read whole (todo lists)
+	final     bool // the closing assistant message of a turn: bright answer bar
 	history   bool
 }
 
@@ -206,7 +206,9 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 // same shape the live turn renders, so a resumed conversation prints
 // into scrollback exactly as it looked when it happened.
 func (m *Model) replayTranscript(sess *agent.Session) {
-	for _, msg := range sess.Messages() {
+	msgs := sess.Messages()
+	for idx, msg := range msgs {
+		final := isFinalAnswer(msgs, idx)
 		switch {
 		case msg.Role == llm.RoleTool && msg.ToolResult != nil:
 			m.messages = append(m.messages, uiMessage{
@@ -221,7 +223,7 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 				m.messages = append(m.messages, uiMessage{role: msg.Role, kind: kindThinking, raw: msg.Thinking, history: true})
 			}
 			if msg.Content != "" {
-				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
+				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true, final: final})
 			}
 			for _, c := range msg.ToolCalls {
 				m.messages = append(m.messages, uiMessage{
@@ -233,10 +235,21 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 				m.messages = append(m.messages, uiMessage{role: msg.Role, kind: kindThinking, raw: msg.Thinking, history: true})
 			}
 			if msg.Content != "" {
-				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true})
+				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true, final: final})
 			}
 		}
 	}
+}
+
+// isFinalAnswer reports whether msgs[idx] is the closing assistant
+// message of its turn: assistant prose with no pending tool calls,
+// followed by the next user message or ending the transcript cleanly.
+func isFinalAnswer(msgs []llm.Message, idx int) bool {
+	msg := msgs[idx]
+	if msg.Role != llm.RoleAssistant || msg.Content == "" || len(msg.ToolCalls) > 0 {
+		return false
+	}
+	return idx+1 >= len(msgs) || msgs[idx+1].Role == llm.RoleUser
 }
 
 // registerTaskTool (re)registers the task tool against the current
@@ -756,6 +769,21 @@ func (m *Model) sealStreamingText() {
 	m.messages[idx].streaming = false
 }
 
+// markFinalAnswer flags the turn's last assistant text block so it
+// renders under the bright answer bar. A cached render is dropped: the
+// block may already have been drawn with the mid-turn bar. Errors keep
+// their turn unmarked — the failure note is the loud end, not the prose.
+func (m *Model) markFinalAnswer() {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := &m.messages[i]
+		if msg.role == llm.RoleAssistant && msg.kind == kindText {
+			msg.final = true
+			msg.rendered = ""
+			return
+		}
+	}
+}
+
 // finishStream closes out the turn: finalize display and return the UI to
 // ready state. Session writes happened in the agent loop.
 func (m *Model) finishStream() tea.Cmd {
@@ -780,6 +808,8 @@ func (m *Model) finishStream() tea.Cmd {
 	if m.lastErr != "" {
 		m.messages = append(m.messages, uiMessage{role: "system", raw: "error: " + m.lastErr})
 		m.lastErr = ""
+	} else {
+		m.markFinalAnswer()
 	}
 
 	// The turn is over: its blocks (final answer included) print into
@@ -1123,9 +1153,17 @@ func (m *Model) block(i int, width int) string {
 		out = userMark.Render("❯ ") + lipgloss.NewStyle().Width(width).Render(msg.raw)
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
-			out = dimStyle.Width(width).Render(msg.raw) + streamCursor.Render("▌")
+			// Live text stays raw but bright — markdown is applied
+			// once the block seals, keeping per-delta rendering cheap.
+			out = bodyStyle.Width(width).Render(msg.raw) + streamCursor.Render("▌")
 		} else {
-			out = renderMarkdown(msg.raw, width)
+			// Sealed prose rides the answer bar: bright cyan on the
+			// turn's final message, dim teal on mid-turn text.
+			bar := answerBar
+			if msg.final {
+				bar = answerBarFinal
+			}
+			out = bar.Width(width).Render(renderMarkdown(msg.raw, width-answerBarOverhead))
 		}
 	default:
 		out = systemStyle.Width(width).Render("· " + msg.raw)
@@ -1164,26 +1202,6 @@ func (m *Model) invalidateRendered() {
 }
 
 // --- helpers -----------------------------------------------------------------
-
-// renderMarkdown renders complete assistant messages with glamour.
-func renderMarkdown(raw string, width int) string {
-	w := width
-	if w < 20 {
-		w = 20
-	}
-	if w > 160 {
-		w = 160
-	}
-	r, err := glamour.NewTermRenderer(glamour.WithWordWrap(w), glamour.WithAutoStyle())
-	if err != nil {
-		return raw
-	}
-	out, err := r.Render(raw)
-	if err != nil {
-		return raw
-	}
-	return out
-}
 
 func humanTokens(n int64) string {
 	switch {

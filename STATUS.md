@@ -10,6 +10,28 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Distinct agent-output UI (2026-09-23):** every assistant message now
+renders under a left answer bar — dim teal while the turn is still
+running, **bright cyan on the turn's final answer** — and sealed prose
+goes through a dedicated aurora glamour theme
+(`internal/ui/markdown.go`) instead of `WithAutoStyle()`, which
+silently degraded to the colorless NoTTY style on terminals where
+background detection fails and made the final answer read as gray
+wallpaper. Streaming text is bright near-white (`colText`, the same
+color the sealed body uses, so the seal doesn't shift brightness) with
+the existing cyan cursor; markdown is applied only at seal, keeping
+per-delta rendering cheap. The glamour renderer is cached per wrap
+width instead of rebuilt per message. Tool results got their own
+mid-tone (`colResult`) — real content, one step quieter than prose,
+clearly apart from the dim-italic thinking/system notes. Per-turn
+final answers are marked both live (`markFinalAnswer` on a clean
+`finishStream`) and on replay (`isFinalAnswer`: assistant prose with no
+pending tool calls followed by the next user message), so `--resume`
+looks like the live session; errored turns keep the dim bar (the
+failure note is the loud end, not the prose). The palette is now
+declared as hex constants that both lipgloss and the glamour theme
+share.
+
 **Live mode switching mid-turn (2026-09-23):** mode changes apply to the
 running turn immediately. `agent.Runner.Mode` is a `func() perm.Mode`
 re-read before every tool call (the same live-closure pattern the plan
@@ -423,3 +445,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Dedicated `ROADMAP.md`: the phase checklist + Next backlog moved out of STATUS.md (which keeps Now + Changelog and points at the new file); doc-sync rule and cross-references updated in RULES/AGENTS/MEMORY/README | f2618dd |
 | 2026-09-23 | khode pointed at the deployed khateway via `base_urls` (user config, no repo change); anonymous auth + the khateway↔khode streaming seam verified end-to-end through khode's llm stack; the deployed gateway's one registered model currently 504s on a stalled upstream | (this commit) |
 | 2026-09-23 | Live mode switching: `Runner.Mode` is a func re-read per tool call (mid-turn shift+tab/`/mode` applies at once, subagents included); the approval dialog cycles modes on shift+tab and auto-approves when the new mode allows the pending call; exec asks under accept-edits and plan dialogs stay manual | (this commit) |
+| 2026-09-23 | Distinct agent-output UI: answer bars (bright cyan on the turn's final answer, dim teal mid-turn), aurora glamour theme with a cached renderer replacing `WithAutoStyle`'s colorless fallback, bright streaming text, mid-tone tool results, per-turn final marking live + on replay; two raw-substring assertions moved to `ansiStrip` | (this commit) |

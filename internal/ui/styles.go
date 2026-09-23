@@ -16,17 +16,36 @@ import (
 // (ready, saved, additions), red is error, amber is context pressure,
 // and dim gray-teal carries everything secondary.
 
+// The palette is declared as raw hex first so non-lipgloss renderers
+// (the glamour markdown theme) can speak the exact same colors.
+const (
+	hexCyan    = "#2DD4BF"
+	hexCyanHi  = "#5EEAD4"
+	hexGreen   = "#4ADE80"
+	hexGreenHi = "#86EFAC"
+	hexMint    = "#99F6E4"
+	hexText    = "#DCE9E5"
+	hexResult  = "#8FA8A3"
+	hexDim     = "#5C6B73"
+	hexBorder  = "#24544E"
+	hexChipBg  = "#0F3532"
+	hexErr     = "#F87171"
+	hexWarn    = "#FBBF24"
+)
+
 var (
-	colCyan    = lipgloss.Color("#2DD4BF")
-	colCyanHi  = lipgloss.Color("#5EEAD4")
-	colGreen   = lipgloss.Color("#4ADE80")
-	colGreenHi = lipgloss.Color("#86EFAC")
-	colMint    = lipgloss.Color("#99F6E4")
-	colDim     = lipgloss.Color("#5C6B73")
-	colBorder  = lipgloss.Color("#24544E")
-	colChipBg  = lipgloss.Color("#0F3532")
-	colErr     = lipgloss.Color("#F87171")
-	colWarn    = lipgloss.Color("#FBBF24")
+	colCyan    = lipgloss.Color(hexCyan)
+	colCyanHi  = lipgloss.Color(hexCyanHi)
+	colGreen   = lipgloss.Color(hexGreen)
+	colGreenHi = lipgloss.Color(hexGreenHi)
+	colMint    = lipgloss.Color(hexMint)
+	colText    = lipgloss.Color(hexText)
+	colResult  = lipgloss.Color(hexResult)
+	colDim     = lipgloss.Color(hexDim)
+	colBorder  = lipgloss.Color(hexBorder)
+	colChipBg  = lipgloss.Color(hexChipBg)
+	colErr     = lipgloss.Color(hexErr)
+	colWarn    = lipgloss.Color(hexWarn)
 )
 
 // Central component styles so views stay consistent.
@@ -41,7 +60,13 @@ var (
 	okStyle     = lipgloss.NewStyle().Foreground(colGreen)
 	toolStyle   = lipgloss.NewStyle().Bold(true).Foreground(colCyan)
 	thinkStyle  = lipgloss.NewStyle().Foreground(colDim).Italic(true)
-	resultStyle = lipgloss.NewStyle().Foreground(colDim)
+
+	// bodyStyle tints assistant prose; bright enough that a streaming
+	// reply never reads as secondary. resultStyle carries tool output:
+	// real content, one step quieter than prose, clearly apart from the
+	// dim italic thinking/system notes.
+	bodyStyle   = lipgloss.NewStyle().Foreground(colText)
+	resultStyle = lipgloss.NewStyle().Foreground(colResult)
 	addStyle    = lipgloss.NewStyle().Foreground(colGreen)
 	delStyle    = lipgloss.NewStyle().Foreground(colErr)
 	warnStyle   = lipgloss.NewStyle().Foreground(colWarn)
@@ -54,6 +79,14 @@ var (
 
 	// streamCursor is the block that trails a streaming reply.
 	streamCursor = lipgloss.NewStyle().Bold(true).Foreground(colCyan)
+
+	// answerBar marks assistant prose with a left rule: dim teal while
+	// the turn is still running, bright cyan on the turn's final answer.
+	// Both carry exactly answerBarOverhead columns; the chat renderer
+	// subtracts that from the markdown wrap width.
+	answerBarOverhead = 2
+	answerBar         = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(colBorder).PaddingLeft(1)
+	answerBarFinal    = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(colCyan).PaddingLeft(1)
 
 	// helpKey dims the bottom-line key names without hiding them.
 	helpKey = lipgloss.NewStyle().Foreground(colCyan).Faint(true)
