@@ -7,7 +7,8 @@ interrupted session **without re-discovering the project**.
 
 If you are starting a session, or recovering after an interrupt:
 
-1. Read `STATUS.md` — phase checklist, "Now / Next / Later", changelog.
+1. Read `STATUS.md` — current state, changelog — and `ROADMAP.md` —
+   phase checklist, backlog.
 2. Read the **Current state** and **Decision log** below.
 3. Run these to detect in-flight work:
    ```sh
@@ -64,7 +65,7 @@ If you are starting a session, or recovering after an interrupt:
   `tools.Registry` has an RWMutex — the agent loop reads it from its
   goroutine while the overlay mutates it. `Model.partial` is a
   `*strings.Builder`; see Gotchas for why.
-- **Not yet started:** backlog only — see STATUS.md "Next".
+- **Not yet started:** backlog only — see ROADMAP.md "Next".
 
 ## Decision log
 

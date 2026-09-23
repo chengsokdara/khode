@@ -1,8 +1,8 @@
 # AGENTS.md — Instructions for AI Agents
 
 This file is for any AI agent (or human contributor) working in this repo.
-Read it before writing code. Read `RULES.md` for hard rules. Read `STATUS.md`
-and `MEMORY.md` to find out where the project stands.
+Read it before writing code. Read `RULES.md` for hard rules. Read `STATUS.md`,
+`ROADMAP.md`, and `MEMORY.md` to find out where the project stands.
 
 ## What khode is
 
@@ -122,5 +122,5 @@ and never put them in `config.json` — that file must stay shareable.
 
 1. `go build ./...`, `go vet ./...`, `gofmt -l .` are all clean.
 2. Behavior manually verified where tests can't cover it (TUI flows).
-3. Docs synced per `RULES.md` (STATUS.md + MEMORY.md).
+3. Docs synced per `RULES.md` (STATUS.md + ROADMAP.md + MEMORY.md).
 4. Work committed with a clear message.

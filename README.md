@@ -5,8 +5,9 @@ with Bubble Tea.
 
 ## Status
 
-Phase 7 (configurable in the TUI) complete — see [STATUS.md](STATUS.md)
-for the phase checklist and [AGENTS.md](AGENTS.md) for architecture and
+Phase 7 (configurable in the TUI) complete — see [ROADMAP.md](ROADMAP.md)
+for the phase checklist and backlog, [STATUS.md](STATUS.md) for the
+current state, and [AGENTS.md](AGENTS.md) for architecture and
 conventions.
 
 ## Build & run
