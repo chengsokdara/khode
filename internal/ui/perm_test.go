@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -115,6 +116,84 @@ func TestPermViewRendersDiff(t *testing.T) {
 	}
 }
 
+// The plan dialog renders the plan as markdown in a scrollable window:
+// the arrow/jk keys move it a line, pgup/pgdn a page, home/end jump to
+// the ends, and the scrollbar gutter shows only while the body
+// overflows.
+func TestPlanDialogScrolls(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	var plan strings.Builder
+	plan.WriteString("# plan\n")
+	for i := range 60 {
+		fmt.Fprintf(&plan, "- line %02d\n", i)
+	}
+	req := agent.Request{Kind: agent.KindPlan, Preview: plan.String()}
+	m.perm = &req
+	rows := permBodyRows(30)
+	if rows >= 60 {
+		t.Fatalf("dialog window %d rows would not overflow a 60-item plan", rows)
+	}
+
+	// Content assertions run on the ANSI-stripped view: glamour renders
+	// spaces as their own styled runs, splitting word pairs.
+	v := ansiStrip(m.View().Content)
+	if !strings.Contains(v, "line 00") || !strings.Contains(m.View().Content, "▐") {
+		t.Errorf("opening view missing the plan top or the scrollbar: %q", m.View().Content)
+	}
+
+	// down moves the window a line at a time; j is its alias.
+	for i := 0; i < 2; i++ {
+		next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = next.(Model)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = next.(Model)
+	if m.permScroll != 3 {
+		t.Errorf("permScroll after down,down,j = %d, want 3", m.permScroll)
+	}
+
+	// k scrolls back up a line.
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	m = next.(Model)
+	if m.permScroll != 2 {
+		t.Errorf("permScroll after k = %d, want 2", m.permScroll)
+	}
+
+	// pgdown pages by the window height.
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = next.(Model)
+	if m.permScroll != 2+rows {
+		t.Errorf("permScroll after pgdown = %d, want %d", m.permScroll, 2+rows)
+	}
+
+	// end jumps to the bottom of the rendered plan, home back to the top.
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = next.(Model)
+	if v := ansiStrip(m.View().Content); !strings.Contains(v, "line 59") {
+		t.Errorf("end did not reach the plan bottom: %s", v)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	m = next.(Model)
+	if m.permScroll != 0 {
+		t.Errorf("permScroll after home = %d, want 0", m.permScroll)
+	}
+	if v := ansiStrip(m.View().Content); !strings.Contains(v, "line 00") {
+		t.Errorf("home did not return to the plan top: %s", v)
+	}
+
+	// A short body draws no scrollbar and no scroll hints.
+	m.perm = &agent.Request{Kind: agent.KindPlan, Preview: "# tiny\njust one thing"}
+	m.permScroll = 0
+	v = m.View().Content
+	if strings.Contains(v, "▐") || strings.Contains(ansiStrip(v), "scroll") {
+		t.Errorf("short plan grew scrollbar furniture: %s", ansiStrip(v))
+	}
+}
+
 func TestModeCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := newTestModel(t)
@@ -178,8 +257,10 @@ func TestPlanApprovalSwitchesMode(t *testing.T) {
 	if m.perm == nil || m.perm.Kind != agent.KindPlan {
 		t.Fatalf("dialog kind = %v, want KindPlan", m.perm)
 	}
-	if v := m.View().Content; !strings.Contains(v, "plan") || !strings.Contains(v, "do things") {
-		t.Errorf("plan dialog view = %q", v)
+	// The plan renders as markdown, so word pairs are split by styled
+	// runs: assert on the stripped view.
+	if v := ansiStrip(m.View().Content); !strings.Contains(v, "plan") || !strings.Contains(v, "do things") {
+		t.Errorf("plan dialog view = %s", v)
 	}
 
 	next, _ = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})

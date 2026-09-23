@@ -8,11 +8,11 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 )
 
-// Markdown rendering for sealed assistant messages. The theme is
-// glamour's dark layout re-authored over the aurora palette: body text
-// is colText (matching the streaming view, so the seal doesn't shift
-// brightness), headings step green→cyan→mint, inline and fenced code
-// ride the chip background, and all outer margins are zero so the
+// Markdown rendering for assistant messages, live while streaming and
+// sealed alike (the cursor is the only streaming difference). The theme
+// is glamour's dark layout re-authored over the aurora palette: body
+// text is hexText, headings step green→cyan→mint, inline and fenced
+// code ride the chip background, and all outer margins are zero so the
 // answer bar sits flush against the text.
 
 func bptr(b bool) *bool     { return &b }
@@ -43,14 +43,18 @@ func auroraMarkdown() ansi.StyleConfig {
 			StyleBlock:  ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexText)}},
 			LevelIndent: 2,
 		},
-		Heading:       ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{BlockSuffix: "\n"}},
-		H1:            ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexGreenHi), Bold: bptr(true)}},
-		H2:            ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexCyanHi), Bold: bptr(true)}},
-		H3:            ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexMint), Bold: bptr(true)}},
-		H4:            ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Bold: bptr(true)}},
-		H5:            ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Bold: bptr(true)}},
-		H6:            ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexDim), Bold: bptr(true)}},
-		Text:          ansi.StylePrimitive{Color: sptr(hexText)},
+		Heading: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{BlockSuffix: "\n"}},
+		H1:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexGreenHi), Bold: bptr(true)}},
+		H2:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexCyanHi), Bold: bptr(true)}},
+		H3:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexMint), Bold: bptr(true)}},
+		H4:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Bold: bptr(true)}},
+		H5:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Bold: bptr(true)}},
+		H6:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: sptr(hexDim), Bold: bptr(true)}},
+		// Text carries no color on purpose: glamour renders plain text
+		// nodes as the current block ⊕ Text, so a Text color would
+		// override headings, block quotes, and list tints. Body text
+		// inherits hexText from the document style instead.
+		Text:          ansi.StylePrimitive{},
 		Strikethrough: ansi.StylePrimitive{CrossedOut: bptr(true)},
 		Emph:          ansi.StylePrimitive{Italic: bptr(true)},
 		Strong:        ansi.StylePrimitive{Bold: bptr(true)},

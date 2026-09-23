@@ -43,6 +43,46 @@ func TestRenderMarkdownAuroraTheme(t *testing.T) {
 	}
 }
 
+// Streaming text rides the same markdown pipeline as sealed prose, with
+// the cursor trailing the last line. Nothing may land in the render
+// cache while streaming: the seal must produce the sealed view, not
+// replay a cursor-trailed body (which would strand cursors mid-history
+// and skip the answer bar).
+func TestStreamingTextRendersMarkdownLive(t *testing.T) {
+	m := newTestModel(t)
+	m.messages = append(m.messages, uiMessage{
+		role: llm.RoleAssistant, kind: kindText, streaming: true,
+		raw: "# heading\nbody text",
+	})
+
+	live := m.block(0, 80)
+	if !strings.Contains(live, "▌") {
+		t.Errorf("live block lost the streaming cursor: %q", live)
+	}
+	// #86EFAC is the aurora H1 color: the heading must be styled.
+	if !strings.Contains(live, "38;2;134;239;172") {
+		t.Errorf("live block did not render markdown: %q", live)
+	}
+	if m.messages[0].rendered != "" {
+		t.Error("streaming render leaked into the render cache")
+	}
+
+	// Growing the raw must change the render — nothing cached.
+	m.messages[0].raw = "# heading\nbody text\n\nsecond para"
+	if got := m.block(0, 80); !strings.Contains(ansiStrip(got), "second para") {
+		t.Errorf("growing raw did not change the live render: %q", got)
+	}
+
+	m.messages[0].streaming = false
+	sealed := m.block(0, 80)
+	if strings.Contains(sealed, "▌") {
+		t.Errorf("sealed block kept the streaming cursor: %q", sealed)
+	}
+	if m.messages[0].rendered == "" {
+		t.Error("sealed render was not cached")
+	}
+}
+
 // The turn's final answer renders under the bright cyan bar; mid-turn
 // text stays under the dim one.
 func TestFinalAnswerRendersUnderBrightBar(t *testing.T) {

@@ -39,7 +39,6 @@ var (
 	colGreen   = lipgloss.Color(hexGreen)
 	colGreenHi = lipgloss.Color(hexGreenHi)
 	colMint    = lipgloss.Color(hexMint)
-	colText    = lipgloss.Color(hexText)
 	colResult  = lipgloss.Color(hexResult)
 	colDim     = lipgloss.Color(hexDim)
 	colBorder  = lipgloss.Color(hexBorder)
@@ -61,11 +60,9 @@ var (
 	toolStyle   = lipgloss.NewStyle().Bold(true).Foreground(colCyan)
 	thinkStyle  = lipgloss.NewStyle().Foreground(colDim).Italic(true)
 
-	// bodyStyle tints assistant prose; bright enough that a streaming
-	// reply never reads as secondary. resultStyle carries tool output:
-	// real content, one step quieter than prose, clearly apart from the
-	// dim italic thinking/system notes.
-	bodyStyle   = lipgloss.NewStyle().Foreground(colText)
+	// resultStyle carries tool output: real content, one step quieter
+	// than prose, clearly apart from the dim italic thinking/system
+	// notes.
 	resultStyle = lipgloss.NewStyle().Foreground(colResult)
 	addStyle    = lipgloss.NewStyle().Foreground(colGreen)
 	delStyle    = lipgloss.NewStyle().Foreground(colErr)
@@ -87,6 +84,11 @@ var (
 	answerBarOverhead = 2
 	answerBar         = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(colBorder).PaddingLeft(1)
 	answerBarFinal    = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(colCyan).PaddingLeft(1)
+
+	// scrollThumb/scrollTrack draw the approval dialog's scrollbar
+	// gutter: a bright thumb over a quiet track.
+	scrollThumb = lipgloss.NewStyle().Foreground(colCyan)
+	scrollTrack = lipgloss.NewStyle().Foreground(colBorder)
 
 	// helpKey dims the bottom-line key names without hiding them.
 	helpKey = lipgloss.NewStyle().Foreground(colCyan).Faint(true)

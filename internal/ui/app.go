@@ -84,6 +84,11 @@ type Model struct {
 	// incoming stream event snaps back to it.
 	scroll int
 
+	// permScroll is the open approval dialog's body scroll offset
+	// (plans and previews render in a windowed, scrollable view); 0 is
+	// the top. It resets whenever a new question opens the dialog.
+	permScroll int
+
 	picker     *picker     // session chooser overlay; nil when closed
 	modelPick  *modelPick  // /model chooser overlay; nil when closed
 	settings   *settings   // configuration overlay; nil when closed
@@ -381,6 +386,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.perm = &msg.req
+		m.permScroll = 0
 		return m, nil // dialog open; the pump resumes when it is answered
 
 	case mcpApplyMsg:
@@ -1153,9 +1159,11 @@ func (m *Model) block(i int, width int) string {
 		out = userMark.Render("❯ ") + lipgloss.NewStyle().Width(width).Render(msg.raw)
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
-			// Live text stays raw but bright — markdown is applied
-			// once the block seals, keeping per-delta rendering cheap.
-			out = bodyStyle.Width(width).Render(msg.raw) + streamCursor.Render("▌")
+			// Live text rides the same markdown pipeline, re-run per
+			// delta; the cursor trails the last line until the block
+			// seals into the plain answer-bar view.
+			out = answerBar.Width(width).Render(renderMarkdown(msg.raw, width-answerBarOverhead)) +
+				streamCursor.Render("▌")
 		} else {
 			// Sealed prose rides the answer bar: bright cyan on the
 			// turn's final message, dim teal on mid-turn text.
@@ -1169,8 +1177,14 @@ func (m *Model) block(i int, width int) string {
 		out = systemStyle.Width(width).Render("· " + msg.raw)
 	}
 
-	msg.rendered = out
-	m.messages[i] = msg
+	// Streaming blocks re-render every frame as their raw grows, so
+	// they never populate the cache: sealing (streaming → false) must
+	// fall through to the sealed path instead of replaying a
+	// cursor-trailed body.
+	if !msg.streaming {
+		msg.rendered = out
+		m.messages[i] = msg
+	}
 	return out
 }
 

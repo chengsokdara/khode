@@ -10,6 +10,32 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Scrollable markdown dialogs + live streaming markdown (2026-09-23):**
+both approval dialogs are now scrollable readers instead of 20-line
+truncated previews. The plan dialog renders the plan through the same
+aurora glamour pipeline as chat prose (`dialogLines` caches the render
+per (text, width), so glamour runs once per plan, not per frame), and
+the tool dialog shows the full diff (lines clip to the body width so
+nothing overflows the box). An overflowing body gets a scrollbar gutter
+down its right edge — dim `│` track, cyan `▐` thumb sized ∝ rows/total —
+and rows are padded to the body width first so the gutter column stays
+aligned across ANSI lines (`perm.go`: `permBodyWidth`/`permBodyRows`,
+`dialogWindow`). `permKey` gained scroll keys: ↑/↓ and j/k move a line,
+pgup/pgdn a page (the window height), home/end and g/G jump to the ends;
+y/n/enter/esc/shift+tab still answer, and the footer gains
+`↑↓/pgup/pgdn scroll · home/end jump` hints only while the body
+overflows. The offset lives on `Model.permScroll` and resets whenever a
+new question opens the dialog. Streaming assistant text now renders
+markdown live (same pipeline as sealed prose, cursor still trailing) —
+the raw-plain streaming view is gone. Two latent bugs fell out of that:
+`block()` used to cache the streaming render (raw text + cursor), so
+mid-turn blocks sealed by a tool call replayed the cursor-trailed body
+forever instead of their markdown answer-bar view — streaming renders no
+longer populate the cache; and the aurora theme's `Text` color was
+overriding heading/blockquote colors (glamour renders plain text as
+current-block ⊕ Text, so Text always won) — `Text` now carries no color
+and headings actually step green→cyan→mint as the theme always intended.
+
 **Distinct agent-output UI (2026-09-23):** every assistant message now
 renders under a left answer bar — dim teal while the turn is still
 running, **bright cyan on the turn's final answer** — and sealed prose
@@ -17,10 +43,9 @@ goes through a dedicated aurora glamour theme
 (`internal/ui/markdown.go`) instead of `WithAutoStyle()`, which
 silently degraded to the colorless NoTTY style on terminals where
 background detection fails and made the final answer read as gray
-wallpaper. Streaming text is bright near-white (`colText`, the same
-color the sealed body uses, so the seal doesn't shift brightness) with
-the existing cyan cursor; markdown is applied only at seal, keeping
-per-delta rendering cheap. The glamour renderer is cached per wrap
+wallpaper. Streaming text starts bright and renders the same markdown
+live (see the scrollable-dialogs entry above); the seal swaps nothing
+but the bar brightness. The glamour renderer is cached per wrap
 width instead of rebuilt per message. Tool results got their own
 mid-tone (`colResult`) — real content, one step quieter than prose,
 clearly apart from the dim-italic thinking/system notes. Per-turn
@@ -446,3 +471,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | khode pointed at the deployed khateway via `base_urls` (user config, no repo change); anonymous auth + the khateway↔khode streaming seam verified end-to-end through khode's llm stack; the deployed gateway's one registered model currently 504s on a stalled upstream | (this commit) |
 | 2026-09-23 | Live mode switching: `Runner.Mode` is a func re-read per tool call (mid-turn shift+tab/`/mode` applies at once, subagents included); the approval dialog cycles modes on shift+tab and auto-approves when the new mode allows the pending call; exec asks under accept-edits and plan dialogs stay manual | (this commit) |
 | 2026-09-23 | Distinct agent-output UI: answer bars (bright cyan on the turn's final answer, dim teal mid-turn), aurora glamour theme with a cached renderer replacing `WithAutoStyle`'s colorless fallback, bright streaming text, mid-tone tool results, per-turn final marking live + on replay; two raw-substring assertions moved to `ansiStrip` | (this commit) |
+| 2026-09-23 | Scrollable markdown dialogs + live streaming markdown: plan dialog renders aurora markdown in a scroll window (cached per text+width), tool dialog shows the whole diff; ↑↓/jk line, pgup/pgdn page, home/end jumps, cyan `▐` scrollbar gutter when the body overflows; streaming assistant text renders markdown live (streaming renders no longer populate the block cache — fixes stuck cursors on mid-turn seals); aurora `Text` style drops its color so headings/blockquotes keep their tints (glamour renders text as block⊕Text, Text always won) | (this commit) |
