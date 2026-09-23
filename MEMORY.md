@@ -190,7 +190,13 @@ If you are starting a session, or recovering after an interrupt:
   turn-level context deadline can beat it and report only "context
   deadline exceeded", hiding the 504). When khode turns hang for minutes
   against khateway, check the gateway's registered models against a live
-  upstream first, not khode.
+  upstream first, not khode. Refinements from the 2026-09-23 diagnosis:
+  kiosapi.com's free routes flap on a minutes scale (deepseek-v4.1-flash-free
+  went all-hang → all-2s within half an hour), so re-probe before concluding
+  anything is broken; the user's "working curl" bypassed khateway (direct to
+  kiosapi.com with their own key), and khateway's per-provider `timeout_ms`
+  (default 60s, cap 120s, providers table / dashboard) is the knob for slow
+  routes.
 
 - **anthropic-sdk-go ≥ v1.73**: no `anthropic.F()` wrappers, no
   `NewUserTextMessage`. Use `MessageNewParams{...}` plain fields,
