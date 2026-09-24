@@ -99,6 +99,42 @@ export interface Overview {
   };
 }
 
+/** One aggregate window of the usage dashboard. */
+export interface UsageTotals {
+  requests: number;
+  errors_4xx: number;
+  errors_5xx: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  cache_hits: number;
+  avg_latency_ms: number | null;
+}
+
+/** One zero-filled bucket of the usage series (UTC wall-clock start). */
+export interface UsageSeriesPoint {
+  bucket: string;
+  requests: number;
+  errors: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+export interface Usage {
+  /** 'hour' for days=1, 'day' otherwise. */
+  bucket: 'hour' | 'day';
+  since: number;
+  until: number;
+  totals: UsageTotals;
+  /** The immediately preceding window of equal length (delta comparisons). */
+  prev_totals: UsageTotals;
+  series: UsageSeriesPoint[];
+  by_model: { model_slug: string; requests: number; tokens_in: number; tokens_out: number; cost_usd: number }[];
+  by_key: { key_id: string | null; key_name: string | null; requests: number; cost_usd: number }[];
+  by_dialect: { dialect: string; requests: number; cost_usd: number }[];
+}
+
 export interface ApiKey {
   id: string;
   name: string;
@@ -266,6 +302,7 @@ export const api = {
   logout: () => req<{ ok: boolean }>('/api/admin/logout', { method: 'POST' }),
 
   overview: () => req<Overview>('/api/admin/overview'),
+  usage: (days: number) => req<Usage>(`/api/admin/usage?days=${days}`),
   providers: () => req<Provider[]>('/api/admin/providers'),
   createProvider: (p: Record<string, unknown>) => req<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(p) }),
   updateProvider: (id: string, p: Record<string, unknown>) => req<Provider>(`/api/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),

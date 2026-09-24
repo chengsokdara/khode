@@ -213,7 +213,9 @@ src/worker/
 │                      (+ M13 buildGeminiEmbeddingsRequest → :embedContent/:batchEmbedContents)
 └── routes/
     ├── admin.ts    — login/logout (logout deletes the session's playground key), overview (+24h
-    │                 usage), providers CRUD + test, models CRUD,
+    │                 usage), usage analytics (GET /usage — bucket-aligned UTC time series,
+    │                 window + prev-window totals, top models/keys/dialect breakdowns),
+    │                 providers CRUD + test, models CRUD,
     │                 api-keys CRUD (M7: raw key returned once; M8/M9 DTOs add user_id/user_email
     │                 + org_id/org_name; M14: list excludes playground keys),
     │                 playground key mint (M14: POST /playground/key — rotate + mint a
@@ -300,8 +302,13 @@ src/web/
 ├── api.ts          — typed admin client (/api/admin/*) + DTO types + ApiError (401 → redirect)
 ├── portal-api.ts   — typed /api/portal client + PortalError (401 → /app/login redirect event)
 ├── components/ui.tsx — Button/Input/Select/Switch/Badge/Card/Modal/Toast/fmt helpers
+├── components/charts.tsx — hand-rolled SVG chart primitives (StackedBarChart with
+│                      auto axes/thinned ticks/native-title tooltips, HBars, Delta) —
+│                      no chart library, deliberate
 └── pages/          — Landing.tsx (public landing at /), Login.tsx, Overview.tsx, Providers.tsx
                       (CRUD/presets/test only — no discovery UI),
+                      Usage.tsx (admin usage dashboard — range selector 24h/7d/30d, delta stat
+                      cards, requests/errors + spend + tokens charts, top models/keys/dialects).
                       Models.tsx (list + "Add models" modal: Fetch-from-provider tab — fetch,
                       filterable picker, enriched import — and Custom-model tab; shared edit modal),
                       Playground.tsx (M14: chat tester — model picker, streaming SSE
@@ -734,6 +741,20 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   reservation once the log row (streams: the final usage) is in. Estimates use
   USD-per-1M pricing like `costUsd`. Fail-open when the DO is down (soft cap as
   before); leaked reservations expire via the DO's 5-minute TTL sweep.
+- **Usage dashboard (admin)**: `GET /api/admin/usage?days=N` (clamped 1–90,
+  default 7) aggregates request_logs entirely in D1 — no new tables. Window is
+  bucket-aligned with the CURRENT partial bucket LAST: `days=1` → 24 hourly
+  buckets, otherwise `days` daily buckets (both spanning ~days×24h);
+  buckets are UTC (`strftime` over `created_at/1000, unixepoch` — the
+  codebase's first SQL time-bucketing) and zero-filled server-side so charts
+  get a continuous axis. Returns window + prev-window totals (errors split
+  4xx/5xx, cache hits, avg latency), the series, and top-10 models (by
+  requests) / keys (by spend, leftJoin api_keys) / dialect breakdowns. UI:
+  `/admin/usage` (Usage.tsx) — range selector, delta stat cards vs the
+  previous window, stacked bar charts from `components/charts.tsx`
+  (hand-rolled SVG, no chart lib), top-models table + HBars breakdowns;
+  polls every 60 s. Smoke-pinned in `scripts/smoke.mjs` (bucket counts,
+  zero-fill, clamp, 401, by_model membership).
 
 ## Build & run
 

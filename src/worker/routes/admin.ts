@@ -410,6 +410,156 @@ adminApp.get('/overview', async (c) => {
   });
 });
 
+// ------------------------------------------------------------------ usage
+
+// Usage-dashboard analytics (admin): time-bucketed aggregation over
+// request_logs. Everything is computed in D1 (created_at is indexed); buckets
+// are UTC via strftime(unixepoch) and zero-filled here so charts get a
+// continuous axis. The window is bucket-aligned: the current (partial) bucket
+// is the last one, so `days` yields exactly days*24 buckets.
+
+const usageAggregates = {
+  requests: count(),
+  errors4xx: sql<number>`coalesce(sum(case when ${requestLogs.status} >= 400 and ${requestLogs.status} < 500 then 1 else 0 end), 0)`,
+  errors5xx: sql<number>`coalesce(sum(case when ${requestLogs.status} >= 500 then 1 else 0 end), 0)`,
+  tokensIn: sum(requestLogs.tokensIn),
+  tokensOut: sum(requestLogs.tokensOut),
+  costUsd: sum(requestLogs.costUsd),
+  cacheHits: sql<number>`coalesce(sum(case when ${requestLogs.cacheHit} then 1 else 0 end), 0)`,
+  avgLatencyMs: sql<number | null>`avg(${requestLogs.latencyMs})`,
+};
+
+const usageNum = (v: unknown): number => (v == null ? 0 : Number(v));
+
+function usageTotalsDto(r?: {
+  requests?: number;
+  errors4xx?: unknown;
+  errors5xx?: unknown;
+  tokensIn?: unknown;
+  tokensOut?: unknown;
+  costUsd?: unknown;
+  cacheHits?: unknown;
+  avgLatencyMs?: unknown;
+}) {
+  return {
+    requests: r?.requests ?? 0,
+    errors_4xx: usageNum(r?.errors4xx),
+    errors_5xx: usageNum(r?.errors5xx),
+    tokens_in: usageNum(r?.tokensIn),
+    tokens_out: usageNum(r?.tokensOut),
+    cost_usd: usageNum(r?.costUsd),
+    cache_hits: usageNum(r?.cacheHits),
+    avg_latency_ms: r?.avgLatencyMs == null ? null : Math.round(Number(r.avgLatencyMs)),
+  };
+}
+
+adminApp.get('/usage', async (c) => {
+  const raw = Number(c.req.query('days') ?? 7);
+  const days = Number.isFinite(raw) ? Math.min(Math.max(Math.floor(raw), 1), 90) : 7;
+  const kind: 'hour' | 'day' = days === 1 ? 'hour' : 'day';
+  const stepMs = kind === 'hour' ? 3_600_000 : 86_400_000;
+  const db = getDb(c.env);
+
+  const until = Date.now();
+  // The current (partial) bucket is the LAST of the window: hourly buckets
+  // yield days*24 of them, daily ones `days` — both spanning ~days*24h.
+  const buckets = kind === 'hour' ? days * 24 : days;
+  const since = Math.floor(until / stepMs) * stepMs - (buckets - 1) * stepMs;
+  const prevSince = since - buckets * stepMs;
+  const inWindow = and(gte(requestLogs.createdAt, since), lt(requestLogs.createdAt, until));
+  const fmt = kind === 'hour' ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%dT00:00:00';
+  const bucketExpr = sql<string>`strftime(${fmt}, ${requestLogs.createdAt}/1000, 'unixepoch')`;
+
+  const [totalsRow, prevRow, seriesRows, modelRows, keyRows, dialectRows] = await Promise.all([
+    db.select(usageAggregates).from(requestLogs).where(inWindow),
+    db
+      .select(usageAggregates)
+      .from(requestLogs)
+      .where(and(gte(requestLogs.createdAt, prevSince), lt(requestLogs.createdAt, since))),
+    db
+      .select({ bucket: bucketExpr, ...usageAggregates })
+      .from(requestLogs)
+      .where(inWindow)
+      .groupBy(bucketExpr),
+    db
+      .select({
+        modelSlug: requestLogs.modelSlug,
+        requests: count(),
+        tokensIn: sum(requestLogs.tokensIn),
+        tokensOut: sum(requestLogs.tokensOut),
+        costUsd: sum(requestLogs.costUsd),
+      })
+      .from(requestLogs)
+      .where(inWindow)
+      .groupBy(requestLogs.modelSlug)
+      .orderBy(desc(count()))
+      .limit(10),
+    db
+      .select({
+        keyId: requestLogs.apiKeyId,
+        keyName: apiKeys.name,
+        requests: count(),
+        costUsd: sum(requestLogs.costUsd),
+      })
+      .from(requestLogs)
+      .leftJoin(apiKeys, eq(requestLogs.apiKeyId, apiKeys.id))
+      .where(inWindow)
+      .groupBy(requestLogs.apiKeyId, apiKeys.name)
+      .orderBy(desc(sum(requestLogs.costUsd)))
+      .limit(10),
+    db
+      .select({ dialect: requestLogs.dialect, requests: count(), costUsd: sum(requestLogs.costUsd) })
+      .from(requestLogs)
+      .where(inWindow)
+      .groupBy(requestLogs.dialect)
+      .orderBy(desc(count())),
+  ]);
+
+  const seriesByKey = new Map<string, (typeof seriesRows)[number]>();
+  for (const r of seriesRows) seriesByKey.set(String(r.bucket), r);
+  const series = [];
+  for (let t = since; t < until; t += stepMs) {
+    const key = new Date(t).toISOString().slice(0, 19);
+    const row = seriesByKey.get(key);
+    const errors = usageNum(row?.errors4xx) + usageNum(row?.errors5xx);
+    series.push({
+      bucket: key,
+      requests: row?.requests ?? 0,
+      errors,
+      tokens_in: usageNum(row?.tokensIn),
+      tokens_out: usageNum(row?.tokensOut),
+      cost_usd: usageNum(row?.costUsd),
+    });
+  }
+
+  return c.json({
+    bucket: kind,
+    since,
+    until,
+    totals: usageTotalsDto(totalsRow[0]),
+    prev_totals: usageTotalsDto(prevRow[0]),
+    series,
+    by_model: modelRows.map((r) => ({
+      model_slug: r.modelSlug,
+      requests: r.requests,
+      tokens_in: usageNum(r.tokensIn),
+      tokens_out: usageNum(r.tokensOut),
+      cost_usd: usageNum(r.costUsd),
+    })),
+    by_key: keyRows.map((r) => ({
+      key_id: r.keyId,
+      key_name: r.keyName,
+      requests: r.requests,
+      cost_usd: usageNum(r.costUsd),
+    })),
+    by_dialect: dialectRows.map((r) => ({
+      dialect: r.dialect,
+      requests: r.requests,
+      cost_usd: usageNum(r.costUsd),
+    })),
+  });
+});
+
 // ------------------------------------------------------------------ settings
 // Deployment-level gateway flags. Keyless-native default: client-key
 // enforcement is OFF — the gateway serves anonymous /v1 traffic until an

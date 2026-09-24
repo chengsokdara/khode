@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-24 (P-pack 1–4 shipped + deployed; social sign-in live)
+Last updated: 2026-09-24 (admin usage dashboard shipped; P-pack + social sign-in live)
 
 ## How to use this file
 
@@ -10,6 +10,40 @@ where the milestone plan lives, "Recent changes" for history (newest first).
 If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
+
+- **Admin usage dashboard ✅ complete (2026-09-24)** — user: "There should be a
+  proper usage dashboard in the admin; it should have graph, chart, bars, etc."
+  Approved plan: new `/admin/usage` page, hand-rolled SVG charts (no new deps),
+  one new endpoint. Shipped:
+  - **`GET /api/admin/usage?days=N`** (`routes/admin.ts`, after overview):
+    everything aggregates in D1 over the existing `request_logs` (no schema
+    change) — window + prev-window totals (requests, errors_4xx/5xx, tokens,
+    cost, cache hits, avg latency), a zero-filled UTC time series, and top-10
+    by-model / by-key (leftJoin api_keys) / by-dialect breakdowns.
+    `days` clamps 1–90 (default 7); `days=1` → hourly buckets, else daily;
+    the window is bucket-aligned with the CURRENT partial bucket last (exact
+    days×24 / days buckets). First SQL time-bucketing in the codebase:
+    `strftime` over `created_at/1000, unixepoch`; the codebase's first
+    `groupBy(sql)` + `orderBy(desc(count()))` aggregates too.
+  - **`components/charts.tsx`** (new): `StackedBarChart` (inline SVG,
+    ResizeObserver width, nice-number y axis, auto-thinned x ticks, native
+    `<title>` per-column tooltips), `HBars`, `Delta` (period-over-period
+    badge, `inverse` for cost/errors/latency). Zero dependencies.
+  - **`pages/Usage.tsx`** (new, nav "Usage" right after Overview, BarChart3
+    icon, `/usage` legacy redirect): range selector (24h/7d/30d) + Refresh,
+    6 delta stat cards, "Requests & errors" / "Spend (USD)" / "Tokens"
+    charts, top-models table with mini bars, by-endpoint + top-keys HBars;
+    60 s polling; empty state points at the Playground. Bucket labels UTC →
+    rendered local.
+  - Verified: `npm run check` clean; `npm test` 350/350;
+    `scripts/smoke.mjs` +6 usage checks (unauth 401, clamp, exactly 24
+    hourly / 7 daily buckets, zero-fill, totals ≥ seeded traffic, by_model
+    membership) — ALL PASS; `smoke:gateway` 220/220 re-run after;
+    browser-verified 7d + 24h views with seeded mock-upstream traffic
+    (IAB full-page captures tile fixed sidebars — known capture artifact,
+    not a page bug; clean 1440×2160 viewport capture used instead) + the
+    empty state after clearing logs; traffic re-seeded afterwards.
+  NOT deployed (local only) — ships with the next `npm run deploy`.
 
 - **P-pack: cache_control passthrough + DO login buckets + fallback backoff +
   spend-cap reservations ✅ complete (sessions 30, 2026-09-24)** — user picked
@@ -885,6 +919,15 @@ UI ✅ complete**; the stated post-MVP order is exhausted — next work comes
 from the unscheduled polish queue or user direction.
 
 ## Recent changes
+
+- 2026-09-24 — **Admin usage dashboard**. `GET /api/admin/usage` (bucketed
+  series + totals + breakdowns over request_logs, all in D1), new
+  `components/charts.tsx` (hand-rolled SVG stacked bars / HBars / Delta — no
+  chart dep), new `/admin/usage` page (stat cards with prev-window deltas,
+  requests&errors / spend / tokens charts, top models/keys/dialects),
+  App.tsx NAV + legacy `/usage` redirect, smoke.mjs +6 usage checks. check
+  clean, 350 offline tests, smoke green (incl. gateway 220 re-run).
+  Browser-verified both ranges + empty state. Not yet deployed.
 
 - 2026-09-24 — **P-pack shipped (4 commits) + DEPLOYED live**. cache_control
   passthrough, DO-backed login buckets, one-retry fallback backoff with

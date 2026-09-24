@@ -1,9 +1,21 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-24 (P-pack — cache_control/DO-login/backoff/reservations — shipped + deployed)
+Last updated: 2026-09-24 (admin usage dashboard — /admin/usage + /api/admin/usage — shipped, local only)
 
 ## Cross-session facts
 
+- **Usage dashboard (2026-09-24)** — the admin usage dashboard lives at
+  `/admin/usage` backed by `GET /api/admin/usage?days=N` (clamp 1–90, default
+  7; days=1 hourly, else daily buckets; bucket-aligned window, current partial
+  bucket last — exactly days×24 / days buckets, zero-filled). ALL aggregation
+  is D1 over `request_logs` — no new tables, no chart dependency (hand-rolled
+  SVG in `components/charts.tsx`, the repo's deliberate no-chart-lib rule was
+  confirmed with the user). `strftime(created_at/1000, 'unixepoch')` is the
+  codebase's first SQL time-bucketing; buckets are UTC, labels render local
+  client-side. Deltas compare the immediately preceding window of equal
+  length. Charts assume zero-filled continuous series — keep that contract if
+  the endpoint grows filters. NOT deployed as of this note (ships with next
+  `npm run deploy`).
 - **P-pack (2026-09-24, sessions 30)** — four queued polish items shipped in
   one sequence (commits 69c0d83 / 1032263 / 8c9aea7 / 95dd4cd): anthropic
   cache_control passthrough (block markers fold to MESSAGE level canonically —

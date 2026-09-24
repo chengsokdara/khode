@@ -123,6 +123,49 @@ const j = async (path, opts = {}) => {
     console.log('logs after request:', JSON.stringify((await j('/api/admin/logs?limit=5')).body?.map((l) => ({ model: l.model_slug, status: l.status, key: l.key_name }))));
   }
 
+  // --- usage dashboard endpoint (aggregates over request_logs) ---------------
+  {
+    const unauth = await fetch(base + '/api/admin/usage');
+    console.log('unauth /api/admin/usage (expect 401):', unauth.status);
+
+    if (keyRaw) {
+      const clamped = await j('/api/admin/usage?days=99999');
+      console.log('usage days clamp (expect bucket=day):', clamped.body?.bucket);
+
+      const u1 = await j('/api/admin/usage?days=1');
+      const u7 = await j('/api/admin/usage?days=7');
+      const ok =
+        u1.status === 200 &&
+        u1.body?.bucket === 'hour' &&
+        u1.body?.series?.length === 24 &&
+        u7.body?.bucket === 'day' &&
+        u7.body?.series?.length === 7 &&
+        typeof u7.body?.totals?.requests === 'number' &&
+        u7.body.totals.requests >= 1 &&
+        u7.body?.prev_totals != null &&
+        Array.isArray(u7.body?.by_model) &&
+        u7.body.by_model.some((m) => m.model_slug === 'zzz-no-such-model') &&
+        Array.isArray(u7.body?.by_key) &&
+        Array.isArray(u7.body?.by_dialect);
+      console.log(
+        'usage dashboard (expect ok):',
+        ok,
+        JSON.stringify({
+          bucket1: u1.body?.bucket,
+          series1: u1.body?.series?.length,
+          bucket7: u7.body?.bucket,
+          series7: u7.body?.series?.length,
+          requests: u7.body?.totals?.requests,
+          errors: (u7.body?.totals?.errors_4xx ?? 0) + (u7.body?.totals?.errors_5xx ?? 0),
+          models: u7.body?.by_model?.length,
+          keys: u7.body?.by_key?.length,
+          dialects: u7.body?.by_dialect?.length,
+        }),
+      );
+      if (!ok) throw new Error('usage dashboard checks failed');
+    }
+  }
+
   console.log('clear logs:', (await j('/api/admin/logs', { method: 'DELETE' })).status);
   console.log('delete api key:', (await j(`/api/admin/api-keys/${keyCreate.body.id}`, { method: 'DELETE' })).status);
 

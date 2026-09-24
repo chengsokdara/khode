@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, Boxes, Building, KeyRound, LogOut, MessageSquare, ScrollText, Server, Settings as SettingsIcon, Users as UsersIcon, type LucideIcon } from 'lucide-react';
+import { Activity, BarChart3, Boxes, Building, KeyRound, LogOut, MessageSquare, ScrollText, Server, Settings as SettingsIcon, Users as UsersIcon, type LucideIcon } from 'lucide-react';
 import { api } from './api';
 import { portalApi } from './portal-api';
 import { navigate, replace, useRoute, Link } from './router';
@@ -8,6 +8,7 @@ import { cn, Logo, Spinner } from './components/ui';
 import { Landing } from './pages/Landing';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
+import { Usage } from './pages/Usage';
 import { Providers } from './pages/Providers';
 import { Models } from './pages/Models';
 import { Playground } from './pages/Playground';
@@ -25,6 +26,7 @@ import { PortalDevice } from './pages/portal/PortalDevice';
 
 const NAV: { to: string; label: string; icon: LucideIcon; soon?: string }[] = [
   { to: '/admin', label: 'Overview', icon: Activity },
+  { to: '/admin/usage', label: 'Usage', icon: BarChart3 },
   { to: '/admin/providers', label: 'Providers', icon: Server },
   { to: '/admin/models', label: 'Models', icon: Boxes },
   { to: '/admin/playground', label: 'Playground', icon: MessageSquare },
@@ -39,6 +41,7 @@ const NAV: { to: string; label: string; icon: LucideIcon; soon?: string }[] = [
 const LEGACY_ROUTES: Record<string, string> = {
   '/login': '/admin/login',
   '/overview': '/admin',
+  '/usage': '/admin/usage',
   '/providers': '/admin/providers',
   '/models': '/admin/models',
   '/playground': '/admin/playground',
@@ -189,6 +192,7 @@ export default function App() {
 
   let page: ReactNode;
   if (path === '/admin') page = <Overview />;
+  else if (path === '/admin/usage') page = <Usage />;
   else if (path === '/admin/providers') page = <Providers />;
   else if (path === '/admin/models') page = <Models />;
   else if (path === '/admin/playground') page = <Playground />;
