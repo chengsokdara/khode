@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,10 +17,18 @@ import (
 type fakeServer struct {
 	in       *io.PipeReader
 	out      *io.PipeWriter
-	requests []string // method names, in order
+	requests []string // method names, in order; guarded by mu (serve writes from its own goroutine)
+	mu       sync.Mutex
 
 	t       *testing.T
 	handler func(t *testing.T, method string, params json.RawMessage) (any, *rpcError)
+}
+
+// recorded snapshots the request methods seen so far.
+func (s *fakeServer) recorded() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.requests...)
 }
 
 func startFake(t *testing.T, handler func(t *testing.T, method string, params json.RawMessage) (any, *rpcError)) (*Client, *fakeServer) {
@@ -65,7 +74,9 @@ func (s *fakeServer) serve() {
 		if msg.Method == "" {
 			continue // a response to a server-initiated request; none sent
 		}
+		s.mu.Lock()
 		s.requests = append(s.requests, msg.Method)
+		s.mu.Unlock()
 		if msg.ID == nil {
 			continue // notification
 		}
@@ -118,9 +129,18 @@ func TestHandshakeSendsInitialize(t *testing.T) {
 	if sawProtocol != protocolVersion {
 		t.Fatalf("client offered protocol %q, want %q", sawProtocol, protocolVersion)
 	}
-	// The connection is usable after the handshake.
-	if len(s.requests) != 1 || s.requests[0] != "initialize" {
-		t.Fatalf("requests = %v, want exactly one initialize", s.requests)
+	// The connection is usable after the handshake: exactly one
+	// initialize request. The post-handshake initialized notification may
+	// or may not be recorded yet — serve runs concurrently with
+	// handshake returning — so anything beyond it must be that alone.
+	reqs := s.recorded()
+	if len(reqs) < 1 || reqs[0] != "initialize" {
+		t.Fatalf("requests = %v, want initialize first", reqs)
+	}
+	for _, r := range reqs[1:] {
+		if r != "notifications/initialized" {
+			t.Fatalf("requests = %v, want only initialize (+ its notification)", reqs)
+		}
 	}
 }
 
