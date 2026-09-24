@@ -238,6 +238,8 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-24 | Click targets = render-time region registry (`ui/click.go`), not per-handler geometry recomputation | WYSIWYG — regions always describe the frame on screen (the scrollbar's `sb*` precedent generalized); one surface renders per frame, so no precedence checks beyond the kind |
 | 2026-09-24 | List rows select-then-activate (first click moves ❯, clicking the selected row = enter; double-click opens) | user choice — safe against accidental activation, standard TUI convention; checkboxes (/tools) and transient menus stay single-click |
 | 2026-09-24 | Footer chips + row activation synthesize `tea.KeyPressMsg`s routed through the factored-out `handleKey` | a button and its key can never drift apart — zero duplicated action logic across nine overlays |
+| 2026-09-24 | Turn hang bounds: SDK retries off (`WithMaxRetries(0)`), 45s wall-clock retry budget, 90s stream stall guard, `insufficient_quota` never retried | three retry layers stacked on khateway's 60s upstream timeouts pinned turns in "working" for ~10 minutes, and a mid-stream stall had no bound at all; errors must surface fast with their cause intact |
+| 2026-09-24 | Retries announced via `llm.RetryEvent` → status-line note, not chat blocks | the spinner alone made budget waits indistinguishable from a hang; status keeps the transcript clean (notices are display-only) |
 
 ## Gotchas & lessons learned
 
@@ -253,18 +255,27 @@ If you are starting a session, or recovering after an interrupt:
   never scrolls (`ScrollYOffset` stays 0) — pump a no-op `KeyPressMsg`
   (e.g. F1) first; and `CursorUp/Down` move VISUAL rows (soft-wrap),
   not logical lines — walk with `for ta.Line() > i { ta.CursorUp() }`.
-- **khateway 504 + khode retry stack-up**: a stalled upstream reaches the
-  client as the gateway's own `upstream_timeout` 504 after khateway's 60s
-  cap; khode's transient-retry policy treats 504 as retryable, so one turn
-  against a dead model can block ~2 minutes before the error surfaces (a
-  turn-level context deadline can beat it and report only "context
-  deadline exceeded", hiding the 504). When khode turns hang for minutes
-  against khateway, check the gateway's registered models against a live
-  upstream first, not khode. Refinements from the 2026-09-23 diagnosis:
-  kiosapi.com's free routes flap on a minutes scale (deepseek-v4.1-flash-free
-  went all-hang → all-2s within half an hour), so re-probe before concluding
-  anything is broken; the user's "working curl" bypassed khateway (direct to
-  kiosapi.com with their own key), and khateway's per-provider `timeout_ms`
+- **khateway 504 + khode retry stack-up (FIXED 2026-09-24)**: a stalled
+  upstream reaches the client as the gateway's own `upstream_timeout` 504
+  after khateway's 60s cap; it used to stack into minutes of silent
+  "working" because ALL THREE retry layers fired at once — the SDKs'
+  built-in retry (default MaxRetries 2, retries any 5xx), khode's 4-retry
+  ladder treating 504 as transient, and (for mid-stream stalls) nothing
+  at all, so Next() blocked forever. Now `WithMaxRetries(0)` disables the
+  SDK layer, a 45s wall-clock retry budget (`DefaultRetryBudget`) stops
+  the ladder the moment attempts are expensive (a 60s 504 exhausts it on
+  the first try — fast transient failures still retry all 4), a 90s stall
+  guard (`streamStallLimit` in retry.go) cancels any stream that stops
+  producing SSE events, and `insufficient_quota` 429s never retry. Retry
+  attempts surface as `RetryEvent` → status line "retry 2/5 · 504 …".
+  Worst case per LLM call is now ~90s + backoff, never infinite. When
+  khode turns still fail against khateway, check the gateway's registered
+  models against a live upstream first, not khode. Refinements from the
+  2026-09-23 diagnosis: kiosapi.com's free routes flap on a minutes scale
+  (deepseek-v4.1-flash-free went all-hang → all-2s within half an hour),
+  so re-probe before concluding anything is broken; the user's "working
+  curl" bypassed khateway (direct to kiosapi.com with their own key), and
+  khateway's per-provider `timeout_ms`
   (default 60s, cap 120s, providers table / dashboard) is the knob for slow
   routes.
 
@@ -608,3 +619,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-24 | Setup banner (user agreed esc shouldn't land in a silently dead chat): `Model.setupHint` renders warn-styled, width-clipped text first in chatView's mid band whenever `hasCredentials` fails or `cfg.Model()` is empty — khateway names /login, others /welcome + /settings; `TestSetupBannerShowsWhileUnconfigured` walks all three states | (this commit) |
 | 2026-09-24 | Mouse + keyboard parity: `ui/click.go` region registry (stage → placeDialog flush; chatView bands shift their own), `handleKey` factored out of Update's KeyPressMsg case, footer chips/rows/forms/mode chips/banner commands/URL/more-notes wired across all overlays, welcome custom form gained a save row, chrome-budget row-count fix; tests: keyPress strings, listWindowAt staging, placeDialog geometry, end-to-end chip/row clicks through Update, 20-surface in-frame sweep; pty boot smoke clean | (this commit) |
 | 2026-09-24 | Chat input + user-message UX (user screenshot: black-on-green slab; asked for prompt history + click-to-cursor): `userBar` green left rule replaces `userCard` (backgrounds deleted from the transcript entirely; test pins no-`48;`-bg + green bar + hang indent); `internal/ui/input.go`: ↑/↓ prompt recall (first/last-line gate via `LineInfo`, draft stash, consecutive-dedupe, transcript seeding in `replayTranscript` so resume/session-switch reseed) and click-to-cursor (`wrapRunes` mirrors bubbles' `wrap()` column-for-column, `hitToCursor` maps view cell → logical line/rune col with row-end clamps, `placeInputCursor` drives `MoveToEnd`/`CursorUp`/`SetCursorColumn`, `ScrollYOffset`-aware); chatView registers one region per input row. Verified: full gate green, `TestDumpViews` frame eyeballed (green ┃ ❯ text, zero bg codes), 12 new tests incl. end-to-end click through `View`+`MouseClickMsg` and a scrolled-input click | (this commit) |
+| 2026-09-24 | Turn-hang hardening (user report: "working" for 6m on a khateway 504, felt infinite): `WithMaxRetries(0)` on both SDK clients (their hidden 2× retry multiplied every khode attempt), `DefaultRetryBudget` 45s wall-clock cap on khode's retry ladder (a 60s 504 spends it on attempt 1; fast failures still run the full 4-retry ladder — `TestAnthropicFastGatewayTimeoutsStillRetry` pins requests == 5, i.e. SDK retry stays off), 90s `streamStallLimit` watchdog (`stallGuard` in retry.go) canceling any attempt that produces no SSE events — surfaces "model stream stalled" instead of blocking `Next()` forever (user ctx vs attempt ctx distinguishes user-abort from stall), `insufficient_quota` 429s classified non-retryable. `llm.RetryEvent` (Attempt/Max/Err) forwarded by the loop, rendered as a clipped status-line note cleared on the next content event. Tests: budget-gate 504, quota 429, stall guard over a held-open SSE, RetryEvent announcement, ui status note. Separate commit: pre-existing flaky `TestHandshakeSendsInitialize` (serve goroutine wrote `s.requests` unsynchronized AND the assertion ignored the client's post-handshake initialized notification — failed ~30% of runs) — mutex + accessor + tolerant assertion, 20/20 green | (this commit) |

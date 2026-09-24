@@ -107,6 +107,16 @@ type UsageEvent struct {
 	OutputTokens int64
 }
 
+// RetryEvent reports that a failed attempt is being retried: Attempt is
+// the 1-based number of the attempt about to run (2 = first retry), Max
+// the total attempts allowed, Err the failure being retried. It is
+// informational — the stream still ends with exactly one terminal event.
+type RetryEvent struct {
+	Attempt int
+	Max     int
+	Err     error
+}
+
 // CompactEvent reports that the agent loop rewrote the session with an
 // LLM summary: Removed messages became part of the summary, Kept recent
 // messages stay verbatim.
@@ -129,6 +139,7 @@ func (ThinkingDeltaEvent) isEvent() {}
 func (ToolCallEvent) isEvent()      {}
 func (ToolResultEvent) isEvent()    {}
 func (UsageEvent) isEvent()         {}
+func (RetryEvent) isEvent()         {}
 func (CompactEvent) isEvent()       {}
 func (ErrorEvent) isEvent()         {}
 func (DoneEvent) isEvent()          {}

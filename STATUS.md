@@ -10,6 +10,21 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Turn-hang hardening (2026-09-24):** a khateway 504 used to pin the
+turn in silent "working" for ~10 minutes (the user saw 6) and a
+mid-stream stall could hang forever. Three bounds now guarantee an
+error surfaces: the SDKs' hidden internal retry is off
+(`WithMaxRetries(0)` — it doubled every khode attempt), khode's retry
+ladder runs under a 45-second wall-clock budget so a gateway that
+answers 504 after its own 60s upstream timeout is never retried (fast
+transient failures still run the full ladder), and a 90-second stall
+watchdog cancels any stream that stops producing events, surfacing
+"model stream stalled" instead of blocking forever. `insufficient_quota`
+429s (khateway prepaid exhaustion) are never retried. Every retry shows
+on the status line ("working · 41s · retry 2/5 · 504 …") via the new
+`llm.RetryEvent`, and clears when content flows again. Worst case per
+LLM call is now ~90s + backoff, bounded, with the cause visible.
+
 **Chat input + user-message UX (2026-09-24):** user messages ride a
 green left rule — the same bar grammar as khode's answers, green where
 khode's are teal/cyan — and the background slab is gone entirely:

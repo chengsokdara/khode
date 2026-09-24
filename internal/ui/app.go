@@ -153,6 +153,10 @@ type Model struct {
 	turnStart time.Time
 	lastTurn  time.Duration
 
+	// retryNote explains an in-flight retry on the status line ("retry
+	// 2/5 · 504 …"); empty except between a RetryEvent and the next one.
+	retryNote string
+
 	lastErr string
 }
 
@@ -887,6 +891,9 @@ func (m *Model) pump() tea.Cmd {
 }
 
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
+	if _, retry := ev.(llm.RetryEvent); !retry {
+		m.retryNote = "" // the stream moved on; the note only explains waiting
+	}
 	switch e := ev.(type) {
 	case llm.ThinkingDeltaEvent:
 		sealed := m.ensureStreamingBlock(kindThinking)
@@ -932,6 +939,12 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		m.messages = append(m.messages, uiMessage{role: "system",
 			raw: fmt.Sprintf("context compacted · summarized %d earlier messages, %d recent turns kept in the transcript", e.Removed, e.Kept)})
 		return tea.Batch(m.pump(), m.flush())
+
+	case llm.RetryEvent:
+		// The status line explains the wait: "working · 41s · retry 2/5 ·
+		// 504 from the gateway" instead of a silent spinner.
+		m.retryNote = fmt.Sprintf("retry %d/%d · %s", e.Attempt, e.Max, clip(e.Err.Error(), 60))
+		return m.pump()
 
 	case llm.ErrorEvent:
 		if !errors.Is(e.Err, context.Canceled) {
@@ -1312,7 +1325,11 @@ func (m *Model) statusLine() string {
 	case m.streaming:
 		elapsed := time.Since(m.turnStart).Truncate(time.Second)
 		state = m.spinner.View() + statusStyle.Render("working") +
-			dimStyle.Render(" · "+elapsed.String()+" · esc to stop")
+			dimStyle.Render(" · "+elapsed.String())
+		if m.retryNote != "" {
+			state += warnStyle.Render(" · " + clip(m.retryNote, max(20, m.width/2)))
+		}
+		state += dimStyle.Render(" · esc to stop")
 	case m.lastErr != "":
 		state = errorStyle.Render("✗ " + clip(m.lastErr, max(20, m.width/2)))
 	default:

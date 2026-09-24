@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -166,6 +167,30 @@ func TestPlainEnterSubmits(t *testing.T) {
 	// notice instead of appending a user message.
 	if n := len(m.messages); n == 0 || !strings.Contains(m.messages[n-1].raw, "no API key") {
 		t.Errorf("expected the pre-flight key notice, got %+v", m.messages)
+	}
+}
+
+// A mid-turn retry explains itself on the status line ("working · … ·
+// retry 2/5 · 504 …") instead of a silent spinner, and the note clears
+// the moment stream content moves again.
+func TestStatusLineShowsRetryNote(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.streaming = true
+
+	m.handleStreamEvent(llm.RetryEvent{Attempt: 2, Max: 5,
+		Err: errors.New(`POST "/v1/chat/completions": 504 upstream timeout`)})
+	if got := ansiStrip(m.statusLine()); !strings.Contains(got, "retry 2/5") || !strings.Contains(got, "504") {
+		t.Errorf("status line missing the retry note: %q", got)
+	}
+
+	m.handleStreamEvent(llm.TextDeltaEvent{Text: "content again"})
+	if got := ansiStrip(m.statusLine()); strings.Contains(got, "retry") {
+		t.Errorf("retry note survived past the retry: %q", got)
+	}
+	if !strings.Contains(ansiStrip(m.statusLine()), "working") {
+		t.Error("streaming status lost the working state after a retry")
 	}
 }
 

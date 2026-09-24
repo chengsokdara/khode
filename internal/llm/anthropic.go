@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -20,11 +21,13 @@ type Anthropic struct {
 	// protocol under their own name; empty reports "anthropic".
 	name string
 	// retries is the number of repeats after a failed attempt (transient
-	// failures, no content emitted yet); retryBase seeds its backoff.
-	// Defaults come from DefaultMaxRetries / baseRetryDelay; tests shrink
-	// them.
-	retries   int
-	retryBase time.Duration
+	// failures, no content emitted yet); retryBase seeds its backoff and
+	// retryBudget caps the wall clock retries may consume. Defaults come
+	// from DefaultMaxRetries / baseRetryDelay / DefaultRetryBudget; tests
+	// shrink them.
+	retries     int
+	retryBase   time.Duration
+	retryBudget time.Duration
 }
 
 // NewAnthropic builds an Anthropic provider with default environment auth.
@@ -47,8 +50,14 @@ func newAnthropicClient(key, baseURL, name string) *Anthropic {
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
+	// The SDK's own retry (2 attempts on any 5xx) is disabled: khode's
+	// retry loop is the single policy layer, and the SDK re-sending a
+	// request that just spent a minute timing out at the gateway is how
+	// one failed turn used to pin "working" for many minutes.
+	opts = append(opts, option.WithMaxRetries(0))
 	client := anthropic.NewClient(opts...)
-	return &Anthropic{client: &client, name: name, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
+	return &Anthropic{client: &client, name: name, retries: DefaultMaxRetries,
+		retryBase: baseRetryDelay, retryBudget: DefaultRetryBudget}
 }
 
 func (a *Anthropic) Name() string {
@@ -122,9 +131,13 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 		defer close(ch)
 
 		// Transient failures are retried only while nothing has been
-		// forwarded — after the first content event a retry would
-		// duplicate output, so those errors surface unchanged.
+		// forwarded and the wall clock is inside the retry budget — after
+		// the first content event a retry would duplicate output, and once
+		// the budget is spent the error surfaces instead of stacking
+		// minute-long upstream timeouts into silent "working". Each retry
+		// is announced so the turn is not a black box while it waits.
 		emitted := false
+		started := time.Now()
 		for attempt := 0; ; attempt++ {
 			usage, err := a.streamAttempt(ctx, params, ch, &emitted)
 			if err == nil {
@@ -134,7 +147,9 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 				ch <- DoneEvent{}
 				return
 			}
-			if !emitted && attempt < a.retries && anthropicRetryable(err) {
+			if !emitted && attempt < a.retries && anthropicRetryable(err) &&
+				time.Since(started) <= a.retryBudget {
+				ch <- RetryEvent{Attempt: attempt + 2, Max: a.retries + 1, Err: err}
 				if !backoffSleep(ctx, retryDelay(attempt, retryAfterOf(err), a.retryBase)) {
 					ch <- ErrorEvent{Err: ctx.Err()}
 					return
@@ -151,9 +166,17 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Event, erro
 
 // streamAttempt runs one streaming attempt, forwarding content events to
 // ch as they arrive (which marks *emitted). It returns the accumulated
-// usage on a clean stream end, or the stream error.
+// usage on a clean stream end, or the stream error. The attempt rides
+// its own context: the stall guard cancels it when no SSE event arrives
+// within streamStallLimit, bounding how long a dead upstream can hang
+// the turn.
 func (a *Anthropic) streamAttempt(ctx context.Context, params anthropic.MessageNewParams, ch chan<- Event, emitted *bool) (UsageEvent, error) {
-	stream := a.client.Messages.NewStreaming(ctx, params)
+	attemptCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stall := newStallGuard(cancel, streamStallLimit)
+	defer stall.stop()
+
+	stream := a.client.Messages.NewStreaming(attemptCtx, params)
 	defer stream.Close()
 
 	// Tool inputs arrive as partial JSON deltas keyed by block index;
@@ -166,6 +189,7 @@ func (a *Anthropic) streamAttempt(ctx context.Context, params anthropic.MessageN
 
 	usage := UsageEvent{}
 	for stream.Next() {
+		stall.progress()
 		switch ev := stream.Current().AsAny().(type) {
 		case anthropic.ContentBlockStartEvent:
 			if tb, ok := ev.ContentBlock.AsAny().(anthropic.ToolUseBlock); ok {
@@ -204,6 +228,15 @@ func (a *Anthropic) streamAttempt(ctx context.Context, params anthropic.MessageN
 			usage.OutputTokens = ev.Usage.OutputTokens
 		}
 	}
+	// A canceled attempt context is either the stall guard (turn still
+	// alive) or the user's abort; neither is retryable, and the SDK's
+	// transport view of both is an opaque error — surface the real one.
+	if aerr := attemptCtx.Err(); aerr != nil {
+		if ctx.Err() != nil {
+			return UsageEvent{}, ctx.Err()
+		}
+		return UsageEvent{}, stalledErr()
+	}
 	if err := stream.Err(); err != nil {
 		return UsageEvent{}, err
 	}
@@ -211,10 +244,14 @@ func (a *Anthropic) streamAttempt(ctx context.Context, params anthropic.MessageN
 }
 
 // anthropicRetryable classifies stream errors: API errors by status code,
-// transport-shaped errors by network heuristics.
+// transport-shaped errors by network heuristics. A quota-exhausted rate
+// limit is a verdict, not a delay — it never retries.
 func anthropicRetryable(err error) bool {
 	var apiErr *anthropic.Error
 	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == http.StatusTooManyRequests && quotaExhausted(err) {
+			return false
+		}
 		return retryableStatus(apiErr.StatusCode)
 	}
 	return retryableNet(err)

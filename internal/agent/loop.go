@@ -126,6 +126,8 @@ func (r *Runner) round(ctx context.Context, out chan<- llm.Event) ([]llm.ToolCal
 		case llm.UsageEvent:
 			r.lastInput = int(e.InputTokens)
 			out <- ev
+		case llm.RetryEvent:
+			out <- ev // informational: the provider is re-attempting
 		case llm.ErrorEvent:
 			return nil, e.Err
 		case llm.DoneEvent:

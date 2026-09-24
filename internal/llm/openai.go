@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -22,11 +23,13 @@ type OpenAI struct {
 	// protocol under their own name; empty reports "openai".
 	name string
 	// retries is the number of repeats after a failed attempt (transient
-	// failures, no content emitted yet); retryBase seeds its backoff.
-	// Defaults come from DefaultMaxRetries / baseRetryDelay; tests shrink
-	// them.
-	retries   int
-	retryBase time.Duration
+	// failures, no content emitted yet); retryBase seeds its backoff and
+	// retryBudget caps the wall clock retries may consume. Defaults come
+	// from DefaultMaxRetries / baseRetryDelay / DefaultRetryBudget; tests
+	// shrink them.
+	retries     int
+	retryBase   time.Duration
+	retryBudget time.Duration
 }
 
 // NewOpenAI builds an OpenAI provider with default environment auth.
@@ -49,8 +52,14 @@ func newOpenAIClient(key, baseURL, name string) *OpenAI {
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
+	// The SDK's own retry (2 attempts on any 5xx) is disabled: khode's
+	// retry loop is the single policy layer, and the SDK re-sending a
+	// request that just spent a minute timing out at the gateway is how
+	// one failed turn used to pin "working" for many minutes.
+	opts = append(opts, option.WithMaxRetries(0))
 	client := openai.NewClient(opts...)
-	return &OpenAI{client: &client, name: name, retries: DefaultMaxRetries, retryBase: baseRetryDelay}
+	return &OpenAI{client: &client, name: name, retries: DefaultMaxRetries,
+		retryBase: baseRetryDelay, retryBudget: DefaultRetryBudget}
 }
 
 func (o *OpenAI) Name() string {
@@ -142,9 +151,13 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 		defer close(ch)
 
 		// Transient failures are retried only while nothing has been
-		// forwarded — after the first content event a retry would
-		// duplicate output, so those errors surface unchanged.
+		// forwarded and the wall clock is inside the retry budget — after
+		// the first content event a retry would duplicate output, and once
+		// the budget is spent the error surfaces instead of stacking
+		// minute-long upstream timeouts into silent "working". Each retry
+		// is announced so the turn is not a black box while it waits.
 		emitted := false
+		started := time.Now()
 		for attempt := 0; ; attempt++ {
 			usage, err := o.streamAttempt(ctx, params, ch, &emitted)
 			if err == nil {
@@ -154,7 +167,9 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 				ch <- DoneEvent{}
 				return
 			}
-			if !emitted && attempt < o.retries && openaiRetryable(err) {
+			if !emitted && attempt < o.retries && openaiRetryable(err) &&
+				time.Since(started) <= o.retryBudget {
+				ch <- RetryEvent{Attempt: attempt + 2, Max: o.retries + 1, Err: err}
 				if !backoffSleep(ctx, retryDelay(attempt, retryAfterOfOpenAI(err), o.retryBase)) {
 					ch <- ErrorEvent{Err: ctx.Err()}
 					return
@@ -171,9 +186,17 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 
 // streamAttempt runs one streaming attempt, forwarding content events to
 // ch as they arrive (which marks *emitted). It returns the accumulated
-// usage on a clean stream end, or the stream error.
+// usage on a clean stream end, or the stream error. The attempt rides
+// its own context: the stall guard cancels it when no SSE event arrives
+// within streamStallLimit, bounding how long a dead upstream can hang
+// the turn.
 func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletionNewParams, ch chan<- Event, emitted *bool) (UsageEvent, error) {
-	stream := o.client.Chat.Completions.NewStreaming(ctx, params)
+	attemptCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stall := newStallGuard(cancel, streamStallLimit)
+	defer stall.stop()
+
+	stream := o.client.Chat.Completions.NewStreaming(attemptCtx, params)
 	defer stream.Close()
 
 	// The usage totals arrive on a final chunk with empty Choices, so
@@ -193,6 +216,7 @@ func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletion
 
 	usage := UsageEvent{}
 	for stream.Next() {
+		stall.progress()
 		chunk := stream.Current()
 		for _, choice := range chunk.Choices {
 			if rc := reasoningContent(choice.Delta); rc != "" {
@@ -232,6 +256,15 @@ func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletion
 		if chunk.Usage.CompletionTokens > 0 {
 			usage.OutputTokens = chunk.Usage.CompletionTokens
 		}
+	}
+	// A canceled attempt context is either the stall guard (turn still
+	// alive) or the user's abort; neither is retryable, and the SDK's
+	// transport view of both is an opaque error — surface the real one.
+	if aerr := attemptCtx.Err(); aerr != nil {
+		if ctx.Err() != nil {
+			return UsageEvent{}, ctx.Err()
+		}
+		return UsageEvent{}, stalledErr()
 	}
 	if err := stream.Err(); err != nil {
 		return UsageEvent{}, err
@@ -276,10 +309,14 @@ func reasoningContent(delta openai.ChatCompletionChunkChoiceDelta) string {
 }
 
 // openaiRetryable classifies stream errors: API errors by status code,
-// transport-shaped errors by network heuristics.
+// transport-shaped errors by network heuristics. A quota-exhausted rate
+// limit is a verdict, not a delay — it never retries.
 func openaiRetryable(err error) bool {
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == http.StatusTooManyRequests && quotaExhausted(err) {
+			return false
+		}
 		return retryableStatus(apiErr.StatusCode)
 	}
 	return retryableNet(err)
