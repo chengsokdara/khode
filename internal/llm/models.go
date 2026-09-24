@@ -56,7 +56,8 @@ func FetchModels(ctx context.Context, protocol, key, baseURL string) ([]string, 
 	// khateway lists models over the openai face no matter which face
 	// the chat calls use — /v1/models is the shared listing on the
 	// gateway origin.
-	if protocol == ProviderKhateway {
+	khateway := protocol == ProviderKhateway
+	if khateway {
 		_, base = KhatewayProtocol(base)
 		protocol = ProviderOpenAI
 	}

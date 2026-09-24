@@ -21,6 +21,7 @@ type slashCommand struct {
 // Aliases are ordinary rows so they complete and document themselves.
 var slashCommands = []slashCommand{
 	{"help", "", "this command list"},
+	{"login", "", "sign in to khateway (browser device flow) — personal key, your balance"},
 	{"new", "[name]", "fresh session, optionally named"},
 	{"sessions", "", "switch session (picker)"},
 	{"settings", "", "configure keys, provider, model, MCP, hooks"},

@@ -14,12 +14,17 @@ import "strings"
 // URL is configured. OpenAI-style shape: /v1 + /chat/completions etc.
 const DefaultKhatewayEndpoint = "http://localhost:8787/v1"
 
-// khatewayAnonKey is sent when the user configured no key. Both SDKs
-// need a non-empty credential: the anthropic client refuses to build a
-// request without one, and the openai client would fall back to
-// OPENAI_API_KEY — leaking an unrelated key to the gateway. Gateways
-// that front auth themselves just ignore the header.
-const khatewayAnonKey = "anonymous"
+// khatewayUnauthenticatedPlaceholder is a construction-time stand-in,
+// never a credential. Both SDKs need a non-empty credential to build
+// their client: the anthropic client refuses to send any request
+// without one (NoCredentialsError), and the openai client silently
+// falls back to OPENAI_API_KEY — leaking an unrelated key to the
+// gateway. The UI's pre-flight credential check stops a keyless
+// khateway turn before any request fires, so this value is unreachable
+// on the wire (the gateway would answer 401 invalid_api_key if it ever
+// leaked); it exists purely so the client objects build. A real key —
+// stored or KHATEWAY_API_KEY — always wins over it.
+const khatewayUnauthenticatedPlaceholder = "khode-unauthenticated"
 
 // KhatewayProtocol resolves a khateway base URL into the wire protocol
 // and base URL its client expects. An anthropic-SDK-shaped base (…

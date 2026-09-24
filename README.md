@@ -42,11 +42,20 @@ Everything is configurable from inside the TUI with `/settings` (alias
   OpenAI-compatible or Anthropic-protocol endpoint — Ollama, LM Studio,
   OpenRouter, proxies. New providers activate immediately and read
   `NAME_API_KEY`-style env vars if set. The built-in **khateway**
-  provider points at a self-hosted [Khateway](https://github.com/) router
-  and is keyless-native: pick it and start — no key step, the gateway
-  fronts upstream auth (its endpoint shape picks the wire protocol
-  automatically). Gateways that do check client keys accept
-  `KHATEWAY_API_KEY` as an optional override.
+  provider points at a self-hosted [Khateway](https://github.com/)
+  router: **sign in with `/login` on first run — keyless is gone**, the
+  gateway rejects every request without a valid client key. Its
+  endpoint shape picks the wire protocol automatically;
+  `KHATEWAY_API_KEY` still overrides.
+
+**Sign in to khateway with `/login`** (device flow): khode shows a short
+code, you approve it once at the gateway's `/app/device` page in a browser,
+and khode receives a personal API key — usage is attributed to your account
+and drawn from its prepaid balance (top up in the portal). The key is
+stored like any other; `/settings` can still replace it with a pasted key
+(`KHATEWAY_API_KEY` wins while set). The first-run walkthrough and the
+`/settings` api-key row offer the same two paths: browser sign-in or a key
+from the gateway portal's Keys page.
 - **api key** — masked editor; stored per provider in `auth.json`
 - **base url** — point a provider at a proxy or OpenAI-compatible
   endpoint

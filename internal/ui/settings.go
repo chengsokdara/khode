@@ -49,6 +49,7 @@ const (
 	viewModels                           // model picker for the active provider
 	viewMCPList                          // configured MCP servers
 	viewHookList                         // configured hooks
+	viewKeyChoice                        // khateway access: browser sign-in vs paste
 )
 
 // formKind distinguishes the forms that manage lists of things.
@@ -147,6 +148,8 @@ func (m *Model) settingsKey(msg tea.KeyMsg) tea.Cmd {
 		return m.mcpListKey(msg)
 	case viewHookList:
 		return m.hookListKey(msg)
+	case viewKeyChoice:
+		return m.keyChoiceKey(msg)
 	}
 
 	switch msg.String() {
@@ -181,6 +184,13 @@ func (m *Model) activateRow() tea.Cmd {
 	case rowMode:
 		m.cycleSetting(1)
 	case rowAPIKey:
+		if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
+			// khateway needs a credential: offer browser sign-in next
+			// to the plain paste editor.
+			s.view = viewKeyChoice
+			s.listCur = 0
+			break
+		}
 		m.openEditor(rowAPIKey)
 	case rowBaseURL:
 		if config.ManagedEndpoint(m.cfg.Provider) {
@@ -201,6 +211,53 @@ func (m *Model) activateRow() tea.Cmd {
 		s.listCur = 0
 	}
 	return nil
+}
+
+// keyChoiceKey handles the khateway access choice (browser device
+// sign-in vs the paste editor). esc returns to the rows; the sign-in
+// dialog opens above the overlay and returns here when it closes.
+func (m *Model) keyChoiceKey(msg tea.KeyMsg) tea.Cmd {
+	s := m.settings
+	switch msg.String() {
+	case "up", "k", "ctrl+p", "left", "h":
+		if s.listCur > 0 {
+			s.listCur--
+		}
+	case "down", "j", "ctrl+n", "right", "l":
+		if s.listCur < 1 {
+			s.listCur++
+		}
+	case "enter":
+		switch s.listCur {
+		case 0:
+			return m.openDeviceLogin()
+		case 1:
+			s.view = viewRows
+			m.openEditor(rowAPIKey)
+		}
+	case "esc", "shift+tab":
+		s.view = viewRows
+	}
+	return nil
+}
+
+// keyChoiceView renders the khateway access choice rows.
+func (m *Model) keyChoiceView() []string {
+	cur := m.settings.listCur
+	choices := []struct{ main, sub string }{
+		{"sign in with your browser", "device flow · recommended"},
+		{"paste an API key", "from the gateway portal's Keys page"},
+	}
+	out := make([]string, 0, len(choices))
+	for i, ch := range choices {
+		line := ch.main + dimStyle.Render("  "+ch.sub)
+		if i == cur {
+			out = append(out, pickSel.Render("❯ "+line))
+		} else {
+			out = append(out, "  "+line)
+		}
+	}
+	return out
 }
 
 // cycleSetting applies ←/→ on the enum rows: provider and mode.
@@ -870,6 +927,9 @@ func (m *Model) settingsView() string {
 	case s.view == viewHookList:
 		title = dialogTitle("settings · hooks", "n new · enter edit · d remove")
 		body = m.hookListView()
+	case s.view == viewKeyChoice:
+		title = dialogTitle("settings · khateway access", "sign in with a browser or paste a key")
+		body = m.keyChoiceView()
 	default:
 		body = s.rowsView(m)
 	}
@@ -986,8 +1046,8 @@ func (s *settings) value(m *Model, row settingsRow) string {
 }
 
 // apiKeyValue renders the key row: masked, with its source — the full
-// secret is never displayed. Key-optional providers (khateway) say so
-// instead of nagging for a key they don't need.
+// secret is never displayed. khateway without a key points at the
+// sign-in-or-paste choice instead of a bare "not set".
 func (m *Model) apiKeyValue() string {
 	stored := m.auth.Key(m.cfg.Provider)
 	if env := os.Getenv(m.cfg.APIKeyEnvName(m.cfg.Provider)); env != "" {
@@ -996,8 +1056,8 @@ func (m *Model) apiKeyValue() string {
 	if stored != "" {
 		return maskKey(stored) + dimStyle.Render("  saved")
 	}
-	if config.KeyOptional(m.cfg.Provider) {
-		return dimStyle.Render("not required · the gateway fronts auth (optional override)")
+	if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
+		return dimStyle.Render("not set · enter to sign in or paste")
 	}
 	return dimStyle.Render("not set · enter to paste")
 }

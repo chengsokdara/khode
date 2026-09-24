@@ -272,3 +272,49 @@ func TestSettingsDeleteMCPServer(t *testing.T) {
 		t.Errorf("servers = %v", m.cfg.MCPServers)
 	}
 }
+
+// khateway's api-key row offers browser sign-in vs paste (no keyless
+// row value any more): enter opens the choice, sign-in opens the
+// device dialog above the overlay, esc returns, paste opens the editor.
+func TestSettingsKhatewayKeyChoice(t *testing.T) {
+	m := newSettingsModel(t)
+	m.cfg.Provider = "khateway"
+	m.OpenSettings(rowAPIKey)
+
+	m = pressKeys(m, "enter")
+	if m.settings.view != viewKeyChoice {
+		t.Fatalf("view = %v, want the khateway key choice", m.settings.view)
+	}
+	view := m.settingsView()
+	if !strings.Contains(view, "sign in with your browser") || !strings.Contains(view, "paste an API key") {
+		t.Errorf("choice view = %q, want both options", view)
+	}
+
+	// enter on sign-in opens the device dialog; esc returns to the choice.
+	m = pressKeys(m, "enter")
+	if m.deviceLogin == nil {
+		t.Fatal("sign-in choice did not open the device dialog")
+	}
+	m = pressKeys(m, "esc")
+	if m.deviceLogin != nil {
+		t.Fatal("esc did not close the device dialog")
+	}
+	if m.settings == nil || m.settings.view != viewKeyChoice {
+		t.Fatalf("settings after dialog esc = %v, want the key choice", m.settings)
+	}
+
+	// esc leaves the choice; re-entering and choosing paste opens the
+	// editor, and a committed key is stored for khateway.
+	m = pressKeys(m, "esc")
+	if m.settings.view != viewRows {
+		t.Fatalf("view = %v, want rows after esc", m.settings.view)
+	}
+	m = pressKeys(m, "enter", "down", "enter")
+	if m.settings.editor == nil {
+		t.Fatal("paste choice did not open the key editor")
+	}
+	m = pressKeys(m, "khat-paste-9", "enter")
+	if got := m.auth.Key("khateway"); got != "khat-paste-9" {
+		t.Errorf("stored khateway key = %q, want khat-paste-9", got)
+	}
+}

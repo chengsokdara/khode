@@ -100,14 +100,15 @@ type Model struct {
 	permDragging bool
 	permGrabOff  int
 
-	picker     *picker     // session chooser overlay; nil when closed
-	modelPick  *modelPick  // /model chooser overlay; nil when closed
-	settings   *settings   // configuration overlay; nil when closed
-	toolsPanel *toolsPanel // /tools overlay; nil when closed
-	mcpPanel   *mcpPanel   // /mcp overlay; nil when closed
-	welcome    *welcome    // first-run walkthrough; nil when closed
-	popup      *cmdPopup   // slash-command completion above the input; nil when hidden
-	modePick   *modePicker // /mode chooser above the input; nil when closed
+	picker      *picker      // session chooser overlay; nil when closed
+	modelPick   *modelPick   // /model chooser overlay; nil when closed
+	settings    *settings    // configuration overlay; nil when closed
+	toolsPanel  *toolsPanel  // /tools overlay; nil when closed
+	mcpPanel    *mcpPanel    // /mcp overlay; nil when closed
+	welcome     *welcome     // first-run walkthrough; nil when closed
+	popup       *cmdPopup    // slash-command completion above the input; nil when hidden
+	modePick    *modePicker  // /mode chooser above the input; nil when closed
+	deviceLogin *deviceLogin // /login khateway device sign-in; nil when closed
 
 	streaming bool
 	cancel    context.CancelFunc
@@ -286,13 +287,11 @@ func (m *Model) registerTaskTool() {
 }
 
 // hasCredentials reports whether turns may start on the active
-// provider: key-optional providers (khateway — the gateway fronts
-// upstream auth) always pass, everyone else needs a resolvable API key,
-// so a turn isn't started just to fail with 401.
+// provider: every provider needs a resolvable API key — khateway
+// included, since the gateway rejects requests without a client key
+// (sign in with /login or store one) — so a turn isn't started just to
+// fail with 401.
 func (m *Model) hasCredentials() bool {
-	if config.KeyOptional(m.cfg.Provider) {
-		return true
-	}
 	key, _ := m.cfg.Credentials(m.auth, m.cfg.Provider)
 	return key != ""
 }
@@ -409,6 +408,27 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFetchedModels(msg)
 		return m, nil
 
+	case deviceCodeMsg:
+		if m.deviceLogin == nil {
+			return m, nil // dialog closed while minting — drop it
+		}
+		return m, m.applyDeviceCode(msg)
+
+	case devicePollTickMsg:
+		if m.deviceLogin == nil || m.deviceLogin.code.DeviceCode == "" {
+			return m, nil // closed or still minting — the loop dies here
+		}
+		return m, m.pollDeviceCmd()
+
+	case devicePollResultMsg:
+		if m.deviceLogin == nil {
+			return m, nil // canceled mid-poll — drop the result
+		}
+		return m, m.applyDevicePoll(msg)
+
+	case khatewayModelMsg:
+		return m, m.applyKhatewayModel(msg)
+
 	// The mouse is captured for the wheel and the dialog scrollbars
 	// (MouseModeCellMotion in View): without it, terminals like iTerm2
 	// scroll their own scrollback out from under the alt buffer and the
@@ -449,6 +469,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if m.perm != nil {
 			return m, m.permKey(msg)
+		}
+		// The sign-in dialog tops every surface it can be opened from —
+		// /login in chat, the walkthrough's khateway step, the settings
+		// key choice — so it is answered before them; otherwise welcome
+		// would eat esc and close the whole walkthrough mid-sign-in.
+		if m.deviceLogin != nil {
+			return m, m.deviceLoginKey(msg)
 		}
 		if m.welcome != nil {
 			return m, m.welcomeKey(msg)
@@ -531,6 +558,10 @@ func (m Model) View() tea.View {
 		content = "starting…"
 	} else if m.perm != nil {
 		content = m.permView()
+	} else if m.deviceLogin != nil {
+		// The sign-in dialog renders above whatever opened it (chat,
+		// the walkthrough, settings) — matching the key dispatch.
+		content = m.deviceLoginView()
 	} else if m.welcome != nil {
 		content = m.welcomeView()
 	} else if m.settings != nil {
@@ -543,6 +574,8 @@ func (m Model) View() tea.View {
 		content = m.pickerView()
 	} else if m.modelPick != nil {
 		content = m.modelPickView()
+	} else if m.deviceLogin != nil {
+		content = m.deviceLoginView()
 	} else {
 		content = m.chatView()
 	}
@@ -888,9 +921,13 @@ func (m *Model) submit() tea.Cmd {
 		return m.command(input)
 	}
 	if !m.hasCredentials() {
-		m.messages = append(m.messages, uiMessage{role: "system",
-			raw: fmt.Sprintf("no API key for %s · open /settings → api key and paste one (or set %s)",
-				m.cfg.Provider, m.cfg.APIKeyEnvName(m.cfg.Provider))})
+		raw := fmt.Sprintf("no API key for %s · open /settings → api key and paste one (or set %s)",
+			m.cfg.Provider, m.cfg.APIKeyEnvName(m.cfg.Provider))
+		if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
+			raw = fmt.Sprintf("no khateway key · /login signs in with your browser, or /settings → api key to paste one (or set %s)",
+				m.cfg.APIKeyEnvName(m.cfg.Provider))
+		}
+		m.messages = append(m.messages, uiMessage{role: "system", raw: raw})
 		return m.flush()
 	}
 	if m.cfg.Model() == "" {
@@ -1019,6 +1056,9 @@ func (m *Model) command(input string) tea.Cmd {
 	case "/mcp":
 		m.openMCPPanel()
 
+	case "/login":
+		return m.openDeviceLogin()
+
 	case "/compact":
 		if m.streaming {
 			m.messages = append(m.messages, uiMessage{role: "system",
@@ -1026,9 +1066,12 @@ func (m *Model) command(input string) tea.Cmd {
 			break
 		}
 		if !m.hasCredentials() {
-			m.messages = append(m.messages, uiMessage{role: "system",
-				raw: fmt.Sprintf("no API key for %s · compaction needs one · see /settings",
-					m.cfg.Provider)})
+			raw := fmt.Sprintf("no API key for %s · compaction needs one · see /settings",
+				m.cfg.Provider)
+			if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
+				raw = "no khateway key · compaction needs one · /login signs in, or see /settings"
+			}
+			m.messages = append(m.messages, uiMessage{role: "system", raw: raw})
 			break
 		}
 		return m.runCompact()

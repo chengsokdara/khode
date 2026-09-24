@@ -45,14 +45,6 @@ func IsBuiltinProvider(name string) bool {
 		strings.EqualFold(name, "khateway")
 }
 
-// KeyOptional reports whether provider can run turns without any API
-// key. khateway is keyless-native: the gateway fronts upstream auth
-// itself, so khode never requires a client key (KHATEWAY_API_KEY stays
-// as an optional override for gateways that do check one).
-func KeyOptional(name string) bool {
-	return strings.EqualFold(name, "khateway")
-}
-
 // ManagedEndpoint reports whether provider's endpoint is fixed by khode
 // and therefore not editable in the TUI: the provider row only selects
 // it, the base-url row is read-only, and pointing it somewhere else is

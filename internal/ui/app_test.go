@@ -362,30 +362,30 @@ func TestThinkingOnlyTurnRenders(t *testing.T) {
 	}
 }
 
-// khateway is keyless-native: with no key anywhere, a submitted turn
-// starts instead of being stopped by the pre-flight key check.
-func TestKhatewayTurnStartsWithoutKey(t *testing.T) {
+// khateway lost its keyless pass: with no key anywhere a submitted
+// turn is stopped by the pre-flight like every other provider, and the
+// pointer offers /login (device sign-in) next to /settings.
+func TestKhatewayTurnBlockedWithoutKey(t *testing.T) {
 	m := newTestModel(t)
 	t.Setenv("KHATEWAY_API_KEY", "")
 	m.cfg.Provider = "khateway"
-	m.cfg.SetModel("gateway-model") // model pre-flight must pass too
+	m.cfg.SetModel("gateway-model")
 
 	m.textarea.SetValue("hello")
 	cmd := m.submit()
 
+	if cmd != nil || m.streaming {
+		t.Fatal("khateway turn started without a key")
+	}
+	found := false
 	for _, msg := range m.messages {
-		if msg.role == "system" && strings.Contains(msg.raw, "no API key") {
-			t.Fatalf("keyless khateway turn was blocked: %q", msg.raw)
+		if msg.role == "system" && strings.Contains(msg.raw, "/login") && strings.Contains(msg.raw, "/settings") {
+			found = true
 		}
 	}
-	last := m.messages[len(m.messages)-1]
-	if last.role != llm.RoleUser || last.raw != "hello" {
-		t.Errorf("last message = %+v, want the user turn", last)
+	if !found {
+		t.Errorf("blocked message does not point at /login and /settings: %+v", m.messages)
 	}
-	if !m.streaming || cmd == nil {
-		t.Error("turn did not start")
-	}
-	// cmd is deliberately not run: the test provider's channel is nil.
 }
 
 // Providers that do need a key keep the pre-flight: a keyless turn is

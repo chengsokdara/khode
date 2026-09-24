@@ -3,9 +3,11 @@ package ui
 // welcome.go — the first-run walkthrough. khode opens it when no
 // credentials exist anywhere: intro, provider (built-ins, any custom
 // provider already configured, or an inline form to add one), api key,
-// and a ready card with what to try first. Esc skips it at any point —
-// khode stays usable, and the pre-flight check points at /settings if a
-// turn is attempted without a key or model.
+// and a ready card with what to try first. Picking khateway detours
+// through an access step — browser device sign-in or a pasted portal
+// key; there is no keyless path. Esc skips it at any point — khode
+// stays usable, and the pre-flight check points at /settings (or
+// /login for khateway) if a turn is attempted without a key or model.
 
 import (
 	"fmt"
@@ -26,6 +28,7 @@ const (
 	welcomeIntro = iota
 	welcomeProvider
 	welcomeCustom
+	welcomeKhateway // khateway access: browser sign-in vs paste a key
 	welcomeKey
 	welcomeModel
 	welcomeReady
@@ -41,6 +44,7 @@ const welcomeCustomEntry = "custom…"
 type welcome struct {
 	step     int
 	provIdx  int             // cursor in the provider step's choice list
+	kCur     int             // khateway access step: 0 browser sign-in, 1 paste a key
 	input    textinput.Model // api-key editor on the key step
 	cName    textinput.Model // custom provider form: name
 	cURL     textinput.Model // custom provider form: base url
@@ -143,12 +147,13 @@ func (m *Model) welcomeKey(msg tea.KeyMsg) tea.Cmd {
 			if name != m.cfg.Provider {
 				m.switchProvider(name)
 			}
-			if config.KeyOptional(name) {
-				// khateway is keyless-native — the gateway fronts
-				// upstream auth, so a key step would be dead weight.
-				// Go straight to the model list (or the ready card if
-				// a model is already set).
-				return m.commitWelcomeKey()
+			if strings.EqualFold(name, "khateway") {
+				// khateway needs a real credential: the access step
+				// offers browser sign-in or a pasted portal key — the
+				// gateway rejects keyless requests.
+				w.kCur = 0
+				w.step = welcomeKhateway
+				break
 			}
 			w.input.Placeholder = "paste your " + name + " API key · leave empty to skip"
 			w.step = welcomeKey
@@ -191,6 +196,32 @@ func (m *Model) welcomeKey(msg tea.KeyMsg) tea.Cmd {
 				w.cURL, cmd = w.cURL.Update(msg)
 			}
 			return cmd
+		}
+
+	case welcomeKhateway:
+		switch msg.String() {
+		case "left", "h", "up", "k":
+			if w.kCur > 0 {
+				w.kCur--
+			}
+		case "right", "l", "down", "j":
+			if w.kCur < 1 {
+				w.kCur++
+			}
+		case "shift+tab":
+			w.step = welcomeProvider
+		case "enter":
+			switch w.kCur {
+			case 0:
+				// Browser sign-in: the /login dialog takes over (the
+				// key dispatch answers deviceLogin before welcome) and
+				// finishDeviceLogin advances the walkthrough to the
+				// model step once the key is granted.
+				return m.openDeviceLogin()
+			case 1:
+				w.input.Placeholder = "paste a key from the portal's Keys page · enter saves"
+				w.step = welcomeKey
+			}
 		}
 
 	case welcomeKey:
@@ -393,6 +424,24 @@ func (m *Model) welcomeView() string {
 			"",
 			dimStyle.Render("  the provider activates right away; its key can stay empty."),
 		}, "\n")
+	case welcomeKhateway:
+		title = dialogTitle("khateway access", "")
+		choices := []struct{ main, sub string }{
+			{"sign in with your browser", "device flow · recommended"},
+			{"paste an API key", "from the gateway portal's Keys page"},
+		}
+		var rows []string
+		for i, ch := range choices {
+			cur, line := "  ", ch.main
+			if i == w.kCur {
+				cur = pickSel.Render("❯ ")
+			}
+			rows = append(rows, cur+line+dimStyle.Render("  "+ch.sub))
+		}
+		body = strings.Join(append([]string{
+			"  the gateway requires your account key — pick how to add it:",
+			"",
+		}, rows...), "\n")
 	case welcomeKey:
 		title = dialogTitle("paste your API key", "")
 		body = strings.Join([]string{
@@ -466,6 +515,8 @@ func (m *Model) welcomeView() string {
 		footer = keyHint("←/→", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 	case welcomeCustom:
 		footer = keyHint("tab", "next field") + dimStyle.Render("  ·  ") + keyHint("←/→", "protocol") + dimStyle.Render("  ·  ") + keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back")
+	case welcomeKhateway:
+		footer = keyHint("↑/↓", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 	case welcomeKey:
 		footer = keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
 	case welcomeModel:

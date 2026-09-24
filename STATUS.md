@@ -10,6 +10,54 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Keyless removed — sign-in or a real key (2026-09-24):** the deployed
+khateway now rejects every /v1 request without a valid client key (401
+invalid_api_key) and its keyless gate is gone, so khode dropped the whole
+keyless wire path. `config.KeyOptional` is deleted: khateway needs a
+resolvable credential like every provider, and a keyless khateway turn is
+stopped by the pre-flight with a pointer to `/login` next to `/settings`.
+`llm` lost `khatewayAnonKey`, `khatewayAccessSecret`, and the
+`x-khateway-access` header threading (`extraHeaders` params removed); one
+construction-only placeholder (`khatewayUnauthenticatedPlaceholder`) keeps
+the SDK clients buildable — the pre-flight makes it unreachable on the
+wire, and `KHATEWAY_API_KEY` via orEnv still wins. The first-run
+walkthrough's khateway path now opens a **khateway access** step (browser
+device sign-in — recommended — or paste a portal Keys-page key; no keyless
+option), the `/settings` api-key row offers the same two paths, and the
+sign-in dialog (`deviceLogin`) is dispatched/rendered above welcome and
+settings so it owns the keys while open; esc returns to the choice, and
+approval advances the walkthrough to its model step. `scripts/
+build-release.sh` no longer injects any secret. Full gate green.
+
+**khateway device sign-in + guest-pool billing (2026-09-24):** khode is
+for other people, so keyless needed identity + a ceiling. `/login`
+(internal/khateway + ui/devicelogin.go) runs the RFC 8628 device flow
+against the gateway: mint → show URL + XXXX-XXXX code (browser auto-opens,
+`o` reopens, esc cancels) → poll at the minted interval → on approval bank
+the personal API key into auth.json, switch the provider to khateway, and
+auto-pick the first listed model. The gateway side granted khateway users
+a **guest pool** too: keyless traffic now bills a pool account the
+operator funds, so anonymous usage has a hard ceiling (pool at $0 → 429).
+Verified against a live dev server (mint + pending poll through the new
+client) plus httptest wire tests; go build/vet/test/gofmt green.
+
+**SUPERSEDED (2026-09-24, keyless removed):** the entry below describes
+the keyless-gate access secret; the gateway dropped the keyless gate and
+khode dropped the secret, the header, and keyless requests entirely.
+
+**khateway keyless-gate access secret (2026-09-24):** official khode
+builds can now prove themselves to a gated khateway.
+`llm.khatewayAccessSecret` is baked at compile time via
+`KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh` (ldflags
+`-X khode/internal/llm.khatewayAccessSecret=…`; never committed), and
+every khateway request — both SDK faces and `FetchModels` — carries it
+as `x-khateway-access` while the `anonymous` key placeholder stays
+unchanged. Plain `go build` checkouts leave the var empty and send no
+header: against a gateway whose operator turned the keyless gate on
+(khateway stores only the secret's sha-256 in `settings`) they get 401
+and must set `KHATEWAY_API_KEY`. Wire tests in `khateway_test.go` pin
+the header on both faces + model listing and its absence on repo builds.
+
 **Scrollbar cutoff fix (2026-09-23):** the dialog scrollbar showed gaps
 because some plan lines rendered wider than the body — glamour applies
 list indent *after* wrapping (a packed list line = wrap width + indent)
@@ -421,6 +469,10 @@ screen), `internal/debug.Printf` is the gated logging call, and
 README → Development documents the loop (build/vet/test/run, fake-SSE
 tests, base-URL overrides, delve).
 
+**SUPERSEDED (2026-09-24, keyless removed):** the entry below —
+khateway keyless-native — no longer holds: the gateway rejects keyless
+requests, and khode requires sign-in or a real key.
+
 **khateway keyless-native (2026-09-17):** khode no longer requires any
 client key for khateway — `config.KeyOptional` exempts it from the
 pre-flight key check (turns and /compact), the walkthrough's key step
@@ -535,3 +587,6 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Scrollbar fixes + interaction: unified 2-cell glyphs (`██` thumb / `░░` track, brighter track), pgdn overshoot fixed (`scrollPerm` clamps to the real body height — no more frozen bottom until extra pages unwind), and the scrollbar is mouse-interactive (grab+drag scrubs, track click pages, release ends); geometry recorded per render and pinned to the drawn glyphs by test | (this commit) |
 | 2026-09-23 | User slab redesign: explicit light text on the band (terminal default rendered dark-on-green), slab hugs content instead of spanning the terminal, long lines word-wrap with a hanging indent under the `❯`; `muesli/reflow/wordwrap` promoted to a direct dependency | (this commit) |
 | 2026-09-23 | Scrollbar cutoff fix: plan lines wider than the body (list indent after wrap, chroma code blocks) wrapped onto gutter-less physical rows, cutting the bar — plan markdown now wraps with 6 cols of indent headroom, overflowing lines re-wrap ANSI-aware (`wrapOverflow`), and the body pad has a `MaxWidth` guard; regression test walks every window row for gutter presence | (this commit) |
+| 2026-09-24 | khateway device sign-in: `/login` runs the RFC 8628 flow (internal/khateway client + ui/devicelogin.go dialog — mint, show URL+code, poll, bank the personal key into auth.json, khateway active, model auto-pick); gateway now also bills keyless traffic to a funded guest-pool account (hard ceiling on anonymous usage). Wire tests + live probe | (this commit) |
+| 2026-09-24 | Keyless removed: khateway needs sign-in (`/login`) or a real key — `config.KeyOptional` deleted (pre-flight stops keyless khateway turns, pointing at /login + /settings), `khatewayAnonKey`/`khatewayAccessSecret`/`x-khateway-access` gone (construction-only `khatewayUnauthenticatedPlaceholder`, `KHATEWAY_API_KEY` still wins), walkthrough gains a khateway access step (browser sign-in vs paste; sign-in dialog dispatched above welcome/settings, esc returns to the choice), settings api-key row offers the same choice, build-release.sh bakes no secret | (this commit) |
+| 2026-09-24 | SUPERSEDED same day (keyless removed): khateway keyless-gate access secret — official builds bake `llm.khatewayAccessSecret` at compile time (`KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh`, ldflags) and send it as `x-khateway-access` on every khateway request (both SDK faces + `FetchModels`); repo builds send no header — a gated gateway answers 401 and they need `KHATEWAY_API_KEY`. Wire tests pin header on/off per build type | (this commit) |

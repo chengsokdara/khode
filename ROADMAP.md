@@ -56,6 +56,9 @@ items and update **Next** here when the plan moves (see `RULES.md`);
   - [x] Keyless startup: no env gate; with no credentials anywhere the
         settings overlay opens on the api-key row; pre-flight check
         stops keyless turns with a pointer to `/settings`
+        (SUPERSEDED 2026-09-24: khateway keyless support removed —
+        sign-in `/login` or a real key required; the pre-flight check
+        itself stays)
   - [x] `/settings` overlay: provider (live switch), api key, base
         url, model, max tokens, mode — every row saves on commit
   - [x] MCP servers + hooks edited in the TUI; MCP servers started,

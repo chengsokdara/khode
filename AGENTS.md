@@ -38,11 +38,15 @@ internal/llm/        provider-agnostic contract
   anthropic.go         Anthropic SDK → Event channel translation
   openai.go            OpenAI SDK → Event channel translation
   factory.go           llm.New/NewProtocol (protocol + display name), env-name helpers gone to config
-  khateway.go          built-in khateway router provider: endpoint-shape → protocol resolution
+  khateway.go          built-in khateway router provider: endpoint-shape → protocol resolution;
+                       sign-in (/login device flow) or a real client key required — no keyless path
   models.go            FetchModels: model-list HTTP APIs per protocol
   retry.go             shared retry policy (transient failures, backoff)
   context.go           per-model context-window table
   pricing.go           per-model price table
+internal/khateway/   khateway device-flow client (RFC 8628): Start/Poll → personal
+                       API key (sentinels ErrPending/ErrDenied/ErrExpired); used by
+                       the /login dialog
 internal/perm/       permission policy: modes × risk classes → allow/ask/deny
 internal/tools/      tools (read, glob, grep, edit, write, bash, todo) + Registry
 internal/mcp/        minimal MCP client (stdio JSON-RPC): initialize, tools/list, tools/call
@@ -57,6 +61,8 @@ internal/agent/      conversation machinery
   plan.go              plan tool: present a plan, approval switches to accept-edits
 internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands
+  devicelogin.go       /login overlay: khateway device sign-in (mint → show URL+code →
+                       poll → key into auth.json, khateway active, model auto-pick)
   modepicker.go        shift+tab mode cycling, /mode picker, mode line above the input
   perm.go              approval dialog (diff preview) + plan dialog
   picker.go            session picker overlay
@@ -96,13 +102,23 @@ gofmt -w .              # formatting (no disputes — gofmt is law)
 go build -o khode ./cmd/khode && ./khode   # run
 ./khode --resume        # continue latest session
 go test ./...           # tests (add them as packages grow)
+scripts/build-release.sh   # official release build (plain cross-compile — no
+                           # secrets are baked; `all` cross-compiles)
 ```
 
-Env: an API key is optional. `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (and
+khateway sign-in: `/login` runs the device flow — a short code is shown,
+the user approves it at the gateway's `/app/device` page, and khode banks
+the personal API key it returns (stored like any key in
+`~/.khode/auth.json`). Sign-in or a pasted key are the only ways to use
+khateway: the deployed gateway rejects every request without a valid
+client key. Never commit keys or secrets.
+
+Env: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `KHATEWAY_API_KEY` (and
 `*_BASE_URL`) win when set; otherwise keys come from
-`~/.khode/auth.json`, saved by `/settings`. With neither, khode starts
-anyway and opens settings on the api-key row; a keyless turn is stopped
-by a pre-flight check instead of failing on a 401. State lives in
+`~/.khode/auth.json`, saved by `/settings` or the walkthrough. With no
+key, khode starts anyway and opens settings on the api-key row; a turn
+without a key is stopped by a pre-flight check instead of failing on a
+401 — for khateway that check points at `/login` too. State lives in
 `~/.khode/` (config, auth, `sessions/*.jsonl`). Never commit API keys,
 and never put them in `config.json` — that file must stay shareable.
 

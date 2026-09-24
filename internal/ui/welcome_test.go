@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"khode/internal/config"
+	"khode/internal/khateway"
 )
 
 func TestWelcomeFullFlow(t *testing.T) {
@@ -167,12 +168,12 @@ func TestWelcomeCustomProvider(t *testing.T) {
 	}
 }
 
-func TestWelcomeKhatewayHint(t *testing.T) {
+func TestWelcomeKhatewayAccessChoice(t *testing.T) {
 	m := newSettingsModel(t)
 	m.OpenWelcome()
 	m = pressKeys(m, "enter") // intro → provider
 
-	// The provider list now leads with khateway: anthropic, openai,
+	// The provider list leads with khateway: anthropic, openai,
 	// khateway, custom… The khateway row explains what it is.
 	if got := m.providerChoices(); len(got) < 4 || got[0] != "anthropic" || got[1] != "openai" || got[2] != "khateway" {
 		t.Fatalf("choices = %v, want khateway third", got)
@@ -182,9 +183,8 @@ func TestWelcomeKhatewayHint(t *testing.T) {
 		t.Error("khateway row lacks its explanatory hint")
 	}
 
-	// khateway is keyless-native: choosing it skips the key step
-	// entirely and lands on the model step (its fetch command is
-	// discarded here, so the step sits in the fetching state).
+	// Choosing khateway opens the access step — no keyless skip to the
+	// model list any more.
 	m = pressKeys(m, "right", "right", "enter")
 	if m.cfg.Provider != "khateway" {
 		t.Fatalf("provider = %q, want khateway", m.cfg.Provider)
@@ -192,18 +192,43 @@ func TestWelcomeKhatewayHint(t *testing.T) {
 	if m.provider.Name() != "khateway" {
 		t.Error("provider client not rebuilt for khateway")
 	}
-	if m.welcome.step != welcomeModel {
-		t.Fatalf("step = %d, want model (no key step for khateway)", m.welcome.step)
+	if m.welcome.step != welcomeKhateway {
+		t.Fatalf("step = %d, want the khateway access step", m.welcome.step)
 	}
-	m = pressKeys(m, "enter", "enter") // skip the in-flight fetch → ready → close
-	if m.welcome != nil {
-		t.Error("walkthrough did not close after the ready card")
+	view = m.welcomeView()
+	if !strings.Contains(view, "sign in with your browser") || !strings.Contains(view, "paste an API key") {
+		t.Errorf("access view = %q, want both choices", view)
 	}
-	if got := m.auth.Key("khateway"); got != "" {
-		t.Errorf("stored key = %q, want none (khateway is keyless)", got)
+
+	// ↓ lands on paste; enter opens the key step with the portal hint.
+	m = pressKeys(m, "down")
+	if m.welcome.kCur != 1 {
+		t.Errorf("kCur = %d, want 1 after ↓", m.welcome.kCur)
 	}
-	if got := m.cfg.Model(); got != "" {
-		t.Errorf("khateway model = %q, want empty until the picker fetches", got)
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeKey {
+		t.Fatalf("step = %d, want the key step after choosing paste", m.welcome.step)
+	}
+	if !strings.Contains(m.welcome.input.Placeholder, "Keys page") {
+		t.Errorf("key placeholder = %q, want the portal Keys-page hint", m.welcome.input.Placeholder)
+	}
+
+	// Back navigation: shift+tab on the key step returns to the provider
+	// step (the same convention as the custom-provider detour).
+	m = pressKeys(m, "shift+tab")
+	if m.welcome.step != welcomeProvider {
+		t.Fatal("shift+tab on the key step did not return to provider")
+	}
+
+	// Re-choosing khateway (the cursor is still on it) and backing out
+	// of the access step itself also lands on the provider step.
+	m = pressKeys(m, "enter")
+	if m.welcome.step != welcomeKhateway {
+		t.Fatalf("step = %d, want the access step again", m.welcome.step)
+	}
+	m = pressKeys(m, "shift+tab")
+	if m.welcome.step != welcomeProvider {
+		t.Fatal("shift+tab on the access step did not return to provider")
 	}
 }
 
@@ -242,9 +267,10 @@ func TestStatusLineContextMeter(t *testing.T) {
 	}
 }
 
-// Choosing khateway in the walkthrough fetches the gateway's model list
-// and lets the first-run user pick one on the spot — no /settings
-// detour. The fetch rides the khateway openai face (GET <base>/models).
+// Choosing khateway → paste path banks a portal key; with the key in
+// place the walkthrough fetches the gateway's model list and lets the
+// first-run user pick one on the spot — no /settings detour. The fetch
+// rides the khateway openai face (GET <base>/models).
 func TestWelcomeKhatewayModelStep(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -258,16 +284,27 @@ func TestWelcomeKhatewayModelStep(t *testing.T) {
 	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
 	m.OpenWelcome()
 
-	// intro → provider → cursor on khateway → choosing it (keyless)
-	// lands directly on the model step with a fetch in flight.
-	m = pressKeys(m, "enter", "right", "right")
+	// intro → provider → cursor on khateway → access step → paste
+	// choice → key step. Pasting the key and committing lands on the
+	// model step with a fetch in flight.
+	m = pressKeys(m, "enter", "right", "right", "enter", "down", "enter")
+	if m.welcome.step != welcomeKey {
+		t.Fatalf("step = %d, want key after choosing paste", m.welcome.step)
+	}
+	m = pressKeys(m, "khat-paste")
+	if got := m.auth.Key("khateway"); got != "" {
+		t.Fatalf("key saved before enter: %q", got)
+	}
 	next, cmd := m.Update(keyMsg("enter"))
 	m = next.(Model)
 	if m.welcome.step != welcomeModel {
-		t.Fatalf("step = %d, want model right after choosing khateway", m.welcome.step)
+		t.Fatalf("step = %d, want model after committing the pasted key", m.welcome.step)
 	}
 	if cmd == nil || !m.welcome.fetching {
-		t.Fatal("choosing khateway did not start a model-list fetch")
+		t.Fatal("committing the key did not start a model-list fetch")
+	}
+	if got := m.auth.Key("khateway"); got != "khat-paste" {
+		t.Errorf("stored khateway key = %q, want khat-paste", got)
 	}
 
 	// Run the fetch command and deliver its result the way the runtime
@@ -319,11 +356,13 @@ func TestWelcomeModelStepFetchFailure(t *testing.T) {
 	m := newSettingsModel(t)
 	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
 	m.OpenWelcome()
-	m = pressKeys(m, "enter", "right", "right")
-	next, cmd := m.Update(keyMsg("enter")) // choose khateway → model step
+	// khateway via the paste path; an empty paste still advances to the
+	// model step (the pre-flight catches keyless turns later).
+	m = pressKeys(m, "enter", "right", "right", "enter", "down", "enter")
+	next, cmd := m.Update(keyMsg("enter")) // commit the empty key
 	m = next.(Model)
 	if m.welcome.step != welcomeModel {
-		t.Fatalf("step = %d, want model after choosing khateway", m.welcome.step)
+		t.Fatalf("step = %d, want model after the paste path", m.welcome.step)
 	}
 	if cmd == nil {
 		t.Fatal("no fetch started")
@@ -339,5 +378,94 @@ func TestWelcomeModelStepFetchFailure(t *testing.T) {
 	m = pressKeys(m, "enter")
 	if m.welcome.step != welcomeReady {
 		t.Fatalf("step = %d, want ready after continuing past the failure", m.welcome.step)
+	}
+}
+
+// Choosing "sign in with your browser" on the access step opens the
+// device dialog, and the dialog — not the walkthrough — answers the
+// keys while it is open: esc closes only the sign-in and returns to
+// the choice.
+func TestWelcomeKhatewaySignInDialog(t *testing.T) {
+	m := newSettingsModel(t)
+	m.OpenWelcome()
+	m = pressKeys(m, "enter", "right", "right", "enter") // access step, cursor on sign-in
+	if m.welcome.step != welcomeKhateway || m.welcome.kCur != 0 {
+		t.Fatalf("step=%d kCur=%d, want the access step on the sign-in choice",
+			m.welcome.step, m.welcome.kCur)
+	}
+
+	m = pressKeys(m, "enter")
+	if m.deviceLogin == nil {
+		t.Fatal("sign-in choice did not open the device dialog")
+	}
+	if m.welcome == nil || m.welcome.step != welcomeKhateway {
+		t.Fatal("walkthrough did not stay open behind the dialog")
+	}
+
+	// While the dialog is open it owns the keys: esc must reach it
+	// (deviceLoginKey), not welcomeKey — otherwise it would close the
+	// whole walkthrough.
+	m = pressKeys(m, "esc")
+	if m.deviceLogin != nil {
+		t.Fatal("esc did not close the sign-in dialog")
+	}
+	if m.welcome == nil || m.welcome.step != welcomeKhateway {
+		t.Fatalf("esc did not return to the choice: welcome=%v", m.welcome)
+	}
+}
+
+// An approved sign-in banks the fresh key and advances the walkthrough
+// to its model picker, whose fetch now works; picking a model reaches
+// the ready card as usual.
+func TestWelcomeKhatewaySignInSuccess(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"object":"list","data":[{"id":"gateway-max"},{"id":"gateway-mini"}]}`))
+	}))
+	defer srv.Close()
+
+	m := newSettingsModel(t)
+	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
+	m.OpenWelcome()
+	m = pressKeys(m, "enter", "right", "right", "enter")
+
+	cmd := m.finishDeviceLogin(khateway.Result{
+		AccessToken: "khat-personal",
+		Email:       "me@example.com",
+		BalanceUSD:  4.5,
+	})
+	if m.deviceLogin != nil {
+		t.Error("sign-in dialog still open after success")
+	}
+	if m.welcome == nil || m.welcome.step != welcomeModel {
+		t.Fatalf("step = %v, want the walkthrough on the model step", m.welcome)
+	}
+	if cmd == nil || !m.welcome.fetching {
+		t.Fatal("success did not start the model-list fetch")
+	}
+	if got := m.auth.Key("khateway"); got != "khat-personal" {
+		t.Errorf("stored khateway key = %q, want khat-personal", got)
+	}
+	if m.cfg.Provider != "khateway" {
+		t.Errorf("provider = %q, want khateway", m.cfg.Provider)
+	}
+
+	msg := cmd()
+	next, _ := m.Update(msg)
+	m = next.(Model)
+	if m.welcome.fetching || m.welcome.fetchErr != "" {
+		t.Fatalf("fetch did not complete: fetching=%v err=%q", m.welcome.fetching, m.welcome.fetchErr)
+	}
+	if gotPath != "/models" {
+		t.Errorf("fetch hit %q, want /models", gotPath)
+	}
+	m = pressKeys(m, "enter") // pick gateway-max (sorted first)
+	if m.welcome.step != welcomeReady {
+		t.Fatalf("step = %d, want ready after picking a model", m.welcome.step)
+	}
+	if got := m.cfg.Model(); got != "gateway-max" {
+		t.Errorf("model = %q, want gateway-max", got)
 	}
 }

@@ -204,17 +204,6 @@ func TestProviderProtocolCanonicalizes(t *testing.T) {
 	}
 }
 
-func TestKeyOptional(t *testing.T) {
-	if !KeyOptional("khateway") || !KeyOptional("Khateway") {
-		t.Error("khateway must be key-optional (case-insensitive)")
-	}
-	for _, n := range []string{"anthropic", "openai", "groq", ""} {
-		if KeyOptional(n) {
-			t.Errorf("KeyOptional(%q) = true, want false", n)
-		}
-	}
-}
-
 func TestManagedEndpoint(t *testing.T) {
 	if !ManagedEndpoint("khateway") || !ManagedEndpoint("Khateway") {
 		t.Error("khateway must have a managed endpoint")

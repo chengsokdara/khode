@@ -34,17 +34,18 @@ func New(name, key, baseURL string) (Provider, error) {
 func NewProtocol(protocol, name, key, baseURL string) (Provider, error) {
 	// khateway runs both wire protocols on one origin: the endpoint's
 	// shape picks the face (…/v1/messages → anthropic, else openai).
-	// SDK env fallbacks are disabled so a stray ANTHROPIC_API_KEY can
-	// never authenticate a khateway request, and a missing key becomes
-	// a placeholder: khateway is keyless-native (the gateway fronts
-	// upstream auth), while the anthropic SDK would otherwise refuse to
-	// build the request client-side and the openai SDK would leak
-	// OPENAI_API_KEY as a bearer token.
+	// The explicit key wins, KHATEWAY_API_KEY is the env fallback (same
+	// precedence config.Credentials implements one layer up), and SDK
+	// env lookup is never consulted — a stray ANTHROPIC_API_KEY or
+	// OPENAI_API_KEY must never authenticate a khateway request. With
+	// no key anywhere the placeholder lets the client objects build;
+	// the UI's pre-flight credential check stops keyless khateway turns
+	// before any request fires, so it never reaches the wire.
 	if protocol == ProviderKhateway {
 		protocol, baseURL = KhatewayProtocol(baseURL)
 		key = orEnv(key, "KHATEWAY_API_KEY")
 		if key == "" {
-			key = khatewayAnonKey
+			key = khatewayUnauthenticatedPlaceholder
 		}
 	}
 	switch protocol {

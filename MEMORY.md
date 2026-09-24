@@ -65,6 +65,40 @@ If you are starting a session, or recovering after an interrupt:
   `tools.Registry` has an RWMutex — the agent loop reads it from its
   goroutine while the overlay mutates it. `Model.partial` is a
   `*strings.Builder`; see Gotchas for why.
+- **Device sign-in + guest-pool billing (2026-09-24):** khode ships a
+  khateway device-flow login: `/login` (internal/khateway Start/Poll with
+  ErrPending/ErrDenied/ErrExpired sentinels; ui/devicelogin.go dialog)
+  mints a request, shows the verification URL + XXXX-XXXX code (auto-opens
+  the browser, `o` reopens), polls at the minted interval, and on approval
+  banks the returned personal API key via `auth.SetKey(khateway, …)` +
+  `auth.Save()`, switches provider (switchProvider → rebuildProvider picks
+  up the new key), and auto-picks the first listed model (fetch →
+  cacheModelChoices → SetModel). The dialog is opened by `/login`, the
+  walkthrough's khateway step, and the settings key choice, and is
+  dispatched/rendered above all of them. SUPERSEDED same day: the
+  **guest pool** (keyless /v1 traffic billing a funded portal account,
+  `keyless_guest_email`) — the gateway dropped keyless entirely, so khode
+  dropped every keyless path; the sign-in flow itself is current.
+- **SUPERSEDED (2026-09-24, keyless removed):** the entry below — the
+  keyless-gate access secret — is history only: the gateway removed the
+  keyless gate, and khode removed the secret, the header, and keyless
+  requests (see "Keyless removed — sign-in or a real key" in STATUS.md
+  Now).
+- **Keyless-gate access secret (2026-09-24):** official khode builds
+  embed `llm.khatewayAccessSecret` at compile time —
+  `KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh` runs
+  `go build -ldflags "-X khode/internal/llm.khatewayAccessSecret=…"`
+  (the var is a package-level `var`, empty in the repo, never
+  committed; `dist/` is gitignored). Every khateway request — openai
+  face, anthropic face, `FetchModels` — carries it as
+  `x-khateway-access` (`factory.go` builds an `extraHeaders` map the
+  client constructors apply via `option.WithHeader`). Repo builds send
+  no header; a khateway with the keyless gate on answers 401 and the
+  user sets `KHATEWAY_API_KEY`. The gateway side stores only the
+  secret's sha-256 (`settings` row `keyless_gate_secret_hash`,
+  admin Settings card, `PATCH /api/admin/settings
+  {keyless_gate_secret}`). Wire tests: `khateway_test.go`
+  (`TestKhatewayAccessSecretHeader`).
 - **Not yet started:** backlog only — see ROADMAP.md "Next".
 
 ## Decision log
@@ -150,8 +184,10 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | The walkthrough has a model step (between key and ready) whenever the chosen provider has no model yet: it auto-fetches the endpoint's list and the user picks on the spot; failure degrades to the old /settings pointer | "choose khateway and use right away" must not dead-end into a /settings detour; customs (Ollama) get the same benefit for free; `Config.Model()` falls back to the first cached choice, so a successful fetch also unblocks the pre-flight |
 | 2026-09-17 | `modelsFetchedMsg` routes to whichever consumer is open — settings picker first, then the walkthrough's model step; results for neither are dropped | one fetch machinery, two consumers; the stale-drop rule keeps a closed overlay from being mutated |
 | 2026-09-17 | Debug logging is gated behind `--debug`: main points the standard logger at `khode-debug.log` via `tea.LogToFile`, code logs through `internal/debug.Printf` (no-op unless enabled) | writing to the terminal from inside a bubbletea program corrupts the alt screen; a file sink is the only safe target, and the gate keeps stray log calls harmless in production runs |
-| 2026-09-17 | khateway is keyless-native: `config.KeyOptional` exempts it from the pre-flight key check (submit + /compact) and the walkthrough skips its key step; with no key configured, requests carry the `anonymous` placeholder credential set at client construction | the user wants choose-and-go with zero setup, and the gateway fronts upstream auth itself; `KHATEWAY_API_KEY` / a stored key stay as overrides for gateways that enforce client keys — the gateway side is expected to treat auth as optional |
-| 2026-09-17 | The keyless placeholder lives in `llm.NewProtocol`'s khateway branch, not the UI | both SDKs need a non-empty credential: anthropic-sdk-go refuses to build ANY request client-side (`NoCredentialsError`) without one — even against a keyless custom base URL — and openai-go silently sends `OPENAI_API_KEY` as the bearer, leaking an unrelated key to the gateway |
+| 2026-09-24 | khateway requires a credential: `config.KeyOptional` deleted, the `anonymous` key + `khatewayAccessSecret`/`x-khateway-access` header removed; one construction-only `khatewayUnauthenticatedPlaceholder` keeps the SDK clients buildable, the pre-flight (which now points at `/login` for khateway) makes it unreachable on the wire, `KHATEWAY_API_KEY` via orEnv still wins, and the walkthrough's khateway path + the settings api-key row offer browser sign-in vs paste | the deployed gateway now REJECTS every /v1 request without a valid client key (401 invalid_api_key) and removed its keyless gate, so keyless was dead weight that could only produce 401s; sign-in or a pasted key are the only ways in |
+| 2026-09-24 | The device dialog (`deviceLogin`) is answered and rendered ABOVE welcome and settings in the dispatch chains | it can now be opened from the walkthrough's khateway step and the settings key choice; welcome would otherwise eat esc and close the whole walkthrough mid-sign-in (esc must return to the choice, and approval advances the walkthrough to its model step) |
+| 2026-09-17 | SUPERSEDED 2026-09-24 (keyless removed) — khateway is keyless-native: `config.KeyOptional` exempts it from the pre-flight key check (submit + /compact) and the walkthrough skips its key step; with no key configured, requests carry the `anonymous` placeholder credential set at client construction | the user wants choose-and-go with zero setup, and the gateway fronts upstream auth itself; `KHATEWAY_API_KEY` / a stored key stay as overrides for gateways that enforce client keys — the gateway side is expected to treat auth as optional |
+| 2026-09-17 | The keyless placeholder lives in `llm.NewProtocol`'s khateway branch, not the UI | both SDKs need a non-empty credential: anthropic-sdk-go refuses to build ANY request client-side (`NoCredentialsError`) without one — even against a keyless custom base URL — and openai-go silently sends `OPENAI_API_KEY` as the bearer, leaking an unrelated key to the gateway (this SDK constraint is exactly why today's construction-only placeholder still exists) |
 | 2026-09-17 | khateway is select-only: `config.ManagedEndpoint` locks its endpoint — the base-url row is read-only for it (displays env override → stored → built-in default), enter on the row explains `KHATEWAY_BASE_URL` instead of opening the editor, `commitEditor` refuses as defense in depth, and the provider list only ever selects built-ins (d already refused) | khateway is khode's own native integration, not a user-defined endpoint; repointing it at an arbitrary origin from the TUI is a misuse the UI must not offer — environment (`KHATEWAY_BASE_URL`) is the supported way to run a gateway elsewhere |
 | 2026-09-18 | One design system in `styles.go` ("aurora"): cyan = khode's own activity, green = good, dim teal-gray = secondary, red/amber only for error/context pressure; every view draws colors from there | the request asked for green+cyan, modern, and "everything consistent together" — semantics fixed per color keep the palette readable, not decorative |
 | 2026-09-18 | Footer key names render as keycap chips (`keyHint`), overlay titles through `dialogTitle`, save notes through `flash`; the header wordmark is the only gradient (`logo()`) | keys must be findable without shouting, and reserving the gradient for the wordmark keeps it a signature instead of wallpaper |
@@ -531,3 +567,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-23 | Scrollbar fixes + mouse interaction (user report with screenshot: broken-looking bar, pgdn overshoot freezing the bottom, "make it wider and click/draggable"): glyphs unified to `██`/`░░` 2-cell gutter with `colDim` track, `scrollPerm` clamps via `len(m.permBodyLines())` (shared view/handler body builder; `permScrollMax` deleted), `mousePermClick`/`mousePermDrag` + `permDragging`/`permGrabOff` state with sb* geometry package vars recorded by `dialogWindow`/`renderPermBox`; tests: overshoot clamp, glyph presence, geometry-vs-drawn-glyphs, click/drag/release sequence | (this commit) |
 | 2026-09-23 | User slab redesign (user screenshot: black-on-green text, full-width band): `userCard` gains `Foreground(colText)`, `block()` word-wraps at width−4 via `reflow/wordwrap` with a two-space hanging indent, clip guards long words, no `Width()` — the band hugs content. Test updated: light-foreground SGR, 4-line wrap structure, hang indent, ≤80-col hug | (this commit) |
 | 2026-09-23 | Scrollbar cutoff fix (user screenshot + diagnosis): `planWrapSlack = 6` narrows the glamour wrap, `wrapOverflow` ANSI-aware re-wraps any line still wider than the body (chroma code blocks), `dialogWindow`'s pad gains `MaxWidth` so one logical line is one physical row; `TestPermScrollbarNoGapsWithOverflow` walks every window row asserting gutter presence with long list items + a 150-col code line | (this commit) |
+| 2026-09-24 | Keyless removed from khode (user brief): internal/llm dropped `khatewayAnonKey`/`khatewayAccessSecret`/`x-khateway-access` (extraHeaders params gone from both client constructors; `khatewayUnauthenticatedPlaceholder` is construction-only), `config.KeyOptional` deleted so the pre-flight stops keyless khateway turns pointing at /login + /settings, the walkthrough gained the khateway access step (sign-in vs paste, both paths tested; sign-in dialog wins keys above welcome/settings, esc returns to the choice, approval → model step), the settings api-key row offers the same choice, build-release.sh bakes no secret; keyless-request + access-secret wire tests deleted, `TestNewKhatewayWithoutKey` pins the SDK-env-leak constraint at construction | (this commit) |
