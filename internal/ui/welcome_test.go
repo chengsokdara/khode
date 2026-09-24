@@ -25,10 +25,11 @@ func TestWelcomeFullFlow(t *testing.T) {
 		t.Fatalf("step = %d, want provider", m.welcome.step)
 	}
 
-	// Provider step: ←/→ moves the cursor, enter switches live.
-	m = pressKeys(m, "right", "enter")
+	// Provider step: ←/→ moves the cursor, enter switches live. The
+	// cursor starts on khateway; → → lands on openai.
+	m = pressKeys(m, "right", "right", "enter")
 	if m.cfg.Provider != "openai" {
-		t.Fatalf("provider = %q, want openai after → + enter", m.cfg.Provider)
+		t.Fatalf("provider = %q, want openai after → → + enter", m.cfg.Provider)
 	}
 	if m.provider.Name() != "openai" {
 		t.Error("provider client not rebuilt on walkthrough switch")
@@ -72,9 +73,10 @@ func TestWelcomeSkipAndEmptyKey(t *testing.T) {
 	}
 
 	// An empty key is allowed: the walkthrough advances without saving,
-	// leaving the pre-flight check in charge.
+	// leaving the pre-flight check in charge. (Cursor starts on
+	// khateway; → selects anthropic.)
 	m.OpenWelcome()
-	m = pressKeys(m, "enter", "enter", "enter")
+	m = pressKeys(m, "enter", "right", "enter", "enter")
 	if m.welcome.step != welcomeReady {
 		t.Fatalf("empty key did not advance: step = %d", m.welcome.step)
 	}
@@ -86,7 +88,8 @@ func TestWelcomeSkipAndEmptyKey(t *testing.T) {
 func TestWelcomeBackNavigation(t *testing.T) {
 	m := newSettingsModel(t)
 	m.OpenWelcome()
-	m = pressKeys(m, "enter", "enter") // intro → provider → key
+	// intro → provider (cursor on khateway) → → to anthropic → key.
+	m = pressKeys(m, "enter", "right", "enter")
 	if m.welcome.step != welcomeKey {
 		t.Fatal("did not reach the key step")
 	}
@@ -101,7 +104,7 @@ func TestWelcomeCustomProvider(t *testing.T) {
 	m.OpenWelcome()
 
 	// intro → provider; the list ends with the custom entry:
-	// anthropic, openai, custom…  (→ → → lands on it)
+	// khateway, anthropic, openai, custom…  (→ → → lands on it)
 	m = pressKeys(m, "enter", "right", "right", "right")
 	if m.welcome.step != welcomeProvider {
 		t.Fatal("did not reach the provider step")
@@ -154,8 +157,9 @@ func TestWelcomeCustomProvider(t *testing.T) {
 	// rejects a duplicate name.
 	m = pressKeys(m, "enter") // close the walkthrough
 	m.OpenWelcome()
-	// choices: anthropic, openai, ollama, custom… → ×3 lands on custom…
-	m = pressKeys(m, "enter", "right", "right", "right", "enter")
+	// choices: khateway, anthropic, openai, ollama, custom… (cursor
+	// starts on khateway) → ×4 lands on custom…
+	m = pressKeys(m, "enter", "right", "right", "right", "right", "enter")
 	if m.welcome.step != welcomeCustom {
 		t.Fatal("did not re-open the custom form")
 	}
@@ -173,19 +177,22 @@ func TestWelcomeKhatewayAccessChoice(t *testing.T) {
 	m.OpenWelcome()
 	m = pressKeys(m, "enter") // intro → provider
 
-	// The provider list leads with khateway: anthropic, openai,
-	// khateway, custom… The khateway row explains what it is.
-	if got := m.providerChoices(); len(got) < 4 || got[0] != "anthropic" || got[1] != "openai" || got[2] != "khateway" {
-		t.Fatalf("choices = %v, want khateway third", got)
+	// khateway is the first choice: it leads the list and the cursor
+	// starts on it. Order: khateway, anthropic, openai, custom…
+	if got := m.providerChoices(); len(got) < 4 || got[0] != "khateway" || got[1] != "anthropic" || got[2] != "openai" {
+		t.Fatalf("choices = %v, want khateway first", got)
+	}
+	if m.welcome.provIdx != 0 {
+		t.Errorf("provider cursor = %d, want 0 (khateway is the first choice)", m.welcome.provIdx)
 	}
 	view := m.welcomeView()
-	if !strings.Contains(view, "khateway") || !strings.Contains(view, "router") {
-		t.Error("khateway row lacks its explanatory hint")
+	if !strings.Contains(view, "khateway") || !strings.Contains(view, "native") {
+		t.Error("khateway row lacks its first-class-native hint")
 	}
 
-	// Choosing khateway opens the access step — no keyless skip to the
-	// model list any more.
-	m = pressKeys(m, "right", "right", "enter")
+	// Choosing khateway (enter — the cursor is already on it) opens the
+	// access step — no keyless skip to the model list any more.
+	m = pressKeys(m, "enter")
 	if m.cfg.Provider != "khateway" {
 		t.Fatalf("provider = %q, want khateway", m.cfg.Provider)
 	}
@@ -287,7 +294,7 @@ func TestWelcomeKhatewayModelStep(t *testing.T) {
 	// intro → provider → cursor on khateway → access step → paste
 	// choice → key step. Pasting the key and committing lands on the
 	// model step with a fetch in flight.
-	m = pressKeys(m, "enter", "right", "right", "enter", "down", "enter")
+	m = pressKeys(m, "enter", "enter", "down", "enter")
 	if m.welcome.step != welcomeKey {
 		t.Fatalf("step = %d, want key after choosing paste", m.welcome.step)
 	}
@@ -358,7 +365,7 @@ func TestWelcomeModelStepFetchFailure(t *testing.T) {
 	m.OpenWelcome()
 	// khateway via the paste path; an empty paste still advances to the
 	// model step (the pre-flight catches keyless turns later).
-	m = pressKeys(m, "enter", "right", "right", "enter", "down", "enter")
+	m = pressKeys(m, "enter", "enter", "down", "enter")
 	next, cmd := m.Update(keyMsg("enter")) // commit the empty key
 	m = next.(Model)
 	if m.welcome.step != welcomeModel {
@@ -388,7 +395,7 @@ func TestWelcomeModelStepFetchFailure(t *testing.T) {
 func TestWelcomeKhatewaySignInDialog(t *testing.T) {
 	m := newSettingsModel(t)
 	m.OpenWelcome()
-	m = pressKeys(m, "enter", "right", "right", "enter") // access step, cursor on sign-in
+	m = pressKeys(m, "enter", "enter") // access step, cursor on sign-in
 	if m.welcome.step != welcomeKhateway || m.welcome.kCur != 0 {
 		t.Fatalf("step=%d kCur=%d, want the access step on the sign-in choice",
 			m.welcome.step, m.welcome.kCur)
@@ -429,7 +436,7 @@ func TestWelcomeKhatewaySignInSuccess(t *testing.T) {
 	m := newSettingsModel(t)
 	m.cfg.BaseURLs = map[string]string{"khateway": srv.URL}
 	m.OpenWelcome()
-	m = pressKeys(m, "enter", "right", "right", "enter")
+	m = pressKeys(m, "enter", "enter")
 
 	cmd := m.finishDeviceLogin(khateway.Result{
 		AccessToken: "khat-personal",
@@ -467,5 +474,33 @@ func TestWelcomeKhatewaySignInSuccess(t *testing.T) {
 	}
 	if got := m.cfg.Model(); got != "gateway-max" {
 		t.Errorf("model = %q, want gateway-max", got)
+	}
+}
+
+// /welcome re-runs the walkthrough on demand. esc only dismisses it for
+// the session — every launch reopens it while nothing is configured
+// (main.go's first-run check: no key, no custom provider, no model
+// choice) — but a user who got partway needs a way back in.
+func TestWelcomeCommandReopens(t *testing.T) {
+	m := newTestModel(t)
+	m.textarea.SetValue("/welcome")
+	if cmd := m.submit(); cmd != nil {
+		t.Fatal("/welcome submitted a turn")
+	}
+	if m.welcome == nil || m.welcome.step != welcomeIntro {
+		t.Fatalf("welcome = %v, want the walkthrough at the intro", m.welcome)
+	}
+
+	// khateway leads the provider step, cursor on it.
+	m = pressKeys(m, "enter")
+	if got := m.providerChoices(); len(got) == 0 || got[0] != "khateway" || m.welcome.provIdx != 0 {
+		t.Fatalf("choices = %v (cursor %d), want khateway first with the cursor on it",
+			got, m.welcome.provIdx)
+	}
+
+	// esc closes it again without persisting anything.
+	m = pressKeys(m, "esc")
+	if m.welcome != nil {
+		t.Error("esc did not close the walkthrough")
 	}
 }

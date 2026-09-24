@@ -1037,6 +1037,12 @@ func (m *Model) command(input string) tea.Cmd {
 	case "/settings", "/config":
 		m.OpenSettings(rowProvider)
 
+	case "/welcome":
+		// Re-run the first-run walkthrough on demand: esc only
+		// dismisses it for the session, so this is the way back in
+		// once any setup step has persisted something.
+		m.OpenWelcome()
+
 	case "/mode":
 		if len(parts) < 2 {
 			m.openModePicker()

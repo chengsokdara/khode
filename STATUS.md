@@ -10,6 +10,18 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Walkthrough: khateway first + /welcome re-run (2026-09-24):** the
+first-run walkthrough now treats khateway as the first choice — it leads
+the provider list (`khateway, anthropic, openai, <customs>, custom…`)
+and the cursor starts on it, with the row hint saying "khode native ·
+one account, every upstream model". Esc semantics are now documented and
+extendable: esc only dismisses the walkthrough for the session — while
+nothing is configured (no key, no custom provider, no model choice) it
+reopens on every launch — and a new `/welcome` command re-runs it any
+time, so a user who got partway through (or wants to change setup) has a
+way back in. Completion popup and /help list it via the shared
+slashCommands table.
+
 **Khateway endpoint baked in (2026-09-24):** `DefaultKhatewayEndpoint`
 (now `https://khateway.chengsokdara.workers.dev/v1`, confirmed from
 ~/Apps/khateway's wrangler config + live probe: /health 200, keyless
@@ -601,4 +613,5 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-24 | khateway device sign-in: `/login` runs the RFC 8628 flow (internal/khateway client + ui/devicelogin.go dialog — mint, show URL+code, poll, bank the personal key into auth.json, khateway active, model auto-pick); gateway now also bills keyless traffic to a funded guest-pool account (hard ceiling on anonymous usage). Wire tests + live probe | (this commit) |
 | 2026-09-24 | Keyless removed: khateway needs sign-in (`/login`) or a real key — `config.KeyOptional` deleted (pre-flight stops keyless khateway turns, pointing at /login + /settings), `khatewayAnonKey`/`khatewayAccessSecret`/`x-khateway-access` gone (construction-only `khatewayUnauthenticatedPlaceholder`, `KHATEWAY_API_KEY` still wins), walkthrough gains a khateway access step (browser sign-in vs paste; sign-in dialog dispatched above welcome/settings, esc returns to the choice), settings api-key row offers the same choice, build-release.sh bakes no secret | (this commit) |
 | 2026-09-24 | khateway default endpoint baked in: `DefaultKhatewayEndpoint` + `internal/khateway.DefaultBaseURL` now the deployed gateway (`https://khateway.chengsokdara.workers.dev/v1`; localhost:8787 was the dev default) — fresh installs need no config, `KHATEWAY_BASE_URL` overrides for local dev; guard test pins the https default | (this commit) |
+| 2026-09-24 | Walkthrough: khateway is the first choice (leads the provider list, cursor starts on it, "khode native" hint); esc-skip semantics documented (reopens every launch while nothing is configured) and `/welcome` added to re-run the walkthrough any time (completion popup + /help) | (this commit) |
 | 2026-09-24 | SUPERSEDED same day (keyless removed): khateway keyless-gate access secret — official builds bake `llm.khatewayAccessSecret` at compile time (`KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh`, ldflags) and send it as `x-khateway-access` on every khateway request (both SDK faces + `FetchModels`); repo builds send no header — a gated gateway answers 401 and they need `KHATEWAY_API_KEY`. Wire tests pin header on/off per build type | (this commit) |

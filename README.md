@@ -22,11 +22,14 @@ go build -o khode ./cmd/khode   # or: go run ./cmd/khode
 ```
 
 No API key is required to launch. The first start walks you through it —
-what khode is, pick a provider (Anthropic, OpenAI, khateway, or your own
-endpoint), paste a key for the ones that need it, and for gateway/custom
+what khode is, pick a provider (khateway leads — khode's first-class
+native gateway — then Anthropic, OpenAI, or your own endpoint), sign in
+or paste a key for the ones that need it, and for gateway/custom
 endpoints pick a model from the freshly fetched list — then ends with
 suggestions for what to try first (`enter` to start chatting, `esc`
-skips). Keys are stored in `~/.khode/auth.json` (owner-only); setting
+skips). Skipping is only for the session: while nothing is configured
+the walkthrough reopens on every launch, and `/welcome` re-runs it any
+time. Keys are stored in `~/.khode/auth.json` (owner-only); setting
 `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment also works
 and wins over the stored key. The status line tracks how full the
 model's context window is (`ctx NN%`, warning-colored near the

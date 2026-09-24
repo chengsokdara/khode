@@ -1,13 +1,16 @@
 package ui
 
 // welcome.go — the first-run walkthrough. khode opens it when no
-// credentials exist anywhere: intro, provider (built-ins, any custom
+// credentials exist anywhere: intro, provider (khateway leads — khode's
+// first-class native provider — then the other built-ins, any custom
 // provider already configured, or an inline form to add one), api key,
 // and a ready card with what to try first. Picking khateway detours
 // through an access step — browser device sign-in or a pasted portal
-// key; there is no keyless path. Esc skips it at any point — khode
-// stays usable, and the pre-flight check points at /settings (or
-// /login for khateway) if a turn is attempted without a key or model.
+// key; there is no keyless path. Esc skips it at any point, but only
+// for the session: while nothing is configured it reopens on every
+// launch, and /welcome re-runs it any time. khode stays usable either
+// way — the pre-flight check points at /settings (or /login for
+// khateway) if a turn is attempted without a key or model.
 
 import (
 	"fmt"
@@ -78,20 +81,26 @@ func (m *Model) OpenWelcome() {
 	url.Placeholder = "http://localhost:11434/v1"
 
 	w := &welcome{input: in, cName: name, cURL: url}
-	// The provider cursor starts on the configured provider.
-	w.provIdx = indexOf(m.providerNames(), m.cfg.Provider)
-	if w.provIdx < 0 {
-		w.provIdx = 0
-	}
+	// The walkthrough leads with khateway — khode's first-class native
+	// provider — and the cursor starts on it; the active provider keeps
+	// its ● marker in the list.
+	w.provIdx = 0
 	w.focusCustom()
 	m.welcome = w
 }
 
-// providerChoices lists the walkthrough's provider options: the
-// built-ins, any custom providers already configured, and the entry
-// that opens the inline add form.
+// providerChoices lists the walkthrough's provider options: khateway
+// first (khode's own provider — pick it, sign in, go), then the
+// remaining built-ins, any custom providers already configured, and
+// the entry that opens the inline add form.
 func (m *Model) providerChoices() []string {
-	return append(m.providerNames(), welcomeCustomEntry)
+	choices := []string{"khateway"}
+	for _, n := range m.providerNames() {
+		if !strings.EqualFold(n, "khateway") {
+			choices = append(choices, n)
+		}
+	}
+	return append(choices, welcomeCustomEntry)
 }
 
 // focusCustom moves the custom form's input focus to its current field.
@@ -336,16 +345,6 @@ func (m *Model) commitWelcomeKey() tea.Cmd {
 	return m.fetchModelsCmd()
 }
 
-// indexOf returns i's position in xs, or -1.
-func indexOf(xs []string, x string) int {
-	for i, v := range xs {
-		if v == x {
-			return i
-		}
-	}
-	return -1
-}
-
 // stepDots renders walkthrough progress: filled dots up to the current
 // step, hollow ones after.
 func stepDots(cur, total int) string {
@@ -388,7 +387,7 @@ func (m *Model) welcomeView() string {
 			case name == welcomeCustomEntry:
 				line = dimStyle.Render("add a custom provider — Ollama, OpenRouter, any OpenAI-compatible URL")
 			case strings.EqualFold(name, "khateway"):
-				line += dimStyle.Render("  self-hosted router · one key, every upstream model")
+				line += dimStyle.Render("  khode native · one account, every upstream model")
 				if u := m.cfg.BaseURL(name); u != "" {
 					line += dimStyle.Render("  " + clip(u, 24))
 				}

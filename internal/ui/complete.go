@@ -26,6 +26,7 @@ var slashCommands = []slashCommand{
 	{"sessions", "", "switch session (picker)"},
 	{"settings", "", "configure keys, provider, model, MCP, hooks"},
 	{"config", "", "alias of /settings"},
+	{"welcome", "", "re-run the setup walkthrough (provider, key/sign-in, model)"},
 	{"model", "", "model picker · /model <name> sets it directly"},
 	{"mode", "[name]", "permission mode picker · shift+tab cycles"},
 	{"compact", "", "summarize older turns to shrink the context"},
