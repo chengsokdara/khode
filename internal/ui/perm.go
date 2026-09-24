@@ -84,19 +84,21 @@ func clampScroll(offset, total, rows int) int {
 	return max(0, min(offset, total-rows))
 }
 
-// mousePermClick handles a left press while the approval dialog is open:
-// on the thumb it starts a drag (remembering where in the thumb the
-// pointer landed), on the track it pages toward the click.
-func (m *Model) mousePermClick(msg tea.MouseClickMsg) {
+// mousePermClick handles a left press while the approval dialog is
+// open: on the thumb it starts a drag (remembering where in the thumb
+// the pointer landed), on the track it pages toward the click. It
+// reports whether the press landed in the scrollbar gutter, which
+// consumes it before the click-region dispatch.
+func (m *Model) mousePermClick(msg tea.MouseClickMsg) bool {
 	if m.perm == nil || sbRows == 0 || msg.Button != tea.MouseLeft {
-		return
+		return false
 	}
 	if msg.X != sbCol && msg.X != sbCol+1 {
-		return
+		return false
 	}
 	row := msg.Y - sbTop
 	if row < 0 || row >= sbRows {
-		return
+		return false
 	}
 	switch {
 	case row >= sbThumbTop && row < sbThumbTop+sbThumbSize:
@@ -107,6 +109,7 @@ func (m *Model) mousePermClick(msg tea.MouseClickMsg) {
 	default:
 		m.scrollPerm(permBodyRows(m.height))
 	}
+	return true
 }
 
 // mousePermDrag scrubs the thumb while a grab is held: the pointer's
@@ -240,18 +243,18 @@ func (m Model) dialogWindow(lines []string) string {
 // renderPermBox assembles the dialog frame, centers it, and records the
 // scrollbar's screen geometry: the body starts four rows into the box
 // (border, padding, title, blank) and is left-aligned three columns in.
+// placeDialog resolves the footer chips staged by the helpLine builder.
 func (m Model) renderPermBox(title, body, help string) string {
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help))
 	sbCol = (m.width-lipgloss.Width(box))/2 + permBodyWidth(m.width) + 5
 	sbTop = (m.height-lipgloss.Height(box))/2 + 4
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }
 
-// scrollHints is the leading footer fragment of a dialog whose body
-// overflows its window.
-func scrollHints() string {
-	return keyHint("↑↓/pgup/pgdn", "scroll") + dimStyle.Render("  ·  ") +
-		keyHint("home/end", "jump") + dimStyle.Render("  ·  ")
+// scrollHints prepends the scrolling chips of a dialog whose body
+// overflows its window; they name compound keys, so they stay inert.
+func (h *helpLine) scrollHints() *helpLine {
+	return h.static("↑↓/pgup/pgdn", "scroll").sep().static("home/end", "jump").sep()
 }
 
 // autoResolvePerm approves an open dialog when the just-switched mode
@@ -301,13 +304,13 @@ func (m *Model) permView() string {
 	}
 	lines := m.permBodyLines()
 
-	help := keyHint("y", "allow") + dimStyle.Render("  ·  ") +
-		keyHint("n/esc", "deny") + dimStyle.Render("  ·  ") +
-		keyHint("shift+tab", "cycle mode")
+	hl := newHelpLine()
 	if len(lines) > permBodyRows(m.height) {
-		help = scrollHints() + help
+		hl.scrollHints()
 	}
-	return m.renderPermBox(title, m.dialogWindow(lines), help)
+	hl.chip("y", "allow", "y").sep().chip("n/esc", "deny", "n").sep().
+		chip("shift+tab", "cycle mode", "shift+tab")
+	return m.renderPermBox(title, m.dialogWindow(lines), hl.String())
 }
 
 // planView renders the plan-approval dialog: the plan rendered as
@@ -316,12 +319,12 @@ func (m *Model) planView(req agent.Request) string {
 	title := dialogTitle("plan", "approve to switch to accept-edits")
 	lines := m.permBodyLines()
 
-	help := keyHint("y", "approve — implement") + dimStyle.Render("  ·  ") +
-		keyHint("n/esc", "keep planning")
+	hl := newHelpLine()
 	if len(lines) > permBodyRows(m.height) {
-		help = scrollHints() + help
+		hl.scrollHints()
 	}
-	return m.renderPermBox(title, m.dialogWindow(lines), help)
+	hl.chip("y", "approve — implement", "y").sep().chip("n/esc", "keep planning", "n")
+	return m.renderPermBox(title, m.dialogWindow(lines), hl.String())
 }
 
 // requestTarget extracts a path argument for the dialog title.

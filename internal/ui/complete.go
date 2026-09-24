@@ -168,8 +168,10 @@ func (m *Model) acceptCommand() tea.Cmd {
 }
 
 // popupView renders the completion list anchored above the input box,
-// matching its width so the two read as one unit.
-func (m *Model) popupView() string {
+// matching its width so the two read as one unit. The click regions
+// come back with y relative to the box's top border row — chatView
+// knows where the box lands in the frame.
+func (m Model) popupView() (string, []region) {
 	p := m.popup
 	// The visible row count follows the clamped box height so the view
 	// and the budget accounting can never drift apart.
@@ -192,8 +194,9 @@ func (m *Model) popupView() string {
 	}
 
 	innerW := max(10, m.width-4) // same lane as the textarea
+	var rel []region
 	lines := make([]string, 0, rows+1)
-	for i := from; i < from+rows; i++ {
+	for i := from; i < from+rows && i < len(p.matches); i++ {
 		c := slashCommands[p.matches[i]]
 		col := "/" + c.name
 		if c.args != "" {
@@ -206,16 +209,20 @@ func (m *Model) popupView() string {
 		} else {
 			lines = append(lines, "  "+cmdStyle.Render(col)+dimStyle.Render("  "+desc))
 		}
+		// The box borders without padding: content starts one row and
+		// one column in.
+		rel = append(rel, region{x: 1, y: 1 + len(lines) - 1, w: innerW, kind: clickRow, idx: i})
 	}
 	body := strings.Join(lines, "\n")
 	if footer, ok := m.popupFooter(); ok {
 		body += "\n" + footer
 	}
-	return lipgloss.NewStyle().
+	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colBorder).
 		Width(innerW).
 		Render(body)
+	return box, rel
 }
 
 // popupFooter renders the key cheatsheet under the rows; it yields

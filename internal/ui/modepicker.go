@@ -77,8 +77,10 @@ func (m Model) modePickHeight() int {
 
 // modePickView renders the chooser anchored above the input box, same
 // lane and border as the completion popup. The row under the cursor is
-// highlighted; the active mode carries a dim mark.
-func (m Model) modePickView() string {
+// highlighted; the active mode carries a dim mark. The click regions
+// come back with y relative to the box's top border row, like the
+// popup's.
+func (m Model) modePickView() (string, []region) {
 	p := m.modePick
 	modes := perm.Modes()
 
@@ -88,6 +90,7 @@ func (m Model) modePickView() string {
 		nameW = max(nameW, len(string(mo)))
 	}
 
+	var rel []region
 	lines := make([]string, 0, len(modes))
 	for i, mo := range modes {
 		col := fmt.Sprintf("%-*s", nameW, string(mo))
@@ -102,16 +105,18 @@ func (m Model) modePickView() string {
 		default:
 			lines = append(lines, "  "+modeAccent(mo).Render(col)+dimStyle.Render("  "+desc))
 		}
+		rel = append(rel, region{x: 1, y: 1 + i, w: innerW, kind: clickRow, idx: i})
 	}
 	body := strings.Join(lines, "\n")
 	if footer, ok := m.modePickFooter(); ok {
 		body += "\n" + dimStyle.Render(footer)
 	}
-	return lipgloss.NewStyle().
+	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colBorder).
 		Width(innerW).
 		Render(body)
+	return box, rel
 }
 
 // modePickFooter renders the key cheatsheet under the rows; it yields

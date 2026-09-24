@@ -89,8 +89,12 @@ func (m *Model) toolsView() string {
 		start = min(max(0, p.cursor-toolsMaxRows/2), len(p.names)-toolsMaxRows)
 	}
 	end := start + min(toolsMaxRows, len(p.names))
+	// Content rows: title and its blank lead, then the list.
+	rowAt := 2
 	for j, n := range p.names[start:end] {
 		i := start + j
+		stage(relRegion{row: rowAt, kind: clickToggle, idx: i})
+		rowAt++
 		// Descriptions are single-line summaries here: collapse the
 		// whitespace (several tools and MCP servers use multi-line
 		// text) so one row stays one row.
@@ -117,17 +121,17 @@ func (m *Model) toolsView() string {
 	}
 	if len(p.names) > toolsMaxRows {
 		rows = append(rows, dimStyle.Render(fmt.Sprintf("  %d/%d · ↑/↓ more", p.cursor+1, len(p.names))))
+		stage(relRegion{row: rowAt, kind: clickMoreDown, idx: toolsMaxRows})
 	}
 
-	footer := keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
-		keyHint("enter", "toggle") + dimStyle.Render("  ·  ") +
-		keyHint("esc", "close")
+	footer := newHelpLine().static("↑/↓", "move").sep().
+		chip("enter", "toggle", "enter").sep().chip("esc", "close", "esc")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
 		dialogTitle("tools", fmt.Sprintf("%d/%d off", disabled, len(p.names))),
 		"",
 		strings.Join(rows, "\n"),
 		"",
-		footer,
+		footer.String(),
 	))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }

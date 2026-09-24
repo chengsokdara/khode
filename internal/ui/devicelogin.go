@@ -205,12 +205,15 @@ func (m *Model) applyKhatewayModel(msg khatewayModelMsg) tea.Cmd {
 func (m *Model) deviceLoginView() string {
 	dl := m.deviceLogin
 	rows := []string{dialogTitle("khateway sign-in", ""), ""}
+	urlAt := -1 // content row of the verification URL, for its click region
 
 	if dl.code.UserCode == "" {
 		rows = append(rows, dimStyle.Render(clip(dl.status, 60)), "")
 	} else {
 		rows = append(rows,
-			dimStyle.Render("Open this link and approve the request:"),
+			dimStyle.Render("Open this link and approve the request:"))
+		urlAt = len(rows)
+		rows = append(rows,
 			"  "+exampleStyle.Render(dl.code.VerificationURIComplete),
 			"",
 			dimStyle.Render("or enter the code shown there:"),
@@ -224,9 +227,12 @@ func (m *Model) deviceLoginView() string {
 		}
 		rows = append(rows, "")
 	}
-	footer := keyHint("o", "open browser") + dimStyle.Render("  ·  ") + keyHint("esc", "cancel")
-	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, append(rows, footer)...))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	if urlAt >= 0 {
+		stage(relRegion{row: urlAt, kind: clickOpenURL})
+	}
+	footer := newHelpLine().chip("o", "open browser", "o").sep().chip("esc", "cancel", "esc")
+	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, append(rows, footer.String())...))
+	return placeDialog(m.width, m.height, box)
 }
 
 // openBrowser best-effort launches the verification URL; failures are

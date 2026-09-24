@@ -418,7 +418,8 @@ func TestSetupBannerShowsWhileUnconfigured(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 
-	if hint := ansiStrip(m.setupHint()); !strings.Contains(hint, "/welcome") {
+	hint, _ := m.setupHint()
+	if hint = ansiStrip(hint); !strings.Contains(hint, "/welcome") {
 		t.Errorf("setup hint = %q, want a /welcome pointer", hint)
 	}
 	if frame := ansiStrip(m.chatView()); !strings.Contains(frame, "no API key for test") {
@@ -427,7 +428,7 @@ func TestSetupBannerShowsWhileUnconfigured(t *testing.T) {
 
 	// A resolvable key clears the banner.
 	m.auth.SetKey("test", "sk-test")
-	if hint := m.setupHint(); hint != "" {
+	if hint, _ := m.setupHint(); hint != "" {
 		t.Errorf("setup hint = %q, want none once a key resolves", hint)
 	}
 
@@ -435,11 +436,13 @@ func TestSetupBannerShowsWhileUnconfigured(t *testing.T) {
 	// banner points at the model picker instead.
 	t.Setenv("KHATEWAY_API_KEY", "")
 	m.cfg.Provider = "khateway"
-	if hint := ansiStrip(m.setupHint()); !strings.Contains(hint, "/login") {
+	hint, _ = m.setupHint()
+	if hint = ansiStrip(hint); !strings.Contains(hint, "/login") {
 		t.Errorf("khateway setup hint = %q, want /login", hint)
 	}
 	m.auth.SetKey("khateway", "khat-key")
-	if hint := ansiStrip(m.setupHint()); !strings.Contains(hint, "/settings") {
+	hint, _ = m.setupHint()
+	if hint = ansiStrip(hint); !strings.Contains(hint, "/settings") {
 		t.Errorf("no-model hint = %q, want the /settings pointer", hint)
 	}
 }

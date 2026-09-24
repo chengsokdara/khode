@@ -68,7 +68,7 @@ func TestModePickerSelectAndDismiss(t *testing.T) {
 	if m.modePick == nil {
 		t.Fatal("bare /mode did not open the picker")
 	}
-	if v := m.modePickView(); !strings.Contains(v, "↑↓ select") || !strings.Contains(v, "plan") {
+	if v, _ := m.modePickView(); !strings.Contains(v, "↑↓ select") || !strings.Contains(v, "plan") {
 		t.Errorf("picker view = %q", v)
 	}
 

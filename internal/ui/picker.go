@@ -87,18 +87,17 @@ func (m *Model) pickerView() string {
 			rows = append(rows, "  "+name+dimStyle.Render("  "+meta))
 		}
 	}
-	rows = listWindow(rows, m.picker.cursor, listMaxRows(m.height))
-	footer := keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
-		keyHint("enter", "open") + dimStyle.Render("  ·  ") +
-		keyHint("esc", "cancel")
+	rows = listWindowAt(rows, m.picker.cursor, listMaxRows(m.height), 2)
+	footer := newHelpLine().static("↑/↓", "move").sep().
+		chip("enter", "open", "enter").sep().chip("esc", "cancel", "esc")
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
 		dialogTitle("sessions", fmt.Sprintf("%d saved", len(m.picker.entries))),
 		"",
 		strings.Join(rows, "\n"),
 		"",
-		footer,
+		footer.String(),
 	))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }
 
 // clip shortens s to n runes with an ellipsis.

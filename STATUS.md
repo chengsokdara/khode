@@ -10,6 +10,36 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Every button clickable — mouse + keyboard parity (2026-09-24):** the
+TUI now answers left clicks everywhere its footers advertised keys: a
+render-time click-region registry (`internal/ui/click.go`, the
+scrollbar-geometry precedent generalized — every `View` repopulates
+package state with screen-space regions, and the click dispatcher
+hit-tests the press against the frame that rendered last). Keycap footer
+chips press their key (allow/deny/cycle on the approval and plan
+dialogs, enter/esc/f/n/tab/shift+tab across settings, /mcp, /model,
+/tools, sessions, the walkthrough, sign-in); list rows follow the
+select-then-activate convention (first click moves the ❯ cursor,
+clicking the row under it activates — double-click opens); /tools rows
+toggle at once (checkbox semantics); form rows focus their field, enum
+rows cycle, save rows commit; the /mode picker and completion popup run
+their row's action; the header and status-line mode chips cycle the
+permission mode; the setup banner's /welcome, /login, and /settings
+words run those commands; the sign-in dialog's verification URL opens
+the browser; and list windows' "↑/↓ N more" notes page the window.
+The welcome walkthrough's custom-provider form gained an explicit save
+row (it already had a save cursor position) so mouse users can commit.
+Key synthesis is the load-bearing trick: chips and row activation
+synthesize `tea.KeyPressMsg`s routed through the factored-out
+`handleKey`, so a button and its key stay one code path. Two render
+falls-out: `chatView`'s chrome budget now counts the transient band's
+rendered rows (not band count — the multi-row completion popup used to
+overflow the frame and clip the header), and region math forced exact
+mid-band geometry (bottom-anchored, trim-safe). A surface-sweep test
+renders all 20 surfaces asserting in-frame regions, and end-to-end
+tests click chips and rows through `Update`. Wheel, scrollbar, and
+shift-drag text selection are unchanged.
+
 **Setup banner in the chat frame (2026-09-24):** esc-skipping the
 walkthrough is still allowed — setup is never a wall — but it no longer
 lands in a silently dead chat. While the pre-flight would block a turn
@@ -628,3 +658,4 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-24 | Walkthrough: khateway is the first choice (leads the provider list, cursor starts on it, "khode native" hint); esc-skip semantics documented (reopens every launch while nothing is configured) and `/welcome` added to re-run the walkthrough any time (completion popup + /help) | (this commit) |
 | 2026-09-24 | Setup banner: while the pre-flight would block a turn (no key, or no model) the chat frame shows a persistent hint above the input — /welcome, /login (khateway), or /settings pointers; clears on resolve; a skipped walkthrough is no longer silent | (this commit) |
 | 2026-09-24 | SUPERSEDED same day (keyless removed): khateway keyless-gate access secret — official builds bake `llm.khatewayAccessSecret` at compile time (`KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh`, ldflags) and send it as `x-khateway-access` on every khateway request (both SDK faces + `FetchModels`); repo builds send no header — a gated gateway answers 401 and they need `KHATEWAY_API_KEY`. Wire tests pin header on/off per build type | (this commit) |
+| 2026-09-24 | Every button clickable (mouse + keyboard parity): render-time click-region registry (`ui/click.go`), footer chips synthesize their key through the factored-out `handleKey`, list rows select-then-activate, /tools rows toggle, form fields/enum/save clickable, mode chips + setup-banner commands + sign-in URL + ↑/↓ more notes all click-driven; welcome custom form gains a save row; chatView chrome counts transient rows (fixes header clipping under the multi-row popup); surface-sweep + end-to-end click tests | (this commit) |

@@ -137,27 +137,12 @@ func (m *Model) mcpPanelKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// mcpPanelView renders the server rows (status glyph, tool summary,
-// risk badge), a detail block for the highlighted server, and the key
-// footer — centered in the frame like the other dialogs. While the add
-// form is up, the form takes the frame.
-func (m *Model) mcpPanelView() string {
+// mcpRows renders one row per configured server: status glyph, tool
+// summary, risk badge. Split out so the click regions (staged by
+// listWindowAt) only cover the real server rows, never the placeholder.
+func (m *Model) mcpRows(regNames []string, nameW int) []string {
 	p := m.mcpPanel
-	if p.form != nil {
-		return m.mcpFormView()
-	}
-	regNames := m.tools.Names()
-
-	nameW := 0
-	for _, n := range p.names {
-		nameW = max(nameW, lipgloss.Width(n))
-	}
-	nameW = min(nameW, 20)
-
-	var rows []string
-	if len(p.names) == 0 {
-		rows = append(rows, dimStyle.Render("no MCP servers yet · n add one"))
-	}
+	rows := make([]string, 0, len(p.names))
 	for i, n := range p.names {
 		_, running := m.mcpClients[n]
 		tools := serverTools(regNames, n)
@@ -200,7 +185,33 @@ func (m *Model) mcpPanelView() string {
 		}
 		rows = append(rows, mark+glyph+" "+name+"  "+summary+"  "+badge)
 	}
-	rows = listWindow(rows, p.cursor, mcpMaxRows)
+	return rows
+}
+
+// mcpPanelView renders the server rows (status glyph, tool summary,
+// risk badge), a detail block for the highlighted server, and the key
+// footer — centered in the frame like the other dialogs. While the add
+// form is up, the form takes the frame.
+func (m *Model) mcpPanelView() string {
+	p := m.mcpPanel
+	if p.form != nil {
+		return m.mcpFormView()
+	}
+	regNames := m.tools.Names()
+
+	nameW := 0
+	for _, n := range p.names {
+		nameW = max(nameW, lipgloss.Width(n))
+	}
+	nameW = min(nameW, 20)
+
+	var rows []string
+	if len(p.names) == 0 {
+		rows = append(rows, dimStyle.Render("no MCP servers yet · n add one"))
+	} else {
+		rows = m.mcpRows(regNames, nameW)
+	}
+	rows = listWindowAt(rows, p.cursor, mcpMaxRows, 2)
 
 	// Detail block: the highlighted server's launch line and, when it
 	// is up, its tool names — the readable part of the old /mcp text.
@@ -223,13 +234,11 @@ func (m *Model) mcpPanelView() string {
 		}
 	}
 
-	footer := keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
-		keyHint("n", "add") + dimStyle.Render("  ·  ")
+	footer := newHelpLine().static("↑/↓", "move").sep().chip("n", "add", "n").sep()
 	if len(p.names) > 0 {
-		footer += keyHint("enter", "restart") + dimStyle.Render("  ·  ") +
-			keyHint("space", "tools") + dimStyle.Render("  ·  ")
+		footer.chip("enter", "restart", "enter").sep().chip("space", "tools", "space").sep()
 	}
-	footer += keyHint("esc", "close")
+	footer.chip("esc", "close", "esc")
 
 	body := append([]string{
 		dialogTitle("mcp", fmt.Sprintf("%d servers", len(p.names))),
@@ -239,9 +248,9 @@ func (m *Model) mcpPanelView() string {
 	if p.flash != "" {
 		body = append(body, "", flash(p.flash))
 	}
-	body = append(body, "", footer)
+	body = append(body, "", footer.String())
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, body...))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }
 
 // mcpFormView renders the add-server form inside the dialog frame: the
@@ -251,17 +260,17 @@ func (m *Model) mcpFormView() string {
 	body := []string{
 		dialogTitle("mcp", "add server"),
 		"",
-		strings.Join(serverFormView(p.form), "\n"),
+		strings.Join(serverFormView(p.form, 2), "\n"),
 	}
 	if p.flash != "" {
 		body = append(body, "", flash(p.flash))
 	}
 	body = append(body, "",
-		keyHint("↑/↓", "move")+dimStyle.Render("  ·  ")+
-			keyHint("tab", "next")+dimStyle.Render("  ·  ")+
-			keyHint("←/→", "cycle")+dimStyle.Render("  ·  ")+
-			keyHint("enter", "save")+dimStyle.Render("  ·  ")+
-			keyHint("esc", "cancel"))
+		newHelpLine().static("↑/↓", "move").sep().
+			chip("tab", "next", "tab").sep().
+			static("←/→", "cycle").sep().
+			chip("enter", "save", "enter").sep().
+			chip("esc", "cancel", "esc").String())
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, body...))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }

@@ -159,7 +159,7 @@ func (m *Model) modelPickView() string {
 		}
 		rows = append(rows, cur+dot+name)
 	}
-	rows = listWindow(rows, p.cursor, listMaxRows(m.height))
+	rows = listWindowAt(rows, p.cursor, listMaxRows(m.height), 4)
 
 	body := []string{
 		dialogTitle("model", sub),
@@ -181,11 +181,11 @@ func (m *Model) modelPickView() string {
 		body = append(body, "", dimStyle.Render(p.status))
 	}
 	body = append(body, "",
-		keyHint("↑/↓", "move")+dimStyle.Render("  ·  ")+
-			keyHint("enter", "use")+dimStyle.Render("  ·  ")+
-			keyHint("f", "fetch")+dimStyle.Render("  ·  ")+
-			keyHint("esc", "close")+dimStyle.Render("  ·  type to filter"))
+		newHelpLine().static("↑/↓", "move").sep().
+			chip("enter", "use", "enter").sep().
+			chip("f", "fetch", "f").sep().
+			chip("esc", "close", "esc").sep().note("type to filter").String())
 
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, body...))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }

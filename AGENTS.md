@@ -68,6 +68,8 @@ internal/ui/         Bubble Tea app
   picker.go            session picker overlay
   settings.go          /settings overlay: keys, provider, model, mode, MCP, hooks
   welcome.go           first-run walkthrough: intro → provider → key → ready
+  click.go             mouse click targets: regions recorded at render time,
+                       hit-tested on press; chips synthesize their key
   styles.go            lipgloss palette
 ```
 

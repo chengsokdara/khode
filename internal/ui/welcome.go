@@ -398,6 +398,7 @@ func (m *Model) welcomeView() string {
 				line += "  " + okStyle.Render("●")
 			}
 			rows = append(rows, cur+line)
+			stage(relRegion{row: 2 + i, kind: clickRow, idx: i}) // body rows start under head + blank
 		}
 		body = strings.Join(rows, "\n") + "\n\n" +
 			dimStyle.Render("  keys are stored per provider; you can switch any time.")
@@ -416,13 +417,24 @@ func (m *Model) welcomeView() string {
 		case 2:
 			cur3 = pickSel.Render("❯ ")
 		}
+		saveRow := "  " + dimStyle.Render("save · enter to commit")
+		if w.cField == 3 {
+			saveRow = pickSel.Render("❯ save · enter to commit")
+		}
 		body = strings.Join([]string{
 			cur1 + dimStyle.Render(fmt.Sprintf("  %-9s", "name")) + w.cName.View(),
 			cur2 + dimStyle.Render(fmt.Sprintf("  %-9s", "base url")) + w.cURL.View(),
 			cur3 + dimStyle.Render(fmt.Sprintf("  %-9s", "protocol")) + proto,
+			saveRow,
 			"",
 			dimStyle.Render("  the provider activates right away; its key can stay empty."),
 		}, "\n")
+		// Form rows carry their own actions: the fields focus, the
+		// protocol row cycles, the save row commits.
+		stage(relRegion{row: 2, kind: clickFormField, idx: 0})
+		stage(relRegion{row: 3, kind: clickFormField, idx: 1})
+		stage(relRegion{row: 4, kind: clickFormEnum})
+		stage(relRegion{row: 5, kind: clickFormSave})
 	case welcomeKhateway:
 		title = dialogTitle("khateway access", "")
 		choices := []struct{ main, sub string }{
@@ -436,6 +448,7 @@ func (m *Model) welcomeView() string {
 				cur = pickSel.Render("❯ ")
 			}
 			rows = append(rows, cur+line+dimStyle.Render("  "+ch.sub))
+			stage(relRegion{row: 4 + i, kind: clickRow, idx: i}) // rows follow the note and its blank
 		}
 		body = strings.Join(append([]string{
 			"  the gateway requires your account key — pick how to add it:",
@@ -477,6 +490,7 @@ func (m *Model) welcomeView() string {
 					cur = pickSel.Render("❯ ")
 				}
 				rows = append(rows, cur+w.models[i])
+				stage(relRegion{row: 2 + (i - start), kind: clickRow, idx: i})
 			}
 			body = strings.Join(rows, "\n")
 			if len(w.models) > windowH {
@@ -506,37 +520,47 @@ func (m *Model) welcomeView() string {
 		body = strings.Join(rows, "\n")
 	}
 
-	var footer string
+	var footer *helpLine
 	switch w.step {
 	case welcomeIntro:
-		footer = keyHint("enter", "start setup") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		footer = newHelpLine().chip("enter", "start setup", "enter").sep().chip("esc", "skip", "esc")
 	case welcomeProvider:
-		footer = keyHint("←/→", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		footer = newHelpLine().static("←/→", "choose").sep().
+			chip("enter", "continue", "enter").sep().chip("esc", "skip", "esc")
 	case welcomeCustom:
-		footer = keyHint("tab", "next field") + dimStyle.Render("  ·  ") + keyHint("←/→", "protocol") + dimStyle.Render("  ·  ") + keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back")
+		footer = newHelpLine().chip("tab", "next field", "tab").sep().
+			static("←/→", "protocol").sep().
+			chip("enter", "save", "enter").sep().chip("shift+tab", "back", "shift+tab")
 	case welcomeKhateway:
-		footer = keyHint("↑/↓", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		footer = newHelpLine().static("↑/↓", "choose").sep().
+			chip("enter", "continue", "enter").sep().
+			chip("shift+tab", "back", "shift+tab").sep().chip("esc", "skip", "esc")
 	case welcomeKey:
-		footer = keyHint("enter", "save") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+		footer = newHelpLine().chip("enter", "save", "enter").sep().
+			chip("shift+tab", "back", "shift+tab").sep().chip("esc", "skip", "esc")
 	case welcomeModel:
 		switch {
 		case w.fetching:
-			footer = keyHint("enter", "skip for now") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+			footer = newHelpLine().chip("enter", "skip for now", "enter").sep().chip("esc", "skip", "esc")
 		case w.fetchErr != "" || len(w.models) == 0:
-			footer = keyHint("enter", "continue") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+			footer = newHelpLine().chip("enter", "continue", "enter").sep().
+				chip("shift+tab", "back", "shift+tab").sep().chip("esc", "skip", "esc")
 		default:
-			footer = keyHint("↑/↓", "choose") + dimStyle.Render("  ·  ") + keyHint("enter", "use model") + dimStyle.Render("  ·  ") + keyHint("shift+tab", "back") + dimStyle.Render("  ·  ") + keyHint("esc", "skip")
+			footer = newHelpLine().static("↑/↓", "choose").sep().
+				chip("enter", "use model", "enter").sep().
+				chip("shift+tab", "back", "shift+tab").sep().chip("esc", "skip", "esc")
 		}
 	case welcomeReady:
-		footer = keyHint("enter", "start chatting")
+		footer = newHelpLine().chip("enter", "start chatting", "enter")
 	}
+	footerText := footer.String()
 	if w.savedMsg != "" {
-		footer = flash(w.savedMsg) + "\n" + footer
+		footerText = flash(w.savedMsg) + "\n" + footerText
 	}
 
 	steps := welcomeSteps - 1 // the custom form is a detour, not a step
 	head := lipgloss.JoinHorizontal(lipgloss.Center, title,
 		"  ", stepDots(min(w.step, steps-1), steps))
-	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, head, "", body, "", footer))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left, head, "", body, "", footerText))
+	return placeDialog(m.width, m.height, box)
 }

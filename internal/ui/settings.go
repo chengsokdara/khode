@@ -256,6 +256,7 @@ func (m *Model) keyChoiceView() []string {
 		} else {
 			out = append(out, "  "+line)
 		}
+		stage(relRegion{row: 2 + i, kind: clickRow, idx: i}) // body starts under title + blank
 	}
 	return out
 }
@@ -914,7 +915,7 @@ func (m *Model) settingsView() string {
 	var body []string
 	switch {
 	case s.form != nil:
-		body = serverFormView(s.form)
+		body = serverFormView(s.form, 2)
 	case s.view == viewProviderList:
 		title = dialogTitle("settings · providers", "n new custom · enter switch/edit · d remove")
 		body = m.providerListView()
@@ -939,24 +940,29 @@ func (m *Model) settingsView() string {
 	case s.savedMsg != "":
 		footer = flash(s.savedMsg)
 	case s.editor != nil:
-		footer = keyHint("enter", "save") + dimStyle.Render("  ·  ") +
-			keyHint("esc", "cancel") + dimStyle.Render("  ·  "+s.editor.hint)
+		footer = newHelpLine().chip("enter", "save", "enter").sep().
+			chip("esc", "cancel", "esc").sep().note(s.editor.hint).String()
 	default:
-		footer = keyHint("↑/↓", "move") + dimStyle.Render("  ·  ") +
-			keyHint("←/→", "change") + dimStyle.Render("  ·  ") +
-			keyHint("enter", "edit") + dimStyle.Render("  ·  ") +
-			keyHint("esc", "close")
+		footer = newHelpLine().static("↑/↓", "move").sep().
+			static("←/→", "change").sep().
+			chip("enter", "edit", "enter").sep().chip("esc", "close", "esc").String()
 	}
 
 	box := dialogBorder.Render(lipgloss.JoinVertical(lipgloss.Left,
 		title, "", strings.Join(body, "\n"), "", footer))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return placeDialog(m.width, m.height, box)
 }
 
 func (s *settings) rowsView(m *Model) []string {
 	rows := make([]string, 0, int(rowSentinel))
 	for i := 0; i < int(rowSentinel); i++ {
 		rows = append(rows, s.renderRow(m, settingsRow(i)))
+		// While an editor is open the rows stop being targets, the way
+		// the keys stop navigating. Body rows start two content rows
+		// down (title, blank).
+		if s.editor == nil {
+			stage(relRegion{row: 2 + i, kind: clickRow, idx: i})
+		}
 	}
 	return rows
 }
@@ -1087,7 +1093,7 @@ func (m *Model) mcpListView() []string {
 			out = append(out, "  "+line)
 		}
 	}
-	return listWindow(out, cur, listMaxRows(m.height))
+	return listWindowAt(out, cur, listMaxRows(m.height), 2)
 }
 
 func (m *Model) hookListView() []string {
@@ -1114,13 +1120,15 @@ func (m *Model) hookListView() []string {
 			out = append(out, "  "+line)
 		}
 	}
-	return listWindow(out, cur, listMaxRows(m.height))
+	return listWindowAt(out, cur, listMaxRows(m.height), 2)
 }
 
 // serverFormView renders an open form: label + live input per text row,
 // then the enum row and the save row. It is host-agnostic so both the
-// settings dialog and the /mcp panel's add form render identically.
-func serverFormView(f *serverForm) []string {
+// settings dialog and the /mcp panel's add form render identically, and
+// both render the rows starting at baseRow, where the click regions are
+// pinned.
+func serverFormView(f *serverForm, baseRow int) []string {
 	labels := f.labels()
 	rows := make([]string, 0, len(labels)+2)
 	for i, l := range labels {
@@ -1129,17 +1137,20 @@ func serverFormView(f *serverForm) []string {
 			marker = "❯ "
 		}
 		rows = append(rows, marker+fmt.Sprintf("%-10s", l)+f.inputs[i].View())
+		stage(relRegion{row: baseRow + i, kind: clickFormField, idx: i})
 	}
 	marker := "  "
 	if f.field == len(f.inputs) {
 		marker = "❯ "
 	}
 	rows = append(rows, marker+fmt.Sprintf("%-10s", f.enumLabel())+f.enumValue())
+	stage(relRegion{row: baseRow + len(f.inputs), kind: clickFormEnum})
 	if f.field == len(f.inputs)+1 {
 		rows = append(rows, pickSel.Render("❯ save · enter to commit"))
 	} else {
 		rows = append(rows, "  "+dimStyle.Render("save · enter to commit"))
 	}
+	stage(relRegion{row: baseRow + len(f.inputs) + 1, kind: clickFormSave})
 	return rows
 }
 
@@ -1300,7 +1311,7 @@ func (m *Model) providerListView() []string {
 			out = append(out, "  "+line)
 		}
 	}
-	return listWindow(out, cur, listMaxRows(m.height))
+	return listWindowAt(out, cur, listMaxRows(m.height), 2)
 }
 
 // openProviderForm edits the named custom provider, or a new one when
@@ -1548,11 +1559,14 @@ func (m *Model) cacheModelChoices(provider string, models []string) {
 func (m *Model) modelPickerView() []string {
 	p := m.settings.models
 	var out []string
+	rowAt := 2 // body rows start under the title and its blank
 	if p.adding {
 		out = append(out, pickSel.Render("❯ ")+fmt.Sprintf("%-6s", "new")+p.input.View())
+		rowAt++ // the add-input row is a focused editor, not a click target
 	}
 	if len(p.list) == 0 && !p.adding && !p.fetching {
 		out = append(out, dimStyle.Render("no models yet · f fetch · n add manually"))
+		rowAt++
 	}
 
 	const windowH = 12
@@ -1575,9 +1589,13 @@ func (m *Model) modelPickerView() []string {
 			name = pickSel.Render(name)
 		}
 		out = append(out, cur+dot+name)
+		stage(relRegion{row: rowAt, kind: clickRow, idx: i})
+		rowAt++
 	}
 	if len(p.list) > windowH {
 		out = append(out, dimStyle.Render(fmt.Sprintf("  %d/%d · ↑/↓ more", p.cursor+1, len(p.list))))
+		stage(relRegion{row: rowAt, kind: clickMoreDown, idx: windowH})
+		rowAt++
 	}
 	if p.fetching {
 		out = append(out, m.spinner.View()+statusStyle.Render(" fetching models…"))

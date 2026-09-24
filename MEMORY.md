@@ -232,6 +232,10 @@ If you are starting a session, or recovering after an interrupt:
 
 | 2026-09-23 | Scrollbar cutoff fix (user screenshot: bar cut into segments where plan text overflowed): glamour applies list indent AFTER wrapping and chroma never word-wraps code, so some lines exceeded the body width and the body pad's `Width()` wrapped them onto gutter-less physical rows — desyncing geometry and punching gaps. Fix is three layers: wrap markdown at bodyWidth−6 (`planWrapSlack`), ANSI-aware re-wrap of any still-wide line (`wrapOverflow`), `MaxWidth` on the pad as the hard guard | a padded/wrapped style must never be the thing guaranteeing one-row-per-logical-line when a scrollbar's geometry depends on it; give the formatter slack for post-wrap indents, re-wrap the stragglers, and truncate as the last resort |
 
+| 2026-09-24 | Click targets = render-time region registry (`ui/click.go`), not per-handler geometry recomputation | WYSIWYG — regions always describe the frame on screen (the scrollbar's `sb*` precedent generalized); one surface renders per frame, so no precedence checks beyond the kind |
+| 2026-09-24 | List rows select-then-activate (first click moves ❯, clicking the selected row = enter; double-click opens) | user choice — safe against accidental activation, standard TUI convention; checkboxes (/tools) and transient menus stay single-click |
+| 2026-09-24 | Footer chips + row activation synthesize `tea.KeyPressMsg`s routed through the factored-out `handleKey` | a button and its key can never drift apart — zero duplicated action logic across nine overlays |
+
 ## Gotchas & lessons learned
 
 - **khateway 504 + khode retry stack-up**: a stalled upstream reaches the
@@ -519,6 +523,19 @@ If you are starting a session, or recovering after an interrupt:
   exactly this; keep any seal-adjacent height change and its follow-up
   fill in separate event-loop turns.
 
+- **chatView's chrome budget must count rows, not bands**: the transient
+  band between viewport and input is multi-row (the completion popup is
+  `popupHeight()` rows), but the old budget counted `len(mid)` entries —
+  with the popup open the frame overflowed and the renderer trimmed the
+  top, clipping the header. Always sum `lipgloss.Height` per band (and
+  compute band positions bottom-anchored so the top-trim path can't
+  invalidate them).
+- **bubbletea v2 synthesized keys**: `KeyPressMsg` is `Key` — construct
+  `{Code: 'y', Text: "y"}` for runes, `{Code: KeyTab, Mod: ModShift}`
+  for shift+tab; `String()` then matches the real key names the handlers
+  switch on ("enter", "esc", "space", "shift+tab"…). Pinned by
+  `TestKeyPressStrings` — a drift here silently unhooks every chip.
+
 ## Session log (append one entry per session)
 
 | Date | Session summary | Commits |
@@ -574,3 +591,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-24 | Baked the deployed khateway URL in as the built-in default (user: "khateway base url should be built-in; it's first class native"): `llm.DefaultKhatewayEndpoint` and `internal/khateway.DefaultBaseURL` → `https://khateway.chengsokdara.workers.dev/v1` (verified from ~/Apps/khateway wrangler.jsonc + curl: /health 200, keyless /v1/models 401); device_test origin expectation + a llm guard test updated; gitignore commit landed first (.zcode, .zcodeignore, khode-test binary) for a clean tree | (this commit) |
 | 2026-09-24 | Walkthrough khateway-first + `/welcome` re-run (user: walkthrough must treat khateway as first choice; asked how to re-run it): providerChoices reorders khateway to the front with provIdx starting at 0, hint text says "khode native", `indexOf` helper deleted (cursor no longer seeks the configured provider — the ● marker still shows it); `/welcome` command + slashCommands row; walkthrough tests rewalked for the new order and `TestWelcomeCommandReopens` added | (this commit) |
 | 2026-09-24 | Setup banner (user agreed esc shouldn't land in a silently dead chat): `Model.setupHint` renders warn-styled, width-clipped text first in chatView's mid band whenever `hasCredentials` fails or `cfg.Model()` is empty — khateway names /login, others /welcome + /settings; `TestSetupBannerShowsWhileUnconfigured` walks all three states | (this commit) |
+| 2026-09-24 | Mouse + keyboard parity: `ui/click.go` region registry (stage → placeDialog flush; chatView bands shift their own), `handleKey` factored out of Update's KeyPressMsg case, footer chips/rows/forms/mode chips/banner commands/URL/more-notes wired across all overlays, welcome custom form gained a save row, chrome-budget row-count fix; tests: keyPress strings, listWindowAt staging, placeDialog geometry, end-to-end chip/row clicks through Update, 20-surface in-frame sweep; pty boot smoke clean | (this commit) |

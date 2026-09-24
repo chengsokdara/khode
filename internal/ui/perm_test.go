@@ -398,7 +398,7 @@ func TestModeCommand(t *testing.T) {
 	if m.modePick == nil {
 		t.Fatal("bare /mode did not open the mode picker")
 	}
-	if v := m.modePickView(); !strings.Contains(v, "plan") || !strings.Contains(v, "accept-edits") {
+	if v, _ := m.modePickView(); !strings.Contains(v, "plan") || !strings.Contains(v, "accept-edits") {
 		t.Errorf("/mode picker view = %q", v)
 	}
 	if m.modePick.cursor != 1 {

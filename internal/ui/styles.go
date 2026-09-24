@@ -229,24 +229,3 @@ func meter(frac float64, width int, warn bool) string {
 func listMaxRows(height int) int {
 	return min(12, max(4, height-10))
 }
-
-// listWindow slices a rendered dialog list to maxRows around the
-// cursor, marking the cut ends with count notes. Config-grown lists
-// (providers, MCP servers, hooks, sessions) stay inside the overlay's
-// height budget this way.
-func listWindow(rows []string, cursor int, maxRows int) []string {
-	if len(rows) <= maxRows {
-		return rows
-	}
-	start := max(0, min(cursor-maxRows/2, len(rows)-maxRows))
-	end := start + maxRows
-	out := make([]string, 0, maxRows+2)
-	if start > 0 {
-		out = append(out, dimStyle.Render(fmt.Sprintf("  ↑ %d more", start)))
-	}
-	out = append(out, rows[start:end]...)
-	if end < len(rows) {
-		out = append(out, dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(rows)-end)))
-	}
-	return out
-}

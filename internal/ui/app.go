@@ -429,13 +429,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case khatewayModelMsg:
 		return m, m.applyKhatewayModel(msg)
 
-	// The mouse is captured for the wheel and the dialog scrollbars
+	// The mouse is captured for the wheel and for clicks
 	// (MouseModeCellMotion in View): without it, terminals like iTerm2
 	// scroll their own scrollback out from under the alt buffer and the
 	// app never sees the tick. The wheel scrolls the conversation, or
-	// the open dialog's body; clicks and drags drive the dialog's
-	// scrollbar. Text selection still works through the terminal's
-	// override (shift-drag, option-drag in iTerm2).
+	// the open dialog's body; clicks press the chips and rows the
+	// renderers registered, and drive the approval dialog's scrollbar.
+	// Text selection still works through the terminal's override
+	// (shift-drag, option-drag in iTerm2).
 	case tea.MouseWheelMsg:
 		switch msg.Button {
 		case tea.MouseWheelUp:
@@ -454,8 +455,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		m.mousePermClick(msg)
-		return m, nil
+		if m.mousePermClick(msg) {
+			return m, nil // the dialog's scrollbar gutter consumed it
+		}
+		return m.mouseClicked(msg)
 
 	case tea.MouseMotionMsg:
 		m.mousePermDrag(msg)
@@ -467,92 +470,101 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Key releases are ignored outright: only presses drive the app.
 	case tea.KeyPressMsg:
-		if m.perm != nil {
-			return m, m.permKey(msg)
-		}
-		// The sign-in dialog tops every surface it can be opened from —
-		// /login in chat, the walkthrough's khateway step, the settings
-		// key choice — so it is answered before them; otherwise welcome
-		// would eat esc and close the whole walkthrough mid-sign-in.
-		if m.deviceLogin != nil {
-			return m, m.deviceLoginKey(msg)
-		}
-		if m.welcome != nil {
-			return m, m.welcomeKey(msg)
-		}
-		if m.settings != nil {
-			return m, m.settingsKey(msg)
-		}
-		if m.toolsPanel != nil {
-			return m, m.toolsKey(msg)
-		}
-		if m.mcpPanel != nil {
-			return m, m.mcpPanelKey(msg)
-		}
-		if m.picker != nil {
-			return m, m.pickerKey(msg)
-		}
-		if m.modelPick != nil {
-			return m, m.modelPickKey(msg)
-		}
-		if m.modePick != nil {
-			// The mode picker answers first; keys it skips fall through,
-			// so ctrl+c still reaches the base switch below.
-			if cmd, done := m.modePickKey(msg); done {
-				return m, cmd
-			}
-		}
-		if m.popup != nil {
-			// The completion list answers first; keys it skips fall
-			// through to the textarea below.
-			if cmd, done := m.popupKey(msg); done {
-				return m, cmd
-			}
-		}
-		switch {
-		case msg.String() == "ctrl+c":
-			m.stopStream()
-			return m, tea.Quit
-		case msg.String() == "esc" && m.streaming:
-			m.stopStream()
-			return m, nil
-		// Exactly plain enter submits; modified enters ("shift+enter",
-		// "alt+enter") fall through to the textarea, whose InsertNewline
-		// binding turns them into newlines.
-		case msg.String() == "enter":
-			if m.streaming {
-				return m, nil
-			}
-			return m, m.submit()
-		// shift+tab walks the permission modes. It only lands here when
-		// no overlay is open — welcome and settings use it for their own
-		// navigation — and it applies to the in-flight turn immediately:
-		// the loop re-reads the mode before every tool call, and a
-		// pending dialog auto-approves when the new mode allows it.
-		case msg.String() == "shift+tab":
-			m.cycleMode()
-			return m, nil
-		// pgup/pgdn page the conversation viewport (the wheel scrolls it
-		// too — see the MouseWheelMsg case).
-		case msg.String() == "pgup":
-			m.scroll += max(1, m.height-6)
-			return m, nil
-		case msg.String() == "pgdown":
-			m.scroll = max(0, m.scroll-max(1, m.height-6))
-			return m, nil
-		}
-		// The wheel is captured and swallowed (see View); every other
-		// key reaches the textarea.
-		var cmd tea.Cmd
-		m.textarea, cmd = m.textarea.Update(msg)
-		m.syncPopup()
-		return m, cmd
-	}
+		return m.handleKey(msg)
 
+	}
 	return m, nil
 }
 
+// handleKey routes one key press through the overlay precedence chain
+// and the base chat bindings. Clicks on keycap chips and list rows
+// synthesize keypresses into here, so a button and its key can never
+// drift apart.
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.perm != nil {
+		return m, m.permKey(msg)
+	}
+	// The sign-in dialog tops every surface it can be opened from —
+	// /login in chat, the walkthrough's khateway step, the settings
+	// key choice — so it is answered before them; otherwise welcome
+	// would eat esc and close the whole walkthrough mid-sign-in.
+	if m.deviceLogin != nil {
+		return m, m.deviceLoginKey(msg)
+	}
+	if m.welcome != nil {
+		return m, m.welcomeKey(msg)
+	}
+	if m.settings != nil {
+		return m, m.settingsKey(msg)
+	}
+	if m.toolsPanel != nil {
+		return m, m.toolsKey(msg)
+	}
+	if m.mcpPanel != nil {
+		return m, m.mcpPanelKey(msg)
+	}
+	if m.picker != nil {
+		return m, m.pickerKey(msg)
+	}
+	if m.modelPick != nil {
+		return m, m.modelPickKey(msg)
+	}
+	if m.modePick != nil {
+		// The mode picker answers first; keys it skips fall through,
+		// so ctrl+c still reaches the base switch below.
+		if cmd, done := m.modePickKey(msg); done {
+			return m, cmd
+		}
+	}
+	if m.popup != nil {
+		// The completion list answers first; keys it skips fall
+		// through to the textarea below.
+		if cmd, done := m.popupKey(msg); done {
+			return m, cmd
+		}
+	}
+	switch {
+	case msg.String() == "ctrl+c":
+		m.stopStream()
+		return m, tea.Quit
+	case msg.String() == "esc" && m.streaming:
+		m.stopStream()
+		return m, nil
+	// Exactly plain enter submits; modified enters ("shift+enter",
+	// "alt+enter") fall through to the textarea, whose InsertNewline
+	// binding turns them into newlines.
+	case msg.String() == "enter":
+		if m.streaming {
+			return m, nil
+		}
+		return m, m.submit()
+	// shift+tab walks the permission modes. It only lands here when
+	// no overlay is open — welcome and settings use it for their own
+	// navigation — and it applies to the in-flight turn immediately:
+	// the loop re-reads the mode before every tool call, and a
+	// pending dialog auto-approves when the new mode allows it.
+	case msg.String() == "shift+tab":
+		m.cycleMode()
+		return m, nil
+	// pgup/pgdn page the conversation viewport (the wheel scrolls it
+	// too — see the MouseWheelMsg case).
+	case msg.String() == "pgup":
+		m.scroll += max(1, m.height-6)
+		return m, nil
+	case msg.String() == "pgdown":
+		m.scroll = max(0, m.scroll-max(1, m.height-6))
+		return m, nil
+	}
+	// The wheel is captured and swallowed (see View); every other
+	// key reaches the textarea.
+	var cmd tea.Cmd
+	m.textarea, cmd = m.textarea.Update(msg)
+	m.syncPopup()
+	return m, cmd
+}
+
 func (m Model) View() tea.View {
+	resetRegions() // this frame's click targets; the renderers fill it
 	var content string
 	if m.width == 0 {
 		content = "starting…"
@@ -594,13 +606,23 @@ func (m Model) View() tea.View {
 	return v
 }
 
+// hdrChip/stChip are the mode chip's column and width in the header and
+// status rows, recorded by their renderers: they know the columns, and
+// chatView — the only caller — knows the rows.
+var (
+	hdrChipX, hdrChipW int
+	stChipX, stChipW   int
+)
+
 // header renders the sticky frame header: the gradient wordmark and
 // provider/model on the left, the session and a permission-mode chip
 // on the right, over a quiet rule.
 func (m Model) header() string {
 	left := logo() +
 		dimStyle.Render(fmt.Sprintf("  v%s · %s/%s", Version, m.provider.Name(), m.modelLabel()))
-	right := dimStyle.Render(clip(m.session.Name(), 24)) + " " + modeChip.Render(string(m.mode()))
+	chip := modeChip.Render(string(m.mode()))
+	right := dimStyle.Render(clip(m.session.Name(), 24)) + " " + chip
+	hdrChipW = 0
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 2 {
 		right = ""
@@ -608,6 +630,9 @@ func (m Model) header() string {
 		if gap < 0 {
 			gap = 0
 		}
+	} else {
+		hdrChipX = lipgloss.Width(left) + gap + lipgloss.Width(right) - lipgloss.Width(chip)
+		hdrChipW = lipgloss.Width(chip)
 	}
 	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, m.width)))
 	return left + strings.Repeat(" ", gap) + right + "\n" + rule
@@ -616,25 +641,38 @@ func (m Model) header() string {
 // setupHint renders the chat frame's persistent setup banner: while a
 // turn would be stopped by the pre-flight — no resolvable key, or a
 // provider with no model — the frame says so and points at the way out
-// (/welcome, /login, /settings). Esc-skipping the walkthrough is
-// allowed, but it must never land in a silently dead chat.
-func (m *Model) setupHint() string {
+// (/welcome, /login, /settings), each command clickable. Esc-skipping
+// the walkthrough is allowed, but it must never land in a silently dead
+// chat. The regions come back with y relative to the banner's top row;
+// chatView knows that row.
+func (m *Model) setupHint() (string, []region) {
 	var text string
+	var rel []region
+	hint := func(cmd string, idx int) {
+		if i := strings.Index(text, cmd); i >= 0 {
+			rel = append(rel, region{x: i, w: len(cmd), kind: clickHintCmd, idx: idx})
+		}
+	}
 	switch {
 	case !m.hasCredentials():
 		if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
 			text = "khateway not set up · /welcome to finish · /login signs in with your browser"
+			hint("/welcome", hintWelcome)
+			hint("/login", hintLogin)
 		} else {
 			text = fmt.Sprintf("no API key for %s · /welcome to finish · /settings → api key", m.cfg.Provider)
+			hint("/welcome", hintWelcome)
+			hint("/settings", hintSettings)
 		}
 	case m.cfg.Model() == "":
 		text = fmt.Sprintf("no model set for %s · /settings → model picks one (f fetches the list)", m.cfg.Provider)
+		hint("/settings", hintSettings)
 	default:
-		return ""
+		return "", nil
 	}
 	// One physical row: a wrapped hint would push the frame past the
 	// terminal height (same law as modeHint).
-	return warnStyle.Render(clip(text, m.width))
+	return warnStyle.Render(clip(text, m.width)), rel
 }
 
 // chatView assembles the full screen, spanning the terminal's whole
@@ -651,23 +689,43 @@ func (m Model) chatView() string {
 	inputBox := border.Render(m.textarea.View())
 	help := m.helpLine()
 
-	var mid []string
-	if hint := m.setupHint(); hint != "" {
-		mid = append(mid, hint) // setup banner: first, persistent
+	// The middle stack between the conversation and the input. Bands
+	// carry their click regions with y relative to the band's top row,
+	// because their absolute rows are only known once the whole stack's
+	// height has gone into the frame budget.
+	type midBand struct {
+		view string
+		rel  []region
+	}
+	var mid []midBand
+	if hint, rel := m.setupHint(); hint != "" {
+		mid = append(mid, midBand{hint, rel}) // setup banner: first, persistent
 	}
 	if m.popup != nil {
-		mid = append(mid, m.popupView()) // floats just above the input
+		view, rel := m.popupView() // floats just above the input
+		mid = append(mid, midBand{view, rel})
 	}
 	if hint := m.modeHint(); hint != "" {
-		mid = append(mid, hint) // permission-mode reminder, Claude-Code style
+		// The whole reminder line cycles the mode, as its tail says.
+		rel := []region{{x: 0, w: m.width, kind: clickKey, key: keyPress("shift+tab")}}
+		mid = append(mid, midBand{hint, rel})
 	}
 	if m.modePick != nil {
-		mid = append(mid, m.modePickView()) // floats just above the input
+		view, rel := m.modePickView() // floats just above the input
+		mid = append(mid, midBand{view, rel})
+	}
+
+	// The budget counts rendered rows, not bands: the popup and the
+	// mode picker are multi-row, and a short count here would push the
+	// frame past the terminal and clip the header.
+	midRows := 0
+	for _, band := range mid {
+		midRows += lipgloss.Height(band.view)
 	}
 
 	header := m.header()
 	hints := dimStyle.Render(" · /help commands · /settings config")
-	chrome := 3 + 1 + len(mid) + m.textarea.Height() + 2 + 1 // header 2, hints, status, mid, input, help
+	chrome := 3 + 1 + midRows + m.textarea.Height() + 2 + 1 // header 2, hints, status, mid, input, help
 	vrows := max(1, m.height-chrome)
 
 	// The viewport fills the middle; a conversation shorter than it
@@ -678,10 +736,31 @@ func (m Model) chatView() string {
 		vlines = append([]string{""}, vlines...)
 	}
 
+	// Click targets for the frame: the two mode chips (their columns
+	// were recorded by the renderers) and the middle stack, which sits
+	// right above the status line.
+	midTop := m.height - (m.textarea.Height() + 2) - 1 - midRows
+	if hdrChipW > 0 {
+		addRegion(region{x: hdrChipX, y: 0, w: hdrChipW, kind: clickModeChip})
+	}
+	if stChipW > 0 {
+		addRegion(region{x: stChipX, y: midTop - 1, w: stChipW, kind: clickModeChip})
+	}
+	y := midTop
+	for _, band := range mid {
+		for _, r := range band.rel {
+			r.y += y
+			addRegion(r)
+		}
+		y += lipgloss.Height(band.view)
+	}
+
 	parts := append(strings.Split(header, "\n"), hints)
 	parts = append(parts, vlines...)
 	parts = append(parts, status)
-	parts = append(parts, mid...)
+	for _, band := range mid {
+		parts = append(parts, band.view)
+	}
 	parts = append(parts, inputBox, help)
 	out := strings.Split(lipgloss.JoinVertical(lipgloss.Left, parts...), "\n")
 	if len(out) > m.height {
@@ -1247,6 +1326,11 @@ func (m *Model) statusLine() string {
 		right = build(false, false)
 	}
 	gap := max(1, m.width-lipgloss.Width(state)-lipgloss.Width(right))
+	// The chip leads `right` in every fallback, so its column is where
+	// the right group starts; the region is registered by chatView,
+	// which knows the status row.
+	stChipX = lipgloss.Width(state) + gap
+	stChipW = lipgloss.Width(modeChip.Render(string(m.mode())))
 	return state + strings.Repeat(" ", gap) + right
 }
 
