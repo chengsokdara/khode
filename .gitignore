@@ -1,5 +1,6 @@
 # binary
 /khode
+/khode-test
 dist/
 
 # local logs
@@ -9,6 +10,8 @@ logs/
 # other local tool state
 .crush/
 .aider*
+.zcode/
+.zcodeignore
 
 # macOS / tool-local junk
 .DS_Store
