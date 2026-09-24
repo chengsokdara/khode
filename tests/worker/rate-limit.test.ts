@@ -5,7 +5,7 @@
 // window math, the allowed boundary, Retry-After source and protocol guards
 // are tested without a workerd runtime. smoke_m10 pins the DO end-to-end.
 import { describe, expect, it } from 'vitest';
-import { buildGatewayRateChecks, loginAllowed, RATE_WINDOW_MS } from '../../src/worker/ratelimit/client';
+import { buildGatewayRateChecks, loginAllowed, RATE_WINDOW_MS, reserveSpend, settleSpend } from '../../src/worker/ratelimit/client';
 import { RateLimiterDO, type RateCheck } from '../../src/worker/ratelimit/do';
 import { loadFixtures } from './helpers';
 
@@ -20,7 +20,35 @@ describe('gateway rate-check builder (golden)', () => {
 /** Minimal SqlStorage fake running the same upsert/evict SQL the DO issues. */
 class FakeSql {
   rows: { scope: string; window_start: number; count: number }[] = [];
+  reservations: Map<string, { micros: number; updated_at: number }> = new Map();
   exec<T extends Record<string, unknown>>(query: string, ...params: unknown[]): Iterable<T> {
+    if (query.includes('reservations')) {
+      if (query.startsWith('INSERT')) {
+        const [scope, micros, now] = params as [string, number, number];
+        const row = this.reservations.get(scope);
+        const next = { micros: (row?.micros ?? 0) + micros, updated_at: now };
+        this.reservations.set(scope, next);
+        return [{ micros: next.micros }] as unknown as Iterable<T>;
+      }
+      if (query.startsWith('UPDATE')) {
+        const [amount, now, scope] = params as [number, number, string];
+        const row = this.reservations.get(scope);
+        if (!row) return [] as unknown as Iterable<T>;
+        row.micros -= amount;
+        row.updated_at = now;
+        return [{ micros: row.micros }] as unknown as Iterable<T>;
+      }
+      if (query.startsWith('DELETE')) {
+        if (query.includes('updated_at')) {
+          const [before] = params as [number];
+          for (const [scope, r] of [...this.reservations]) if (r.updated_at < before) this.reservations.delete(scope);
+        } else {
+          const [scope] = params as [string];
+          this.reservations.delete(scope);
+        }
+        return [] as unknown as Iterable<T>;
+      }
+    }
     if (query.startsWith('INSERT')) {
       const [scope, windowStart] = params as [string, number];
       let row = this.rows.find((r) => r.scope === scope && r.window_start === windowStart);
@@ -136,5 +164,43 @@ describe('loginAllowed through the DO (P2 — cross-isolate login buckets)', () 
 
   it('fails OPEN when the DO is unreachable', async () => {
     expect(await loginAllowed(fakeEnv(undefined, true), 'admin', '1.2.3.4')).toBe(true);
+  });
+});
+
+describe('spend reservations in the DO (P4)', () => {
+  function wiredEnv() {
+    const do_ = new RateLimiterDO({ storage: { sql: new FakeSql() } } as unknown as DurableObjectState, {});
+    const stub = {
+      idFromName: (_name: string) => 'global',
+      get: (_id: string) => ({
+        fetch: (url: string, init: RequestInit) => do_.fetch(new Request(url, init)),
+      }),
+    };
+    return { RATE_LIMITER: stub } as unknown as Parameters<typeof reserveSpend>[0];
+  }
+
+  it('reserves accumulate per scope and settle release them', async () => {
+    const env = wiredEnv();
+    expect(await reserveSpend(env, 'reserve:key:a', 500)).toBe(500);
+    expect(await reserveSpend(env, 'reserve:key:a', 250)).toBe(750);
+    expect(await reserveSpend(env, 'reserve:key:b', 10)).toBe(10); // independent scope
+    await settleSpend(env, 'reserve:key:a', 250);
+    expect(await reserveSpend(env, 'reserve:key:a', 0 + 0 + 1)).toBe(501); // 750 - 250 + 1
+    await settleSpend(env, 'reserve:key:a', 10_000); // over-settle clamps at 0
+    expect(await reserveSpend(env, 'reserve:key:a', 7)).toBe(7);
+  });
+
+  it('rejects malformed reserves and fails open when the DO is unreachable', async () => {
+    const do_ = new RateLimiterDO({ storage: { sql: new FakeSql() } } as unknown as DurableObjectState, {});
+    const bad = await do_.fetch(new Request('https://rate-limiter.internal/reserve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'x', micros: -5 }) }));
+    expect(bad.status).toBe(400);
+    const failing = {
+      RATE_LIMITER: {
+        idFromName: () => 'global',
+        get: () => ({ fetch: async () => { throw new Error('down'); } }),
+      },
+    } as unknown as Parameters<typeof reserveSpend>[0];
+    expect(await reserveSpend(failing, 'reserve:key:a', 500)).toBeNull(); // fail-open
+    await expect(settleSpend(failing, 'reserve:key:a', 500)).resolves.toBeUndefined(); // never throws
   });
 });

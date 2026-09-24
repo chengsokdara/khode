@@ -58,12 +58,12 @@ import { cors } from 'hono/cors';
 import { and, asc, eq, sql, sum } from 'drizzle-orm';
 import type { Env } from '../env';
 import { getDb } from '../db';
-import type { CanonicalChatRequest } from '../canonical';
+import type { CanonicalChatRequest, CanonicalEmbeddingsRequest } from '../canonical';
 import { apiKeys, balanceEntries, models, orgs, providers, requestLogs, users } from '../db/schema';
 import { resolveModelChain, type RoutingCandidate } from '../routing';
 import { verifyClientKey, type ApiKeyRow } from '../auth';
 import { getCacheSettings, getRateLimitSettings } from '../db/settings';
-import { buildGatewayRateChecks, checkRateLimits } from '../ratelimit/client';
+import { buildGatewayRateChecks, checkRateLimits, reserveSpend, settleSpend } from '../ratelimit/client';
 import type { RateLimitDecision } from '../ratelimit/do';
 import { buildCacheKey, evaluateCacheEligibility } from '../cache/key';
 import { lookupCacheEntry, storeCacheEntry } from '../cache/store';
@@ -421,6 +421,10 @@ interface LogDraft {
   /** M16 client attribution: OpenRouter-style HTTP-Referer / X-Title headers. */
   httpReferer: string | null;
   xTitle: string | null;
+  /** P4: the in-flight spend reservation parked in the DO while this request
+   * runs (capped keys only); released in writeRequestLog once the log row (and
+   * for streams, the final usage) is in. Absent = nothing reserved. */
+  spendReservation?: { scope: string; micros: number } | null;
 }
 
 /** request_logs.dialect vocabulary (schema contract): chat | responses | messages | embeddings. */
@@ -516,25 +520,43 @@ async function writeRequestLog(
     console.error('[gateway] failed to write request log:', e);
     return;
   }
+  // P4: the reservation is released once the log row exists — for streams
+  // only after the final usage lands (the real cost then speaks via the SUM).
+  const releaseReservation = async (): Promise<void> => {
+    const r = draft.spendReservation;
+    if (!r) return;
+    draft.spendReservation = null;
+    await settleSpend(env, r.scope, r.micros);
+  };
   if (draft.usageWatch) {
     const { upstream, stream, sse } = draft.usageWatch;
     const pending = sse ? watchUpstreamSseUsage(upstream, stream) : watchUpstreamJsonUsage(upstream, stream);
     waitUntil(
       pending
         .then(async (u) => {
-          if (!u || (u.tokensIn === null && u.tokensOut === null)) return;
+          if (!u || (u.tokensIn === null && u.tokensOut === null)) {
+            await releaseReservation();
+            return;
+          }
           const finalCost = costUsd(draft.pricingInput, draft.pricingOutput, u);
           await getDb(env)
             .update(requestLogs)
             .set({ tokensIn: u.tokensIn, tokensOut: u.tokensOut, costUsd: finalCost })
             .where(eq(requestLogs.id, id));
           if (draft.userId || draft.orgId) await debitBalanceUsage(env, draft, id, finalCost);
+          await releaseReservation();
         })
-        .catch((e) => console.error('[gateway] usage watch failed:', e)),
+        .catch(async (e) => {
+          console.error('[gateway] usage watch failed:', e);
+          await releaseReservation(); // never leak the reservation on a watch error
+        }),
     );
-  } else if (draft.userId || draft.orgId) {
-    // Non-stream path: usage is already final — debit off the hot path.
-    waitUntil(debitBalanceUsage(env, draft, id, cost));
+  } else {
+    await releaseReservation();
+    if (draft.userId || draft.orgId) {
+      // Non-stream path: usage is already final — debit off the hot path.
+      waitUntil(debitBalanceUsage(env, draft, id, cost));
+    }
   }
 }
 
@@ -827,6 +849,76 @@ async function enforceSpendCap(
 }
 
 /**
+ * P4: rough pre-request cost estimate for a capped key — input tokens from
+ * the usual chars/4 heuristic over all message text + tool arguments, output
+ * tokens from the effective max-output cap (client value, model default, or
+ * 4096 — itself capped so one big `max_tokens` cannot freeze a whole limit).
+ * null when the model has no pricing to estimate with (those requests never
+ * debit either) or the estimate rounds to zero.
+ */
+function estimateChatCostUsd(request: CanonicalChatRequest, cand: RoutingCandidate): number | null {
+  const { pricingInput, pricingOutput } = cand.model;
+  if (pricingInput == null && pricingOutput == null) return null;
+  let chars = 0;
+  for (const m of request.messages) {
+    chars += m.content.length;
+    for (const tc of m.toolCalls ?? []) chars += tc.arguments.length;
+  }
+  const tokensIn = Math.ceil(chars / 4);
+  const maxOut = request.options.maxTokens ?? cand.model.maxOutputTokens ?? 4096;
+  const tokensOut = Math.max(0, Math.min(Math.round(maxOut), 4096));
+  // pricing is USD per 1M tokens (same contract as costUsd).
+  const est =
+    (pricingInput != null ? (tokensIn / 1e6) * pricingInput : 0) +
+    (pricingOutput != null ? (tokensOut / 1e6) * pricingOutput : 0);
+  return est > 0 ? est : null;
+}
+
+/** P4: embeddings estimate — input-only (M13 cost model: tokensIn × pricing_input). */
+function estimateEmbeddingsCostUsd(request: CanonicalEmbeddingsRequest, cand: RoutingCandidate): number | null {
+  if (cand.model.pricingInput == null) return null;
+  const chars = request.input.reduce((a, t) => a + t.length, 0);
+  const est = (Math.ceil(chars / 4) / 1e6) * (cand.model.pricingInput as number); // USD per 1M
+  return est > 0 ? est : null;
+}
+
+/**
+ * P4: parks this request's estimated spend in the DO so concurrent capped-key
+ * requests see each other instead of all reading the same stale SUM. Refuses
+ * (429, same envelope as the M7 cap) when accrued + in-flight would reach the
+ * limit, releasing the just-added reservation; fail-open when the limiter is
+ * unreachable (soft cap as before). Runs after routing because the estimate
+ * needs the resolved model's pricing.
+ */
+async function reserveSpendCap(
+  c: Context<GatewayEnv>,
+  key: ApiKeyRow | null,
+  dialect: ClientDialect,
+  draft: LogDraft,
+  estUsd: number | null,
+): Promise<Response | null> {
+  if (key?.spendLimitUsd == null || estUsd == null) return null;
+  const micros = Math.round(estUsd * 1e6);
+  if (micros <= 0) return null;
+  const scope = `reserve:key:${key.id}`;
+  const reserved = await reserveSpend(c.env, scope, micros);
+  if (reserved == null) return null; // limiter down → soft cap as before
+  const [spent] = await getDb(c.env).select({ total: sum(requestLogs.costUsd) }).from(requestLogs).where(eq(requestLogs.apiKeyId, key.id));
+  const total = spent?.total != null ? Number(spent.total) : 0;
+  if (total + reserved / 1e6 >= key.spendLimitUsd) {
+    await settleSpend(c.env, scope, micros); // release ours before refusing
+    draft.error = `Spend cap reached: accrued $${total.toFixed(4)} plus $${(reserved / 1e6).toFixed(4)} in flight of the $${key.spendLimitUsd} limit for key '${key.name}'.`;
+    return errorJson(
+      dialect,
+      429,
+      dialectError(dialect, 429, draft.error, { code: 'spend_limit_exceeded', type: 'insufficient_quota' }),
+    );
+  }
+  draft.spendReservation = { scope, micros };
+  return null;
+}
+
+/**
  * M16: OpenAI-style success-path rate-limit headers from the BINDING bucket
  * (max count/limit — the same pick the 429 path names). Headers appear only
  * when limiting actually ran (settings on, limiter healthy).
@@ -984,6 +1076,11 @@ async function chatPipeline(
     const gated = await enforcePostRoutingGates(c, key!, dialect, draft, resolved) // middleware 401s without a key;
     if (gated.response) return gated.response;
     const rateHeaders = gated.rateHeaders;
+
+    // P4: park the estimated spend so concurrent capped-key requests cannot
+    // all slip past the same stale SUM (soft-cap overshoot).
+    const reserved = await reserveSpendCap(c, key!, dialect, draft, estimateChatCostUsd(parsed.request, resolved.candidate));
+    if (reserved) return reserved;
 
     // M11 semantic cache: opt-in per model (models.cache_enabled) OR per key
     // (api_keys.cache_enabled) while the deployment master switch is on, and
@@ -1343,6 +1440,10 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
     const gated = await enforcePostRoutingGates(c, key!, dialect, draft, resolved) // middleware 401s without a key;
     if (gated.response) return gated.response;
     const rateHeaders = gated.rateHeaders;
+
+    // P4: park the estimated spend (input-only cost model for embeddings).
+    const embReserved = await reserveSpendCap(c, key!, dialect, draft, estimateEmbeddingsCostUsd(parsed.request, resolved.candidate));
+    if (embReserved) return embReserved;
 
     const chain = [resolved.candidate, ...resolved.fallbacks];
 

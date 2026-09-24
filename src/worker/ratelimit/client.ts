@@ -97,3 +97,46 @@ export async function loginAllowed(env: Env, bucket: string, ip: string, max = 1
   ]);
   return decisions ? decisions[0].allowed : true;
 }
+
+/** One DO round-trip for the P4 spend-reservation actions. */
+async function callRateLimiter(env: Env, path: string, payload: unknown): Promise<Response> {
+  const id = env.RATE_LIMITER.idFromName('global');
+  return env.RATE_LIMITER.get(id).fetch(`https://rate-limiter.internal${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * P4: parks an estimated in-flight cost (micro-USD) for a capped key in the
+ * DO so concurrent requests see each other past the spend-cap SUM. Returns
+ * the scope's new reserved total, or null when the limiter is unreachable —
+ * fail-open, the request proceeds under the old soft-cap semantics.
+ */
+export async function reserveSpend(env: Env, scope: string, micros: number): Promise<number | null> {
+  try {
+    const res = await callRateLimiter(env, '/reserve', { scope, micros });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { reserved?: unknown };
+    if (typeof body.reserved !== 'number') throw new Error('malformed reserve response');
+    return body.reserved;
+  } catch (e) {
+    console.error('[ratelimit] reserve failed — failing open:', e);
+    return null;
+  }
+}
+
+/**
+ * P4: releases a reservation once the request's real cost is in request_logs
+ * (or the request died). Best-effort: an error just logs — the DO's
+ * RESERVATION_TTL_MS sweep reclaims leaked reservations.
+ */
+export async function settleSpend(env: Env, scope: string, micros: number): Promise<void> {
+  try {
+    const res = await callRateLimiter(env, '/settle', { scope, micros });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error('[ratelimit] settle failed (reservation TTL will clean up):', e);
+  }
+}

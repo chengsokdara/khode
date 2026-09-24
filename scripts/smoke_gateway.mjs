@@ -1942,6 +1942,28 @@ const mock = await startMockUpstream();
     JSON.stringify(cappedReq.body),
   );
 
+  // P4: reservation accounting — two CONCURRENT capped-key requests see each
+  // other's in-flight estimate, so only one slips past a cap that fits one
+  // request but not two (mock-chat est: 1 in-token + 4096 out-token default
+  // at $2/$8 per 1M ≈ $0.0328; limit $0.05 fits one, refuses the second).
+  const concurrentCap = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Concurrent Cap (smoke)', spend_limit_usd: 0.05 }) });
+  const race = await Promise.all([
+    fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), concurrentCap.body.key),
+    fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), concurrentCap.body.key),
+  ]);
+  const statuses = race.map((r) => r.status).sort();
+  check(
+    'P4 concurrent capped key: one request 200, the other 429 spend_limit_exceeded',
+    JSON.stringify(statuses) === '[200,429]' && race.every((r) => r.status === 200 || r.body?.error?.code === 'spend_limit_exceeded'),
+    JSON.stringify(race.map((r) => ({ status: r.status, code: r.body?.error?.code, msg: r.body?.error?.message }))),
+  );
+
+  // After settle the reservation is gone — the next sequential request rides
+  // the accrued total only (46 µ$ spent + ~$0.0328 estimate < $0.05).
+  const afterSettle = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), concurrentCap.body.key);
+  check('P4 reservation released after settle → next sequential request 200', afterSettle.status === 200, JSON.stringify({ status: afterSettle.status, code: afterSettle.body?.error?.code }));
+  await j(`/api/admin/api-keys/${concurrentCap.body.id}`, { method: 'DELETE' });
+
   await j(`/api/admin/api-keys/${restricted.body.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: false }) });
   const disabledReq = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), restricted.body.key);
   check('M7 disabled key → 401 (disabled keys are no longer anonymous riders)', disabledReq.status === 401, String(disabledReq.status));

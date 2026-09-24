@@ -20,12 +20,23 @@
 // ES class — no `cloudflare:workers` import, clean under tsc and vitest):
 //   POST /check  { checks: [{ kind, scope, limit, windowMs }] }
 //   →            { results: [{ kind, scope, limit, allowed, count, resetAfterMs }] }
+//   POST /reserve { scope, micros } → { reserved }   (P4 in-flight spend, added)
+//   POST /settle  { scope, micros } → { reserved }   (P4 in-flight spend, released)
 // Every check is INCREMENTED even when a later check denies — a rejected
 // request still counts toward its other buckets. That over-count is the
 // standard, safe direction for rate limiting.
+//
+// P4 spend reservations: the gateway parks each capped key's ESTIMATED
+// in-flight cost here so concurrent requests cannot all slip past the same
+// stale spend-cap SUM (the soft-cap overshoot). Reservations auto-expire
+// (RESERVATION_TTL_MS) so a crashed request's estimate cannot inflate a key
+// forever; the real cost takes over via request_logs once the row is written.
+export const RESERVATION_TTL_MS = 5 * 60_000;
+
 export class RateLimiterDO {
   private readonly sql: SqlStorage;
   private tableReady = false;
+  private resTableReady = false;
   private calls = 0;
 
   constructor(state: DurableObjectState, _env: unknown) {
@@ -45,23 +56,71 @@ export class RateLimiterDO {
     this.tableReady = true;
   }
 
+  private ensureReservationsTable(): void {
+    if (this.resTableReady) return;
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS reservations (
+         scope TEXT NOT NULL PRIMARY KEY,
+         micros INTEGER NOT NULL,
+         updated_at INTEGER NOT NULL
+       )`,
+    );
+    this.resTableReady = true;
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method !== 'POST' || url.pathname !== '/check') {
+    if (request.method !== 'POST' || (url.pathname !== '/check' && url.pathname !== '/reserve' && url.pathname !== '/settle')) {
       return Response.json({ error: 'not found' }, { status: 404 });
     }
-    let checks: unknown;
+    let body: unknown;
     try {
-      checks = (await request.json() as { checks?: unknown }).checks;
+      body = await request.json();
     } catch {
       return Response.json({ error: 'invalid JSON body' }, { status: 400 });
-    }
-    if (!Array.isArray(checks)) {
-      return Response.json({ error: 'checks must be an array' }, { status: 400 });
     }
 
     this.ensureTable();
     const now = Date.now();
+
+    if (url.pathname === '/reserve' || url.pathname === '/settle') {
+      const { scope, micros } = body as { scope?: unknown; micros?: unknown };
+      this.ensureReservationsTable();
+      if (typeof scope !== 'string' || !scope || typeof micros !== 'number' || !Number.isFinite(micros) || micros <= 0) {
+        return Response.json({ error: 'scope and a positive micros are required' }, { status: 400 });
+      }
+      const amount = Math.round(micros);
+      if (url.pathname === '/reserve') {
+        const rows = [
+          ...this.sql.exec(
+            `INSERT INTO reservations (scope, micros, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT (scope) DO UPDATE SET micros = micros + excluded.micros, updated_at = excluded.updated_at
+             RETURNING micros`,
+            scope,
+            amount,
+            now,
+          ),
+        ];
+        return Response.json({ reserved: Number(rows[0]?.micros ?? amount) });
+      }
+      // /settle: subtract, clamp at zero (a settle for an expired/unknown
+      // reservation is a no-op, never negative debt).
+      const rows = [
+        ...this.sql.exec(`UPDATE reservations SET micros = micros - ?, updated_at = ? WHERE scope = ? RETURNING micros`, amount, now, scope),
+      ];
+      let reserved = Number(rows[0]?.micros ?? 0);
+      if (reserved <= 0) {
+        this.sql.exec('DELETE FROM reservations WHERE scope = ?', scope);
+        reserved = 0;
+      }
+      return Response.json({ reserved });
+    }
+
+    const checks = (body as { checks?: unknown }).checks;
+    if (!Array.isArray(checks)) {
+      return Response.json({ error: 'checks must be an array' }, { status: 400 });
+    }
+
     const results: RateLimitDecision[] = [];
     for (const raw of checks) {
       const c = raw as Partial<RateCheck>;
@@ -94,11 +153,15 @@ export class RateLimiterDO {
       });
     }
 
-    // Amortized eviction: windows are ≤ 5 min long in practice (M10 uses
-    // 60 s), so anything older than 10 minutes is dead weight. A small table
-    // scan every 50th call keeps the storage bounded without a per-request cost.
+    // Amortized eviction: rate windows are ≤ 5 min long in practice (M10 uses
+    // 60 s), so anything older than 10 minutes is dead weight, and a P4
+    // reservation older than its TTL is a leak (its request died without
+    // settling). A small table scan every 50th call keeps storage bounded
+    // without a per-request cost.
     if (++this.calls % 50 === 0) {
       this.sql.exec('DELETE FROM counters WHERE window_start < ?', now - 600_000);
+      this.ensureReservationsTable();
+      this.sql.exec('DELETE FROM reservations WHERE updated_at < ?', now - RESERVATION_TTL_MS);
     }
 
     return Response.json({ results });
