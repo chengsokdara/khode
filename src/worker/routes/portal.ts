@@ -25,10 +25,10 @@ import {
   createUserSessionToken,
   generateClientKey,
   isSecureRequest,
-  loginAllowed,
   portalAuth,
   revokeUserSession,
 } from '../auth';
+import { loginAllowed } from '../ratelimit/client';
 
 type UserRow = typeof users.$inferSelect;
 type PortalEnv = { Bindings: Env; Variables: { userId: string; user: UserRow } };
@@ -123,7 +123,7 @@ portalApp.post('/signup', async (c) => {
   // Only validated signup attempts consume the budget — validation failures
   // reveal nothing and would let a noisy smoke run lock the bucket.
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('portal-signup', ip, 20)) return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
+  if (!(await loginAllowed(c.env, 'portal-signup', ip, 20))) return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
   if ((await getPublicSignup(c.env)) === 'off') {
     return c.json(apiErr('Public signups are currently disabled on this Khateway instance.'), 403);
   }
@@ -151,7 +151,7 @@ portalApp.post('/signup', async (c) => {
 
 portalApp.post('/login', async (c) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('portal-login', ip)) return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
+  if (!(await loginAllowed(c.env, 'portal-login', ip))) return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
   const body = await readJson(c);
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';

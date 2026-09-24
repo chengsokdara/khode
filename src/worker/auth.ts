@@ -201,20 +201,7 @@ export function timingSafeStrEqual(a: string, b: string): boolean {
   return safeEqualStr(a, b);
 }
 
-// --- login rate limiting (in-memory, per isolate) ---
-// Bucketed per surface: an admin-login burst never locks out portal signups
-// (or vice versa) from the same IP.
-
-const attempts = new Map<string, { count: number; resetAt: number }>();
-
-export function loginAllowed(bucket: string, ip: string, max = 10): boolean {
-  const key = `${bucket}:${ip}`;
-  const now = Date.now();
-  const entry = attempts.get(key);
-  if (!entry || entry.resetAt < now) {
-    attempts.set(key, { count: 1, resetAt: now + 60_000 });
-    return true;
-  }
-  entry.count += 1;
-  return entry.count <= max;
-}
+// --- login rate limiting ---
+// P2: the per-isolate memory map moved to the RateLimiterDO (cross-isolate) —
+// loginAllowed now lives in ratelimit/client.ts and takes env. Bucketing is
+// unchanged: per surface + IP in fixed 1-minute windows.

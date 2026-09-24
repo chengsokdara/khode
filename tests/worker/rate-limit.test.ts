@@ -5,7 +5,7 @@
 // window math, the allowed boundary, Retry-After source and protocol guards
 // are tested without a workerd runtime. smoke_m10 pins the DO end-to-end.
 import { describe, expect, it } from 'vitest';
-import { buildGatewayRateChecks, RATE_WINDOW_MS } from '../../src/worker/ratelimit/client';
+import { buildGatewayRateChecks, loginAllowed, RATE_WINDOW_MS } from '../../src/worker/ratelimit/client';
 import { RateLimiterDO, type RateCheck } from '../../src/worker/ratelimit/do';
 import { loadFixtures } from './helpers';
 
@@ -106,5 +106,35 @@ describe('RateLimiterDO fixed-window semantics', () => {
     expect(wrong.status).toBe(404);
     const get = await do_.fetch(new Request('https://rate-limiter.internal/check', { method: 'GET' }));
     expect(get.status).toBe(404);
+  });
+});
+
+describe('loginAllowed through the DO (P2 — cross-isolate login buckets)', () => {
+  /** Env stub whose RATE_LIMITER binding drives the REAL DO against a FakeSql. */
+  function fakeEnv(do_?: RateLimiterDO, failing = false) {
+    const stub = {
+      idFromName: (_name: string) => 'global',
+      get: (_id: string) => ({
+        fetch: async (url: string, init: RequestInit) => {
+          if (failing) throw new Error('DO unreachable');
+          return do_!.fetch(new Request(url, init));
+        },
+      }),
+    };
+    return { RATE_LIMITER: stub } as unknown as Parameters<typeof loginAllowed>[0];
+  }
+
+  it('counts per surface + IP in a fixed window and denies past the limit', async () => {
+    const env = fakeEnv(makeDo().check ? new RateLimiterDO({ storage: { sql: new FakeSql() } } as unknown as DurableObjectState, {}) : undefined);
+    const results = [];
+    for (let i = 0; i < 12; i++) results.push(await loginAllowed(env, 'admin', '1.2.3.4'));
+    expect(results.filter(Boolean).length).toBe(10);
+    // separate surface and separate IP are independent buckets
+    expect(await loginAllowed(env, 'portal-login', '1.2.3.4')).toBe(true);
+    expect(await loginAllowed(env, 'admin', '5.6.7.8')).toBe(true);
+  });
+
+  it('fails OPEN when the DO is unreachable', async () => {
+    expect(await loginAllowed(fakeEnv(undefined, true), 'admin', '1.2.3.4')).toBe(true);
   });
 });

@@ -17,7 +17,8 @@ import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Env } from '../env';
 import { b64urlDecode, b64urlEncode, safeEqualStr } from '../crypto';
-import { isSecureRequest, createUserSessionToken, USER_SESSION_COOKIE, USER_SESSION_TTL_SECONDS, loginAllowed } from '../auth';
+import { isSecureRequest, createUserSessionToken, USER_SESSION_COOKIE, USER_SESSION_TTL_SECONDS } from '../auth';
+import { loginAllowed } from '../ratelimit/client';
 import { getPublicSignup } from '../db/settings';
 import { getOAuthConfig, isValidProvider, type OAuthProvider } from '../oauth/config';
 import { buildAuthorizeUrl, exchangeCodeForToken, fetchProviderProfile } from '../oauth/providers';
@@ -112,7 +113,7 @@ function outcomeMessage(reason: 'email_exists' | 'identity_conflict' | 'no_email
 oauthApp.get('/:provider/start', async (c) => {
   const next = sanitizeNext(c.req.query('next'));
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('oauth-start', ip, 20)) return loginRedirect(next, 'Too many attempts — try again in a minute.');
+  if (!(await loginAllowed(c.env, 'oauth-start', ip, 20))) return loginRedirect(next, 'Too many attempts — try again in a minute.');
 
   const providerParam = c.req.param('provider');
   if (!isValidProvider(providerParam)) return loginRedirect(next, 'Unknown sign-in provider.');
@@ -140,7 +141,7 @@ oauthApp.get('/:provider/start', async (c) => {
 
 oauthApp.get('/:provider/callback', async (c) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('oauth-callback', ip, 20)) return loginRedirect('/app', 'Too many attempts — try again in a minute.');
+  if (!(await loginAllowed(c.env, 'oauth-callback', ip, 20))) return loginRedirect('/app', 'Too many attempts — try again in a minute.');
 
   const providerParam = c.req.param('provider');
   if (!isValidProvider(providerParam)) return loginRedirect('/app', 'Unknown sign-in provider.');

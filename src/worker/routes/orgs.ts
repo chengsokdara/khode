@@ -16,7 +16,8 @@ import { getDb } from '../db';
 import { apiKeys, balanceEntries, orgMembers, orgs, requestLogs, users } from '../db/schema';
 import { billingConfigured, billingConfigStatus, getBillingConfig } from '../billing/config';
 import { createLsCheckout } from '../billing/lemonsqueezy';
-import { generateClientKey, loginAllowed, portalAuth } from '../auth';
+import { generateClientKey, portalAuth } from '../auth';
+import { loginAllowed } from '../ratelimit/client';
 
 type UserRow = typeof users.$inferSelect;
 type OrgRow = typeof orgs.$inferSelect;
@@ -208,7 +209,7 @@ orgApp.post('/orgs/join', async (c) => {
   if (!code) return c.json(apiErr('Enter a join code'), 400);
   // Guessable-secret surface: cap attempts per ACCOUNT (authenticated, so the
   // per-user key beats per-IP — users behind one NAT never starve each other).
-  if (!loginAllowed(`org-join:${c.get('userId')}`, c.req.header('cf-connecting-ip') ?? 'local', 20)) {
+  if (!(await loginAllowed(c.env, `org-join:${c.get('userId')}`, c.req.header('cf-connecting-ip') ?? 'local', 20))) {
     return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
   }
 

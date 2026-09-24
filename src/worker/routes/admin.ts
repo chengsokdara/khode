@@ -38,12 +38,12 @@ import {
   createSessionToken,
   generateClientKey,
   isSecureRequest,
-  loginAllowed,
   revokeAllUserSessions,
   revokeSession,
   sessionIdForToken,
   timingSafeStrEqual,
 } from '../auth';
+import { loginAllowed } from '../ratelimit/client';
 
 type AdminEnv = { Bindings: Env };
 
@@ -340,7 +340,7 @@ adminApp.post('/login', async (c) => {
     return c.json(apiErr('ADMIN_PASSWORD env var is not configured'), 500);
   }
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('admin', ip)) {
+  if (!(await loginAllowed(c.env, 'admin', ip))) {
     return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
   }
   const body = await readJson(c);

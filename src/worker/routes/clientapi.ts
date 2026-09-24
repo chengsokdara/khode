@@ -11,7 +11,8 @@ import { eq, sum, count } from 'drizzle-orm';
 import type { Env } from '../env';
 import { getDb } from '../db';
 import { apiKeys, orgs, requestLogs, users } from '../db/schema';
-import { loginAllowed, verifyClientKey, type ApiKeyRow } from '../auth';
+import { verifyClientKey, type ApiKeyRow } from '../auth';
+import { loginAllowed } from '../ratelimit/client';
 import { openAiError } from '../dialects/openaiChat';
 
 type ClientApiEnv = { Bindings: Env; Variables: { clientKey: ApiKeyRow } };
@@ -37,7 +38,7 @@ function errorJson(status: number, message: string, code: string): Response {
 // brute-force probing of the key space; the gateway DO migration stays queued.
 clientApiApp.use('*', async (c, next) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('client-api', ip, 60)) {
+  if (!(await loginAllowed(c.env, 'client-api', ip, 60))) {
     return errorJson(429, 'Too many requests — try again in a minute.', 'rate_limit_exceeded');
   }
   const bearer = c.req.header('authorization') ?? '';

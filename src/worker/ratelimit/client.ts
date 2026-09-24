@@ -81,3 +81,19 @@ export async function checkRateLimits(env: Env, checks: RateCheck[]): Promise<Ra
     return null;
   }
 }
+
+/**
+ * P2: one login-surface attempt — admin/portal login + signup, oauth
+ * start/callback, device code/token, client-api, org-join — counted through
+ * the DO, replacing the per-isolate memory map (whose real limit was "per
+ * isolate", not per IP). Same bucket semantics as before: fixed 1-minute
+ * window, per surface + IP, every counted call consumes budget. Fail-open:
+ * any limiter error allows the attempt (the M10 stance — auth surfaces must
+ * not become unavailable because their limiter is).
+ */
+export async function loginAllowed(env: Env, bucket: string, ip: string, max = 10): Promise<boolean> {
+  const decisions = await checkRateLimits(env, [
+    { kind: 'login', scope: `login:${bucket}:${ip}`, limit: max, windowMs: RATE_WINDOW_MS },
+  ]);
+  return decisions ? decisions[0].allowed : true;
+}

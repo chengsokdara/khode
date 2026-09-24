@@ -18,7 +18,8 @@ import { and, eq, lt } from 'drizzle-orm';
 import type { Env } from '../env';
 import { getDb } from '../db';
 import { apiKeys, deviceCodes, users } from '../db/schema';
-import { generateClientKey, loginAllowed } from '../auth';
+import { generateClientKey } from '../auth';
+import { loginAllowed } from '../ratelimit/client';
 import { sha256Hex } from '../crypto';
 
 type DeviceEnv = { Bindings: Env };
@@ -65,7 +66,7 @@ function generateUserCode(): string {
  */
 deviceApp.post('/code', async (c) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('device-code', ip, 10)) return c.json(apiErr('Too many device sign-in requests — try again in a minute.'), 429);
+  if (!(await loginAllowed(c.env, 'device-code', ip, 10))) return c.json(apiErr('Too many device sign-in requests — try again in a minute.'), 429);
   const body = await readJson(c);
   const displayName = typeof body?.display_name === 'string' ? body.display_name.trim().slice(0, 120) || null : null;
 
@@ -122,7 +123,7 @@ function tokenErr(c: Context<DeviceEnv>, error: string, error_description: strin
  */
 deviceApp.post('/token', async (c) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
-  if (!loginAllowed('device-token', ip, 60)) return tokenErr(c, 'slow_down', 'Polling too fast — slow down.', 429);
+  if (!(await loginAllowed(c.env, 'device-token', ip, 60))) return tokenErr(c, 'slow_down', 'Polling too fast — slow down.', 429);
   const body = await readJson(c);
   const deviceCode = typeof body?.device_code === 'string' ? body.device_code.trim() : '';
   if (!deviceCode) return tokenErr(c, 'expired_token', 'device_code is required.');
