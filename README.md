@@ -59,17 +59,19 @@ automatically. `npm run dev:prod` serves the production-style built bundle on
 
 ## Pointing clients at the gateway
 
-By default the gateway is **keyless**: any OpenAI or Anthropic SDK works with
-the base URL alone (clients that insist on a key can send any placeholder —
-the literal `anonymous` is the convention, and unknown values are treated the
-same). Model listing (`GET /v1/models` — includes per-model `pricing` and
-`supported_parameters`) and all chat endpoints are served anonymously.
+Every `/v1` request requires a valid client key — there is no keyless access.
+Give clients a `khat-…` key as `Authorization: Bearer <key>` (OpenAI SDKs) or
+`x-api-key: <key>` (Anthropic SDKs); anything else gets a 401
+(`invalid_api_key`). Keys bring spend caps, model allow-lists, per-key logs
+and prepaid balances. Onboarding paths:
 
-To require client keys instead (spend caps, model allow-lists, per-key logs),
-flip **Client-key enforcement** on the API Keys page (or `PATCH
-/admin/settings {"client_key_enforcement":"on"}`) and give clients a `khat-…`
-key: `Authorization: Bearer <key>` (OpenAI SDKs) or `x-api-key: <key>`
-(Anthropic SDKs). Requests without a valid key then get 401.
+- **CLI/TUI clients** (khode): device sign-in — the client mints a request at
+  `POST /api/v1/device/code`, the user approves it at `/app/device`, and the
+  client's poll returns a personal key.
+- **Humans**: create keys in the portal (`/app` → Keys) or the admin console.
+
+Model listing (`GET /v1/models` — includes per-model `pricing` and
+`supported_parameters`) requires a key too.
 
 **Client APIs (M16):** `GET /api/v1/auth/key` (aliases: `/api/v1/key`) returns
 a key's label, spend limit and accrued usage; `GET /api/v1/credits` returns
@@ -88,14 +90,14 @@ across all isolates and PoPs:
 | Bucket | Applies to | Default | Configured via |
 |---|---|---|---|
 | per-key | requests carrying a valid `khat-` key | 120 req/min | Settings → Rate limiting (`rate_limit_key_rpm`), per-key override on each API key |
-| per-IP | anonymous (keyless) requests only | 60 req/min | Settings → Rate limiting (`rate_limit_ip_rpm`) |
+| per-IP | unused since keyless removal (kept in the limiter) | 60 req/min | Settings → Rate limiting (`rate_limit_ip_rpm`) |
 | per-model | everyone, global per model slug | unlimited | `rate_limit_rpm` on each model |
 
 Notes:
 
 - Keyed requests never touch the IP bucket (a shared office egress IP must not
-  punish a legitimate heavy key), and the IP bucket exists to bound exactly the
-  keyless traffic the default mode invites.
+  punish a legitimate heavy key). With keyless removed, no live traffic hits
+  the IP bucket; the bucket stays in the limiter for completeness.
 - Exceeding a limit answers **429** with an integer `Retry-After` (seconds
   until the window rolls over) and the error envelope in the caller's dialect
   (`code: "rate_limit_exceeded"` / anthropic `type: "rate_limit_error"`).
@@ -141,7 +143,7 @@ Notes:
 
 ```bash
 npm run dev:worker   # terminal 1 — wrangler on :8787 (worker edits auto-reload)
-npm run dev:ui       # terminal 2 — Vite dev server on :5173, proxies /admin /v1 /health
+npm run dev:ui       # terminal 2 — Vite dev server on :5173, proxies /api /v1 /health
 ```
 
 ## Deploy to Cloudflare
@@ -164,7 +166,7 @@ npm run deploy
 | M4 ✅ | Anthropic adapter, `/v1/messages`, cross-dialect SSE translation |
 | M5 ✅ | `/v1/responses` |
 | M6 ✅ | Tool calling + vision + fallback chains |
-| M7 ✅ | Client API keys, request logs + cost, snippets (keyless-native default since then) |
+| M7 ✅ | Client API keys, request logs + cost, snippets (keyless default removed in session 29 — keys required, always) |
 | M8 ✅ | User accounts + prepaid balances + Lemon Squeezy top-ups (`/app` portal, `/webhooks/lemonsqueezy`) |
 | M9 ✅ | Orgs / teams: shared org balances, join-code invites, portal Teams page, admin Organizations |
 | M10 ✅ | Gateway rate limiting: per-key / per-IP / per-model caps in a Durable Object, 429 + `Retry-After` |
@@ -193,5 +195,49 @@ page and the admin Organizations page. Public signup can be toggled in admin
 Settings. Top-ups credit through `POST /webhooks/lemonsqueezy`
 (signature-verified, idempotent); configure store/variant/API key/webhook
 secret on admin Settings → Billing.
+
+**Social sign-in (Google + GitHub)**: the login page leads with
+"Continue with Google" / "Continue with GitHub" buttons (email/password stays
+below as the fallback). Behind the scenes it is a plain OAuth 2.0
+authorization-code flow on fetch — no SDKs. Account linking is
+verification-gated: a provider-verified email matching an existing account
+links to it; an unverified email never links (it can only create a fresh
+account, and only while public signup is open). OAuth-only accounts have no
+password; password login tells them to use the social buttons.
+
+Operator setup (per provider, ~2 minutes):
+
+1. **Google**: create an OAuth client at <https://console.cloud.google.com/apis/credentials>
+   (type: Web application). Add
+   `https://YOUR-HOST/api/portal/oauth/google/callback` as an authorized
+   redirect URI.
+2. **GitHub**: create an OAuth App at <https://github.com/settings/developers>.
+   Set the homepage to your host and the authorization callback URL to
+   `https://YOUR-HOST/api/portal/oauth/github/callback`.
+3. Open **admin Settings → Social sign-in**, copy each displayed callback URL
+   into the provider console (the URLs are also right there in the card),
+   then paste each client id + client secret and Save. A provider becomes
+   active the moment both values are saved; clearing the client id disables
+   it again. Secrets are AES-256-GCM encrypted at rest and never returned by
+   the API.
+
+Verifying a real round-trip (browser + your own Google/GitHub account):
+
+1. Sign out of the portal (or use a private window), open `/app/login` and
+   click **Continue with Google** (then repeat with GitHub).
+2. Approve the consent screen at the provider.
+3. Expect to land back on `/app` signed in — first run creates the account
+   (check admin → Users), second run signs the same account in again.
+4. Device-flow tie-in: start `khode /login`, then click the social button from
+   the verification link — after sign-in you land straight on
+   `/app/device?code=…` to approve, because the OAuth flow preserves `next`.
+
+**Device sign-in (RFC 8628)**: CLI/TUI clients like [khode](../khode) sign in
+with `/login` — the terminal shows a short code at
+[`/app/device`](http://localhost:5173/app/device), the signed-in user
+approves, and the client receives a personal API key (visible and revocable
+under Keys) for their balance. The social sign-in buttons ride along: a
+first-time user can approve a device code without ever creating an
+email/password account.
 
 See [`docs/plans/mvp-plan.md`](docs/plans/mvp-plan.md) for the full plan.

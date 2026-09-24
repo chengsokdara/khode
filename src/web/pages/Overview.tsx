@@ -30,10 +30,10 @@ export function Overview() {
   const keys = q.data?.api_keys ?? 0;
 
   const steps = [
-    { label: 'Add a provider', done: providers > 0, to: '/providers' },
-    { label: 'Register models', done: modelsCount > 0, to: '/models' },
-    { label: 'Create an API key', done: keys > 0, to: '/api-keys' },
-    { label: 'Point clients at /v1', done: (q.data?.usage_24h.requests ?? 0) > 0, to: '/api-keys' },
+    { label: 'Add a provider', done: providers > 0, to: '/admin/providers' },
+    { label: 'Register models', done: modelsCount > 0, to: '/admin/models' },
+    { label: 'Create an API key', done: keys > 0, to: '/admin/api-keys' },
+    { label: 'Point clients at /v1', done: (q.data?.usage_24h.requests ?? 0) > 0, to: '/admin/api-keys' },
   ];
 
   return (
@@ -51,21 +51,21 @@ export function Overview() {
         <div className="space-y-5">
           <div className="grid gap-4 md:grid-cols-4">
             <StatCard
-              to="/providers"
+              to="/admin/providers"
               icon={<Server className="h-4 w-4" />}
               label="Providers"
               value={q.data?.providers}
               sub={`${q.data?.providers_enabled ?? 0} enabled`}
             />
             <StatCard
-              to="/models"
+              to="/admin/models"
               icon={<Boxes className="h-4 w-4" />}
               label="Models"
               value={q.data?.models}
               sub={`${q.data?.models_enabled ?? 0} enabled`}
             />
             <StatCard
-              to="/api-keys"
+              to="/admin/api-keys"
               icon={<KeyRound className="h-4 w-4" />}
               label="API keys"
               value={q.data?.api_keys}
@@ -118,7 +118,7 @@ export function Overview() {
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-sm font-medium text-zinc-300">Recent models</h2>
                 {mq.data?.length ? (
-                  <Link to="/models" className="text-xs text-emerald-400 hover:underline">
+                  <Link to="/admin/models" className="text-xs text-emerald-400 hover:underline">
                     View all →
                   </Link>
                 ) : null}
@@ -155,7 +155,7 @@ export function Overview() {
                 </table>
               ) : (
                 <p className="py-6 text-center text-[13px] text-zinc-500">
-                  No models yet — <Link to="/providers" className="text-emerald-400 hover:underline">add a provider</Link> first.
+                  No models yet — <Link to="/admin/providers" className="text-emerald-400 hover:underline">add a provider</Link> first.
                 </p>
               )}
             </Card>

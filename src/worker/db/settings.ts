@@ -1,21 +1,21 @@
 // Deployment-level settings (the `settings` key/value table): admin-controlled
-// gateway behavior flags. The gateway reads these on EVERY request, so values
-// are cached in the isolate for a short TTL — an anonymous request must not pay
-// a D1 round-trip for its auth decision (keyless-native requirement). Writes
-// (admin API) invalidate the cache immediately in the writing isolate; other
-// isolates converge within the TTL.
+// gateway behavior flags. Rate limiting + cache are read on EVERY request, so
+// they are cached in the isolate for a short TTL. Writes (admin API) invalidate
+// the cache immediately in the writing isolate; other isolates converge within
+// the TTL.
+//
+// HISTORY (session 29): the keyless-native era is over — client-key
+// enforcement, the keyless gate (official-build attestation) and the guest
+// pool were all removed. /v1 requires a valid client key, always; onboarding
+// is the device flow (/api/v1/device) or portal keys. Old settings rows
+// (client_key_enforcement, keyless_gate_secret_hash, keyless_guest_user_id)
+// are ignored orphans — no migration needed for removal.
 import { eq } from 'drizzle-orm';
 import type { Env } from '../env';
 import { getDb } from './index';
 import { settings } from './schema';
 
-/** Only client-key enforcement existed pre-M8; public_signup joined for accounts. */
-export const CLIENT_KEY_ENFORCEMENT_KEY = 'client_key_enforcement';
-export const CLIENT_KEY_ENFORCEMENT_ON = 'on';
-export const CLIENT_KEY_ENFORCEMENT_OFF = 'off';
-export type ClientKeyEnforcement = typeof CLIENT_KEY_ENFORCEMENT_ON | typeof CLIENT_KEY_ENFORCEMENT_OFF;
-
-/** 'on' (absent = on) allows anonymous POST /app/api/signup; 'off' closes it. */
+/** 'on' (absent = on) allows anonymous POST /api/portal/signup; 'off' closes it. */
 export const PUBLIC_SIGNUP_KEY = 'public_signup';
 export const PUBLIC_SIGNUP_ON = 'on';
 export const PUBLIC_SIGNUP_OFF = 'off';
@@ -50,7 +50,6 @@ const SETTINGS_TTL_MS = 5_000;
 
 interface SettingsCache {
   at: number;
-  enforcement: ClientKeyEnforcement;
   rateLimit: RateLimitSettings;
   cache: CacheSettings;
 }
@@ -67,10 +66,6 @@ export interface CacheSettings {
 }
 
 let cache: SettingsCache | null = null;
-
-function normalizeEnforcement(value: string | null | undefined): ClientKeyEnforcement {
-  return value === CLIENT_KEY_ENFORCEMENT_ON ? CLIENT_KEY_ENFORCEMENT_ON : CLIENT_KEY_ENFORCEMENT_OFF;
-}
 
 /** Parses a stored rpm string; anything non-numeric falls back to the default. */
 function normalizeRpm(value: string | null | undefined, fallback: number): number {
@@ -101,20 +96,19 @@ async function writeSetting(env: Env, key: string, value: string): Promise<void>
 }
 
 /**
- * One snapshot read for the cached gateway settings (enforcement + M10 rate
- * limits). Absent rows keep the deployment defaults (keyless-native, rate
- * limiting ON at 120 key / 60 IP rpm — the public-launch posture). A DB error
- * fails OPEN for both flags (keyless, rate limiting off): a settings hiccup
- * must never brick the gateway.
+ * One snapshot read for the cached gateway settings (M10 rate limits + M11
+ * cache). Absent rows keep the deployment defaults (rate limiting ON at
+ * 120 key / 60 IP rpm, cache OFF). A DB error fails OPEN for the rate
+ * limiter (limits off) and the cache (off): a settings hiccup must never
+ * brick the gateway. (Auth is NOT settings-dependent any more — every /v1
+ * request needs a valid key, period.)
  */
 async function loadSnapshot(env: Env): Promise<SettingsCache> {
-  let enforcement: ClientKeyEnforcement = CLIENT_KEY_ENFORCEMENT_OFF;
   let rateLimit: RateLimitSettings = { enabled: true, keyRpm: RATE_LIMIT_DEFAULT_KEY_RPM, ipRpm: RATE_LIMIT_DEFAULT_IP_RPM };
   const cacheSettings: CacheSettings = { enabled: false, ttlSeconds: CACHE_DEFAULT_TTL_SECONDS };
   try {
     const rows = await getDb(env).select({ key: settings.key, value: settings.value }).from(settings);
     const byKey = new Map(rows.map((r) => [r.key, r.value]));
-    enforcement = normalizeEnforcement(byKey.get(CLIENT_KEY_ENFORCEMENT_KEY));
     const enabled = byKey.get(RATE_LIMIT_ENABLED_KEY);
     rateLimit = {
       enabled: enabled !== RATE_LIMIT_ENABLED_OFF,
@@ -124,10 +118,10 @@ async function loadSnapshot(env: Env): Promise<SettingsCache> {
     cacheSettings.enabled = byKey.get(CACHE_ENABLED_KEY) === CACHE_ENABLED_ON;
     cacheSettings.ttlSeconds = normalizeTtl(byKey.get(CACHE_TTL_SECONDS_KEY));
   } catch {
-    // Table missing / DB hiccup → fail OPEN (keyless default + limits off,
-    // cache off): a settings hiccup must never brick the gateway.
+    // Table missing / DB hiccup → fail OPEN (limits off, cache off): a
+    // settings hiccup must never brick the gateway.
   }
-  return { at: Date.now(), enforcement, rateLimit, cache: cacheSettings };
+  return { at: Date.now(), rateLimit, cache: cacheSettings };
 }
 
 async function cachedSnapshot(env: Env): Promise<SettingsCache> {
@@ -136,22 +130,10 @@ async function cachedSnapshot(env: Env): Promise<SettingsCache> {
   return cache;
 }
 
-/** Reads the client-key enforcement flag ('on' | 'off'). Absent row → 'off'. */
-export async function getClientKeyEnforcement(env: Env): Promise<ClientKeyEnforcement> {
-  return (await cachedSnapshot(env)).enforcement;
-}
-
-/** Persists the enforcement flag and invalidates this isolate's cache. */
-export async function setClientKeyEnforcement(env: Env, value: ClientKeyEnforcement): Promise<void> {
-  await writeSetting(env, CLIENT_KEY_ENFORCEMENT_KEY, value);
-  const current = await cachedSnapshot(env);
-  cache = { at: Date.now(), enforcement: value, rateLimit: current.rateLimit, cache: current.cache };
-}
-
 /**
  * Reads the M10 rate-limit settings. Absent rows → enabled at the defaults.
- * Cached with the enforcement flag (the gateway reads it on EVERY request);
- * a read error → limits off (fail-open) until the cache expires.
+ * Cached (the gateway reads it on EVERY request); a read error → limits off
+ * (fail-open) until the cache expires.
  */
 export async function getRateLimitSettings(env: Env): Promise<RateLimitSettings> {
   return (await cachedSnapshot(env)).rateLimit;
@@ -165,7 +147,6 @@ export async function setRateLimitSettings(env: Env, patch: Partial<RateLimitSet
   const current = await cachedSnapshot(env);
   cache = {
     at: Date.now(),
-    enforcement: current.enforcement,
     rateLimit: {
       enabled: patch.enabled ?? current.rateLimit.enabled,
       keyRpm: patch.keyRpm ?? current.rateLimit.keyRpm,
@@ -192,7 +173,6 @@ export async function setCacheSettings(env: Env, patch: Partial<CacheSettings>):
   const current = await cachedSnapshot(env);
   cache = {
     at: Date.now(),
-    enforcement: current.enforcement,
     rateLimit: current.rateLimit,
     cache: {
       enabled: patch.enabled ?? current.cache.enabled,

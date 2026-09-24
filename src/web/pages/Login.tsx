@@ -18,7 +18,7 @@ export function Login() {
     setError(null);
     try {
       await api.login(password);
-      navigate('/');
+      navigate('/admin');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed');
       setBusy(false);

@@ -101,11 +101,11 @@ async function deleteIfExists(path, listFilter) {
 }
 
 async function cleanup() {
-  for (const name of [KEY_A, KEY_B]) await deleteIfExists('/admin/api-keys', (k) => k.name === name);
-  await deleteIfExists('/admin/models', (m) => [SLUG_CACHED, SLUG_PLAIN].includes(m.slug));
-  await deleteIfExists('/admin/providers', (p) => p.name === PROVIDER_NAME);
-  await j('/admin/logs', { method: 'DELETE' });
-  await j('/admin/settings', {
+  for (const name of [KEY_A, KEY_B]) await deleteIfExists('/api/admin/api-keys', (k) => k.name === name);
+  await deleteIfExists('/api/admin/models', (m) => [SLUG_CACHED, SLUG_PLAIN].includes(m.slug));
+  await deleteIfExists('/api/admin/providers', (p) => p.name === PROVIDER_NAME);
+  await j('/api/admin/logs', { method: 'DELETE' });
+  await j('/api/admin/settings', {
     method: 'PATCH',
     body: JSON.stringify({ cache_enabled: 'off', cache_ttl_seconds: 3600, rate_limit_enabled: 'off' }),
   });
@@ -140,7 +140,7 @@ const upstreamCount = () => upstreamCalls.length;
 
 (async () => {
   const mock = await startMockUpstream();
-  const login = await j('/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
+  const login = await j('/api/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
   if (login.status !== 200) {
     fail('admin login (is `npm run dev` running on :8787?)', `status=${login.status}`);
     process.exitCode = 1;
@@ -151,10 +151,10 @@ const upstreamCount = () => upstreamCalls.length;
   upstreamCalls.length = 0;
 
   // --- config: cache ON at 3600 s, rate limiting off, fixtures --------------
-  const badTtl = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_ttl_seconds: 0 }) });
+  const badTtl = await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_ttl_seconds: 0 }) });
   check('PATCH settings rejects cache_ttl_seconds 0 → 400', badTtl.status === 400, JSON.stringify(badTtl.body));
 
-  const settings = await j('/admin/settings', {
+  const settings = await j('/api/admin/settings', {
     method: 'PATCH',
     body: JSON.stringify({ cache_enabled: 'on', cache_ttl_seconds: 3600, rate_limit_enabled: 'off' }),
   });
@@ -164,26 +164,26 @@ const upstreamCount = () => upstreamCalls.length;
     JSON.stringify(settings.body),
   );
 
-  const prov = await j('/admin/providers', {
+  const prov = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({ name: PROVIDER_NAME, adapter: 'openai', base_url: `http://127.0.0.1:${mock.port}/v1` }),
   });
   check('create smoke provider', prov.status === 201, JSON.stringify(prov.body));
 
-  const modelCached = await j('/admin/models', {
+  const modelCached = await j('/api/admin/models', {
     method: 'POST',
     body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG_CACHED, cache_enabled: true, pricing_input: 2, pricing_output: 8 }),
   });
   check('create cache-opted model (cache_enabled: true, priced 2/8)', modelCached.status === 201 && modelCached.body?.cache_enabled === true, JSON.stringify(modelCached.body));
-  const modelPlain = await j('/admin/models', {
+  const modelPlain = await j('/api/admin/models', {
     method: 'POST',
     body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG_PLAIN, cache_enabled: false }),
   });
   check('create non-opted model (cache_enabled: false)', modelPlain.status === 201 && modelPlain.body?.cache_enabled === false, JSON.stringify(modelPlain.body));
 
-  const keyA = await j('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: KEY_A }) });
+  const keyA = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: KEY_A }) });
   check('create key A (no cache flag)', keyA.status === 201 && keyA.body?.cache_enabled === false, JSON.stringify(keyA.body));
-  const keyB = await j('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: KEY_B, cache_enabled: true }) });
+  const keyB = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: KEY_B, cache_enabled: true }) });
   check('create key B (cache_enabled: true)', keyB.status === 201 && keyB.body?.cache_enabled === true, JSON.stringify(keyB.body));
 
   // Settings are TTL-cached (5 s) per isolate — wait out the window.
@@ -219,7 +219,7 @@ const upstreamCount = () => upstreamCalls.length;
   );
 
   // --- 3. logs mark hits with usage + cost ----------------------------------
-  const logs = await j(`/admin/logs?model=${SLUG_CACHED}&limit=50`);
+  const logs = await j(`/api/admin/logs?model=${SLUG_CACHED}&limit=50`);
   const rows = (logs.body ?? []).filter((r) => r.status === 200 && r.dialect !== undefined);
   const hitRows = rows.filter((r) => r.cache_hit === true);
   const missRows = rows.filter((r) => r.cache_hit === false);
@@ -281,7 +281,7 @@ const upstreamCount = () => upstreamCalls.length;
   );
 
   // --- 6. master switch off → nothing cached ---------------------------------
-  await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_enabled: 'off' }) });
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_enabled: 'off' }) });
   await sleep(5300);
   const off1 = await openai(SLUG_CACHED, keyA.body.key, { max_tokens: 18 });
   const off2 = await openai(SLUG_CACHED, keyA.body.key, { max_tokens: 18 });
@@ -292,9 +292,9 @@ const upstreamCount = () => upstreamCalls.length;
   );
 
   // --- 7. TTL expiry + admin flush -------------------------------------------
-  await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_enabled: 'on', cache_ttl_seconds: 1 }) });
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_enabled: 'on', cache_ttl_seconds: 1 }) });
   await sleep(5300);
-  const flushAll = await j('/admin/cache/flush', { method: 'POST' });
+  const flushAll = await j('/api/admin/cache/flush', { method: 'POST' });
   check('admin flush clears prior entries', flushAll.status === 200 && flushAll.body?.ok === true && flushAll.body?.flushed > 0, JSON.stringify(flushAll.body));
 
   const e1 = await openai(SLUG_CACHED, keyA.body.key, { max_tokens: 19 });
@@ -305,11 +305,11 @@ const upstreamCount = () => upstreamCalls.length;
   const e3 = await openai(SLUG_CACHED, keyA.body.key, { max_tokens: 19 });
   check('ttl=1s: entry expired → MISS again (fresh upstream call)', e3.headers.get('x-khateway-cache') === 'MISS' && upstreamCount() === 13, `upstream=${upstreamCount()}`);
 
-  const flushed = await j('/admin/cache/flush', { method: 'POST' });
-  const statsAfterFlush = await j('/admin/cache');
+  const flushed = await j('/api/admin/cache/flush', { method: 'POST' });
+  const statsAfterFlush = await j('/api/admin/cache');
   check('flush again → stats show 0 entries / 0 bytes', flushed.body?.flushed >= 1 && statsAfterFlush.body?.entries === 0 && statsAfterFlush.body?.bytes === 0, JSON.stringify(statsAfterFlush.body));
 
-  const stats = await j('/admin/cache');
+  const stats = await j('/api/admin/cache');
   check(
     'stats: 24 h savings visible (hits + cached tokens counted)',
     stats.body?.hits_24h >= 5 && stats.body?.tokens_cached_24h > 0,
@@ -319,8 +319,8 @@ const upstreamCount = () => upstreamCalls.length;
   // --- cleanup ----------------------------------------------------------------
   mock.server.close();
   await cleanup();
-  const postStats = await j('/admin/cache');
-  if (postStats.body?.entries !== 0) await j('/admin/cache/flush', { method: 'POST' });
+  const postStats = await j('/api/admin/cache');
+  if (postStats.body?.entries !== 0) await j('/api/admin/cache/flush', { method: 'POST' });
 
   console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURES`}`);
   process.exitCode = failures === 0 ? 0 : 1;

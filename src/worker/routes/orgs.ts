@@ -1,4 +1,4 @@
-// /app/api/orgs — multi-user orgs / teams (M9).
+// /api/portal/orgs — multi-user orgs / teams (M9).
 //
 // ROLES: 'owner' manages the org (rename, delete, members incl. role changes,
 // every org key, billing/top-up); 'member' creates and manages their OWN org

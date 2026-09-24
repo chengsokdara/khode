@@ -1,16 +1,14 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckSquare, Download, Pencil, PlugZap, Plus, Server, Square, Trash2 } from 'lucide-react';
+import { Pencil, PlugZap, Plus, Server, Trash2 } from 'lucide-react';
 import {
   ADAPTER_DEFAULTS,
   ADAPTER_HINTS,
   ADAPTER_LABELS,
   api,
   type Adapter,
-  type ImportResult,
   type Provider,
   type TestResult,
-  type UpstreamModel,
 } from '../api';
 import { VENDOR_PRESETS, type VendorPreset } from '../../shared/vendor-urls';
 import {
@@ -41,10 +39,7 @@ type FormState = {
 
 const ALL_ADAPTERS: Adapter[] = ['openai', 'anthropic', 'gemini'];
 
-/** Slugs must match the admin API's alphabet so imports never 400. */
-const SLUG_ALPHABET = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-
-/** Builds the form payload shared by save and the discovery preview. */
+/** Builds the save payload shared by provider create and update. */
 function formPayload(form: FormState): Record<string, unknown> {
   let headers: Record<string, string> | null = null;
   if (form.default_headers.trim()) {
@@ -108,75 +103,6 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  // ---- model discovery + import ------------------------------------------
-  const [upstreamModels, setUpstreamModels] = useState<UpstreamModel[] | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [fetching, setFetching] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-
-  const importTargets = useMemo(() => [...selected].filter((id) => SLUG_ALPHABET.test(id)), [selected]);
-
-  const fetchModels = async () => {
-    setFetching(true);
-    setDiscoveryError(null);
-    try {
-      let models: UpstreamModel[];
-      if (isEdit) {
-        // Saved provider: probe with its stored key (form key field may be
-        // blank — it means "keep existing").
-        models = (await api.fetchProviderModels(initial!.id)).models;
-      } else {
-        // Unsaved: probe with the current form values (key stays in memory).
-        models = (await api.fetchModelsPreview(formPayload(form))).models;
-      }
-      setUpstreamModels(models);
-      setSelected(new Set(models.map((m) => m.id).filter((id) => SLUG_ALPHABET.test(id))));
-      if (models.length === 0) setDiscoveryError('The upstream returned no models (or none parseable).');
-    } catch (e) {
-      setUpstreamModels(null);
-      setSelected(new Set());
-      setDiscoveryError(e instanceof Error ? e.message : 'Fetching models failed');
-    } finally {
-      setFetching(false);
-    }
-  };
-
-  const importSelected = async () => {
-    if (importTargets.length === 0) return;
-    setImporting(true);
-    setError(null);
-    try {
-      let providerId = initial?.id;
-      if (!isEdit) {
-        // Add mode: the provider must exist before models can attach —
-        // create it from the form (idempotent enough: this closes the modal
-        // only after import completes).
-        const created = await api.createProvider(formPayload(form));
-        providerId = created.id;
-      }
-      const result: ImportResult = await api.importModels(providerId!, importTargets);
-      qc.invalidateQueries({ queryKey: ['providers'] });
-      qc.invalidateQueries({ queryKey: ['models', ''] });
-      qc.invalidateQueries({ queryKey: ['overview'] });
-      const skippedNote = result.skipped.length ? ` · ${result.skipped.length} skipped (${result.skipped[0].reason})` : '';
-      toast(`Imported ${result.created.length} model(s)${skippedNote}`);
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed');
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const toggleModel = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   // ---- base URL convenience ----------------------------------------------
   // Presets relevant to the current adapter selection: vendors serving at
   // least one selected adapter, vendors matching both first. Sorting keeps
@@ -226,10 +152,10 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
       width="lg"
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={save.isPending || importing}>
+          <Button variant="outline" onClick={onClose} disabled={save.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="provider-form" disabled={save.isPending || importing}>
+          <Button type="submit" form="provider-form" disabled={save.isPending}>
             {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add provider'}
           </Button>
         </>
@@ -276,17 +202,11 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
                   : 'Paste the API root with or without /v1 — /chat/completions is appended automatically. Default: https://api.openai.com/v1'
           }
         >
-          <div className="flex gap-2">
-            <Input
-              value={form.base_url}
-              onChange={(e) => setField('base_url', e.target.value)}
-              placeholder={ADAPTER_DEFAULTS[form.adapters[0] ?? 'openai'] + ' (default)'}
-            />
-            <Button type="button" variant="outline" onClick={fetchModels} disabled={fetching || importing} title="List the models this upstream offers">
-              {fetching ? <Spinner /> : <Download className="h-4 w-4" />}
-              Fetch models
-            </Button>
-          </div>
+          <Input
+            value={form.base_url}
+            onChange={(e) => setField('base_url', e.target.value)}
+            placeholder={ADAPTER_DEFAULTS[form.adapters[0] ?? 'openai'] + ' (default)'}
+          />
         </Field>
 
         <Field label="Quick fill" hint="Well-known vendors — fills the URL and checks the right adapters">
@@ -305,60 +225,6 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
             ))}
           </div>
         </Field>
-
-        {discoveryError ? <p className="text-xs text-red-400">{discoveryError}</p> : null}
-
-        {upstreamModels !== null && upstreamModels.length > 0 ? (
-          <Field
-            label={`Upstream models — ${selected.size} of ${upstreamModels.length} selected`}
-            hint="Pick the models to import into Khateway; slugs come from the upstream ids."
-          >
-            <div className="max-h-56 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/60">
-              {upstreamModels.map((m) => {
-                const importable = SLUG_ALPHABET.test(m.id);
-                return (
-                  <label
-                    key={m.id}
-                    className={`flex items-center gap-2.5 border-b border-zinc-800/60 px-3 py-1.5 text-[13px] last:border-b-0 ${
-                      importable ? 'cursor-pointer hover:bg-zinc-900/60' : 'cursor-not-allowed opacity-40'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      disabled={!importable}
-                      checked={selected.has(m.id)}
-                      onChange={() => toggleModel(m.id)}
-                      className="h-3.5 w-3.5 accent-emerald-500"
-                    />
-                    <span className="font-mono text-zinc-200">{m.id}</span>
-                    {m.display_name && m.display_name !== m.id ? <span className="text-zinc-500">{m.display_name}</span> : null}
-                    {m.context_window != null ? <span className="ml-auto font-mono text-[11px] text-zinc-600">{Math.round(m.context_window / 1000)}k ctx</span> : null}
-                    {!importable ? <Badge tone="warn">unsupported name</Badge> : null}
-                  </label>
-                );
-              })}
-            </div>
-            <div className="mt-2 flex items-center justify-between">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  setSelected(
-                    (prev) => (prev.size === upstreamModels.filter((m) => SLUG_ALPHABET.test(m.id)).length ? new Set() : new Set(upstreamModels.filter((m) => SLUG_ALPHABET.test(m.id)).map((m) => m.id))),
-                  )
-                }
-              >
-                {selected.size === upstreamModels.filter((m) => SLUG_ALPHABET.test(m.id)).length ? <Square className="h-3.5 w-3.5" /> : <CheckSquare className="h-3.5 w-3.5" />}
-                {selected.size === upstreamModels.filter((m) => SLUG_ALPHABET.test(m.id)).length ? 'Deselect all' : 'Select all'}
-              </Button>
-              <Button type="button" onClick={importSelected} disabled={importing || importTargets.length === 0}>
-                {importing ? <Spinner /> : <Download className="h-4 w-4" />}
-                Import {importTargets.length || ''}
-              </Button>
-            </div>
-          </Field>
-        ) : null}
 
         <Field
           label="API key"

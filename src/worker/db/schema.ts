@@ -82,7 +82,7 @@ export const apiKeys = sqliteTable(
     cacheEnabled: integer('cache_enabled', { mode: 'boolean' }).notNull().default(false),
     // M14 playground key: the admin-session id (sha256 of the session token)
     // this ephemeral key belongs to. null = a normal key. Playground keys are
-    // minted by POST /admin/playground/key, hidden from the keys list, and die
+    // minted by POST /api/admin/playground/key, hidden from the keys list, and die
     // with their session (logout) or when the session row disappears (sweep).
     playgroundSession: text('playground_session'),
   },
@@ -135,14 +135,15 @@ export const orgMembers = sqliteTable(
  * Portal users (M8). Balance is prepaid credit held in micro-USD (1e-6 $;
  * integer math — per-request costs are far below one cent). Drawn down by
  * `balance_entries` usage debits; topped up via the MoR (Lemon Squeezy)
- * webhook. password_hash format: `pbkdf2-sha256:<iterations>:<salt-b64>:<hash-b64>`.
+ * webhook. password_hash format: `pbkdf2-sha256:<iterations>:<salt-b64>:<hash-b64>`;
+ * NULL for OAuth-only accounts (social sign-in, no password ever set).
  */
 export const users = sqliteTable(
   'users',
   {
     id: text('id').primaryKey(),
     email: text('email').notNull(), // stored lowercase
-    passwordHash: text('password_hash').notNull(),
+    passwordHash: text('password_hash'), // null = OAuth-only account
     balanceUsdMicros: integer('balance_usd_micros').notNull().default(0),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     createdAt: integer('created_at').notNull(),
@@ -166,6 +167,62 @@ export const userSessions = sqliteTable(
     expiresAt: integer('expires_at').notNull(),
   },
   (t) => [index('user_sessions_user_idx').on(t.userId)],
+);
+
+/**
+ * Device-flow sign-in requests (RFC 8628 shaped): a CLI/TUI client (khode)
+ * mints a request, the user approves it in the portal, and the client's next
+ * poll receives a PERSONAL API key for the approving account. device_code is
+ * stored hashed (client-key philosophy — the raw value lives only with the
+ * polling client); user_code is the short human-typed code (unique forever —
+ * the keyspace is ~1.1e12, so old codes never get reused). Status walk:
+ * pending → approved | denied → consumed (the token endpoint's one-shot
+ * grant; key_id records what was issued).
+ */
+export const deviceCodes = sqliteTable(
+  'device_codes',
+  {
+    id: text('id').primaryKey(),
+    deviceCodeHash: text('device_code_hash').notNull(),
+    userCode: text('user_code').notNull(), // XXXX-XXXX display form
+    displayName: text('display_name'), // what the approve page shows ("khode on mbp")
+    status: text('status').notNull().default('pending'), // pending | approved | denied | consumed
+    userId: text('user_id'), // set on approval — the account the issued key belongs to
+    keyId: text('key_id'), // set on consumption — the issued api_keys row (audit)
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    approvedAt: integer('approved_at'),
+  },
+  (t) => [
+    uniqueIndex('device_codes_device_hash_unique').on(t.deviceCodeHash),
+    uniqueIndex('device_codes_user_code_unique').on(t.userCode),
+    index('device_codes_expires_idx').on(t.expiresAt),
+  ],
+);
+
+/**
+ * Social sign-in identities: one row per (provider, provider-side user) bound
+ * to a portal account. provider_user_id is the STABLE provider identifier
+ * (Google `sub` / GitHub numeric id — never the login or email, both mutable).
+ * Created by the link-or-create flow in db/oauth.ts: existing identity → sign
+ * that user in; provider-VERIFIED email match → link; else a new account
+ * (public_signup permitting). user_id has no FK by convention — dangling ids
+ * after an admin deletion keep the audit trail (same as request_logs).
+ */
+export const oauthIdentities = sqliteTable(
+  'oauth_identities',
+  {
+    id: text('id').primaryKey(),
+    provider: text('provider').notNull(), // google | github
+    providerUserId: text('provider_user_id').notNull(), // stable provider-side id
+    userId: text('user_id').notNull(), // portal account this identity signs into
+    email: text('email'), // email seen at link time (audit only — linking never trusts it)
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('oauth_identities_provider_uid_unique').on(t.provider, t.providerUserId),
+    index('oauth_identities_user_idx').on(t.userId),
+  ],
 );
 
 /**

@@ -209,7 +209,7 @@ export function Playground() {
             title="No enabled models"
             description="Register a provider and enable at least one model to use the playground."
             action={
-              <Link to="/models">
+              <Link to="/admin/models">
                 <Button variant="outline">Go to Models</Button>
               </Link>
             }

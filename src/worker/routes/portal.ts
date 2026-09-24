@@ -1,4 +1,4 @@
-// /app/api — public portal API for Khateway user accounts (M8).
+// /api/portal — public portal API for Khateway user accounts (M8).
 //
 // AUTH:  POST /signup | /login | /logout are anonymous (session cookie IS the
 // result); GET /me and everything below require the `khateway_user` session.
@@ -10,11 +10,11 @@
 // for top-ups (the webhook credit is handled in routes/webhooks.ts).
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { count, desc, eq, inArray, isNull, and, sum } from 'drizzle-orm';
+import { count, desc, eq, gt, inArray, isNull, and, sum } from 'drizzle-orm';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Env } from '../env';
 import { getDb } from '../db';
-import { apiKeys, balanceEntries, requestLogs, users } from '../db/schema';
+import { apiKeys, balanceEntries, deviceCodes, requestLogs, users } from '../db/schema';
 import { getPublicSignup } from '../db/settings';
 import { billingConfigured, billingConfigStatus, getBillingConfig } from '../billing/config';
 import { createLsCheckout } from '../billing/lemonsqueezy';
@@ -156,9 +156,16 @@ portalApp.post('/login', async (c) => {
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';
   const [user] = email ? await getDb(c.env).select().from(users).where(eq(users.email, email)) : [];
+  const storedHash = user?.passwordHash ?? null;
+  // OAuth-only account (social sign-in, no password ever set): tell the user
+  // which door to use — this is the one case that names the method, because
+  // the email itself proves the account exists.
+  if (user && !storedHash) {
+    return c.json(apiErr('This account signs in with Google/GitHub — use the buttons above.'), 401);
+  }
   // Same message for unknown email / wrong password / disabled account — no
   // account-existence oracle.
-  if (!user || !(await verifyPassword(password, user.passwordHash)) || !user.enabled) {
+  if (!user || !storedHash || !(await verifyPassword(password, storedHash)) || !user.enabled) {
     return c.json(apiErr('Invalid email or password'), 401);
   }
   const token = await createUserSessionToken(c.env, user.id);
@@ -186,7 +193,7 @@ portalApp.get('/me', async (c) => {
 
 portalApp.get('/keys', async (c) => {
   const db = getDb(c.env);
-  // Personal keys only — org-scoped keys (M9) live under /app/api/orgs.
+  // Personal keys only — org-scoped keys (M9) live under /api/portal/orgs.
   const rows = await db
     .select()
     .from(apiKeys)
@@ -360,4 +367,48 @@ portalApp.post('/billing/checkout', async (c) => {
   });
   if (!result.ok) return c.json(apiErr(result.error), 502);
   return c.json({ url: result.url });
+});
+
+// ----------------------------------------------------------------- device
+// RFC 8628 user-approval surface for CLI/TUI sign-in (khode): the terminal
+// shows a short code, the signed-in user confirms it here. The portal
+// session is the authority — whoever approves binds the eventual key to
+// THEIR account (portal.ts routes above this comment all ride portalAuth).
+
+/** Lenient user-code entry: case/spaces/dashes-insensitive, format XXXX-XXXX. */
+function normalizeUserCode(raw: string): string | null {
+  const stripped = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(stripped) ? `${stripped.slice(0, 4)}-${stripped.slice(4)}` : null;
+}
+
+portalApp.get('/device/:code', async (c) => {
+  const code = normalizeUserCode(c.req.param('code'));
+  if (!code) return c.json(apiErr('Invalid device code format'), 400);
+  const [row] = await getDb(c.env)
+    .select({ status: deviceCodes.status, displayName: deviceCodes.displayName, createdAt: deviceCodes.createdAt })
+    .from(deviceCodes)
+    .where(and(eq(deviceCodes.userCode, code), gt(deviceCodes.expiresAt, Date.now())));
+  if (!row) return c.json(apiErr('No active device sign-in with this code — check the code, or restart sign-in in your terminal.'), 404);
+  return c.json({ status: row.status, display_name: row.displayName, created_at: row.createdAt });
+});
+
+portalApp.post('/device/:code/approve', async (c) => {
+  const code = normalizeUserCode(c.req.param('code'));
+  if (!code) return c.json(apiErr('Invalid device code format'), 400);
+  const body = await readJson(c);
+  if (body?.action !== 'approve' && body?.action !== 'deny') {
+    return c.json(apiErr("action must be 'approve' or 'deny'"), 400);
+  }
+  const now = Date.now();
+  const [row] = await getDb(c.env)
+    .select({ id: deviceCodes.id })
+    .from(deviceCodes)
+    .where(and(eq(deviceCodes.userCode, code), eq(deviceCodes.status, 'pending'), gt(deviceCodes.expiresAt, now)));
+  if (!row) return c.json(apiErr('No pending device sign-in with this code — it may have expired; restart sign-in in your terminal.'), 404);
+  const approve = body.action === 'approve';
+  await getDb(c.env)
+    .update(deviceCodes)
+    .set({ status: approve ? 'approved' : 'denied', userId: approve ? c.get('userId') : null, approvedAt: now })
+    .where(eq(deviceCodes.id, row.id));
+  return c.json({ ok: true, status: approve ? 'approved' : 'denied' });
 });

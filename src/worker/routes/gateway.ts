@@ -19,15 +19,13 @@
 // tokens, cost snapshot) — streamed responses tee their upstream body so usage
 // is captured without disturbing the client stream.
 //
-// KEYLESS-NATIVE (default since the khode integration): client-key enforcement
-// is OFF unless an admin flips the `client_key_enforcement` setting on. In the
-// default mode the gateway serves /v1/models + the chat dialects to requests
-// with NO auth header at all; a sent literal value (`anonymous` — what khode
-// sends when no key is configured) is accepted/ignored WITHOUT a key-DB
-// lookup; anything else unrecognized also rides through as anonymous. Only
-// keys that actually verify as enrolled `khat-` keys get their caps/
-// allow-lists/logs attribution. Enforcement mode restores the strict M7
-// behavior (401 for anything without a valid key).
+// KEY REQUIREMENT (session 29 — the keyless-native era is over): every /v1
+// request must carry a valid enabled client key (`Authorization: Bearer
+// khat-…` or `x-api-key`); anything else gets a 401 in the path's dialect.
+// Onboarding is the device flow (/api/v1/device → a personal portal key) or
+// keys from the portal/admin console. The old keyless-native default, the
+// official-build gate (x-khateway-access) and the guest pool were removed
+// together — device sign-in replaced them all.
 //
 // M10 rate limiting: after routing resolves the model, every chat-pipeline
 // request increments fixed 1-minute counters in the RateLimiterDO (cross-
@@ -64,7 +62,7 @@ import type { CanonicalChatRequest } from '../canonical';
 import { apiKeys, balanceEntries, models, orgs, providers, requestLogs, users } from '../db/schema';
 import { resolveModelChain, type RoutingCandidate } from '../routing';
 import { verifyClientKey, type ApiKeyRow } from '../auth';
-import { getClientKeyEnforcement, getCacheSettings, getRateLimitSettings } from '../db/settings';
+import { getCacheSettings, getRateLimitSettings } from '../db/settings';
 import { buildGatewayRateChecks, checkRateLimits } from '../ratelimit/client';
 import type { RateLimitDecision } from '../ratelimit/do';
 import { buildCacheKey, evaluateCacheEligibility } from '../cache/key';
@@ -119,21 +117,18 @@ gatewayApp.use('*', cors());
 // ------------------------------------------------------------ client keys
 
 /**
- * M7 gateway auth, amended for the keyless-native default: enforcement is
- * opt-in via the `client_key_enforcement` setting.
+ * M7 gateway auth, strict since session 29 (the keyless-native era is over):
+ * EVERY request must carry a valid enabled client key — `Authorization:
+ * Bearer khat-…` (OpenAI SDKs) or `x-api-key` (Anthropic SDKs), both
+ * accepted so SDKs stay drop-in (M4 promise). Anything else — no header,
+ * the old `anonymous` sentinel, unknown or disabled tokens — gets a 401 in
+ * the path's dialect. Clients onboard through the device flow
+ * (/api/v1/device → a personal portal key) or a key from the portal/admin
+ * console. Keys that verify get spend caps, allow-lists, log attribution
+ * and their balance gates (M8/M9).
  *
- * - Default (enforcement off): requests with no auth header are served
- *   anonymously; the literal `anonymous` sent by keyless clients (Bearer or
- *   x-api-key) is ignored without a key-DB lookup; any other unrecognized
- *   value also rides through anonymously. Keys that DO verify as enrolled
- *   `khat-` keys still get spend caps, allow-lists and log attribution.
- * - Enforcement on: every request must carry a valid enabled `khat-` key —
- *   anything else gets a 401 in the path's dialect (khode users supply theirs
- *   via KHATEWAY_API_KEY).
- *
- * CORS preflights are answered by the cors() middleware above and never reach
- * this point. The enforcement flag is TTL-cached (db/settings.ts) so the
- * anonymous path costs zero DB round-trips.
+ * CORS preflights are answered by the cors() middleware above and never
+ * reach this point.
  */
 function clientDialectForPath(path: string): ClientDialect {
   return path.endsWith('/messages') ? 'anthropic' : 'openai';
@@ -142,40 +137,37 @@ function clientDialectForPath(path: string): ClientDialect {
 /** The sentinel value keyless clients send instead of a real key. */
 const ANONYMOUS_KEY = 'anonymous';
 
+/** Header carrying the keyless-gate access secret (official khode builds). */
+const KEYLESS_ACCESS_HEADER = 'x-khateway-access';
+
 gatewayApp.use('*', async (c, next) => {
   const dialect = clientDialectForPath(c.req.path);
   // OpenAI SDKs send `Authorization: Bearer <key>`; the Anthropic SDK sends
   // `x-api-key: <key>` — both are accepted so SDKs stay drop-in (M4 promise).
   const bearer = c.req.header('authorization') ?? '';
   const raw = (bearer.startsWith('Bearer ') ? bearer.slice(7) : '').trim() || (c.req.header('x-api-key') ?? '').trim();
-  const enforcement = await getClientKeyEnforcement(c.env);
-
-  // The keyless sentinel must NEVER hit the key database (it would also log a
-  // pointless 401-shaped lookup in enforcement mode); treat it as no key.
-  const lookup = raw && raw !== ANONYMOUS_KEY ? await verifyClientKey(c.env, raw) : null;
+  const lookup = raw ? await verifyClientKey(c.env, raw) : null;
   const key = lookup && lookup.enabled ? lookup : null;
 
-  if (!key && enforcement === 'on') {
+  if (!key) {
     return errorJson(
       dialect,
       401,
-      dialectError(dialect, 401, 'Invalid or disabled API key — create one in the Khateway admin console or disable client-key enforcement in settings.', {
+      dialectError(dialect, 401, 'Invalid or disabled API key — sign in from your client (khode: /login) or create a key in the Khateway portal / admin console.', {
         code: 'invalid_api_key',
         type: 'authentication_error',
       }),
     );
   }
 
-  if (key) {
-    c.set('clientKey', key);
-    // Opportunistic last-used stamp; must never block or fail the request.
-    try {
-      await getDb(c.env).update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, key.id));
-    } catch {
-      // ignore
-    }
+  c.set('clientKey', key);
+  // Opportunistic last-used stamp; must never block or fail the request.
+  try {
+    await getDb(c.env).update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, key.id));
+  } catch {
+    // ignore
   }
-  await next();
+    await next();
 });
 
 gatewayApp.get('/', (c) =>
@@ -858,7 +850,7 @@ function rateLimitHeaders(decisions: RateLimitDecision[]): Record<string, string
  */
 async function enforcePostRoutingGates(
   c: Context<GatewayEnv>,
-  key: ApiKeyRow | null,
+  key: ApiKeyRow,
   dialect: ClientDialect,
   draft: LogDraft,
   resolved: { candidate: RoutingCandidate },
@@ -921,7 +913,7 @@ async function enforcePostRoutingGates(
   // M8 prepaid balance: user-owned keys draw down their account's credit.
   // M9: org keys draw down the ORG's shared balance instead. Both refuse at
   // balance ≤ 0 with the same quota envelope as the M7 spend cap.
-  if (key?.orgId) {
+  if (key.orgId) {
     const [org] = await getDb(c.env)
       .select({ balance: orgs.balanceUsdMicros, enabled: orgs.enabled })
       .from(orgs)
@@ -937,7 +929,7 @@ async function enforcePostRoutingGates(
         rateHeaders,
       };
     }
-  } else if (key?.userId) {
+  } else if (key.userId) {
     const [acct] = await getDb(c.env)
       .select({ balance: users.balanceUsdMicros, enabled: users.enabled })
       .from(users)
@@ -988,7 +980,7 @@ async function chatPipeline(
       return errorJson(dialect, resolved.status, dialectError(dialect, resolved.status, resolved.message, { code: resolved.code }));
     }
 
-    const gated = await enforcePostRoutingGates(c, key, dialect, draft, resolved);
+    const gated = await enforcePostRoutingGates(c, key!, dialect, draft, resolved) // middleware 401s without a key;
     if (gated.response) return gated.response;
     const rateHeaders = gated.rateHeaders;
 
@@ -1325,7 +1317,7 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
       return errorJson(dialect, resolved.status, dialectError(dialect, resolved.status, resolved.message, { code: resolved.code }));
     }
 
-    const gated = await enforcePostRoutingGates(c, key, dialect, draft, resolved);
+    const gated = await enforcePostRoutingGates(c, key!, dialect, draft, resolved) // middleware 401s without a key;
     if (gated.response) return gated.response;
     const rateHeaders = gated.rateHeaders;
 

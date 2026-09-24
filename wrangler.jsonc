@@ -1,5 +1,6 @@
-// Khateway — AI model router. One Worker serves the admin SPA (static assets)
-// and the /v1 gateway + /admin API.
+// Khateway — AI model router. One Worker serves the SPA (static assets:
+// landing /, admin /admin, portal /app) and the APIs under /api (admin,
+// portal, client /api/v1) + the /v1 gateway.
 {
   "$schema": "node_modules/wrangler/config/schema.json",
   "name": "khateway",
@@ -12,12 +13,8 @@
     "run_worker_first": [
       "/v1",
       "/v1/*",
-      "/api/v1",
-      "/api/v1/*",
-      "/admin",
-      "/admin/*",
-      "/app/api",
-      "/app/api/*",
+      "/api",
+      "/api/*",
       "/webhooks",
       "/webhooks/*",
       "/health"

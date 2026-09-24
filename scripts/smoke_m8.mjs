@@ -128,14 +128,14 @@ const DEBIT_MICROS_PER_CALL = 46;
 const sign = (secret, body) => crypto.createHmac('sha256', secret).update(body).digest('hex');
 
 async function cleanup({ restoreSignup }) {
-  const provs = await api('/admin/providers');
-  for (const p of provs.body ?? []) if (p.name === PROVIDER_NAME) await api(`/admin/providers/${p.id}`, { method: 'DELETE' });
-  const keys = await api('/admin/api-keys');
-  for (const k of keys.body ?? []) if (k.name === KEY_NAME && !k.user_id) await api(`/admin/api-keys/${k.id}`, { method: 'DELETE' });
-  const users = await api('/admin/users');
-  for (const u of users.body ?? []) if (u.email.startsWith('m8-smoke-') && u.email.endsWith(`-${RUN}@example.com`)) await api(`/admin/users/${u.id}`, { method: 'DELETE' });
-  if (restoreSignup !== undefined) await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: restoreSignup }) });
-  await api('/admin/billing/config', { method: 'PATCH', body: JSON.stringify({ store_id: null, variant_id: null, api_key: null, webhook_secret: null }) });
+  const provs = await api('/api/admin/providers');
+  for (const p of provs.body ?? []) if (p.name === PROVIDER_NAME) await api(`/api/admin/providers/${p.id}`, { method: 'DELETE' });
+  const keys = await api('/api/admin/api-keys');
+  for (const k of keys.body ?? []) if (k.name === KEY_NAME && !k.user_id) await api(`/api/admin/api-keys/${k.id}`, { method: 'DELETE' });
+  const users = await api('/api/admin/users');
+  for (const u of users.body ?? []) if (u.email.startsWith('m8-smoke-') && u.email.endsWith(`-${RUN}@example.com`)) await api(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+  if (restoreSignup !== undefined) await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: restoreSignup }) });
+  await api('/api/admin/billing/config', { method: 'PATCH', body: JSON.stringify({ store_id: null, variant_id: null, api_key: null, webhook_secret: null }) });
 }
 
 // ----------------------------------------------------------------- the suite
@@ -143,32 +143,32 @@ async function cleanup({ restoreSignup }) {
 (async () => {
   console.log('health:', (await api('/health')).status);
 
-  const login = await api('/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
+  const login = await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
   check('admin login', login.status === 200);
 
   // M10 rate limiting is on by default — keep this suite's bursts unthrottled
   // (smoke_m10.mjs exercises the limiter itself).
-  const rlOff = await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'off' }) });
+  const rlOff = await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'off' }) });
   check('rate limiting disabled for burst safety (M10)', rlOff.status === 200 && rlOff.body?.rate_limit_enabled === 'off');
 
-  const settings0 = await api('/admin/settings');
+  const settings0 = await api('/api/admin/settings');
   await cleanup({ restoreSignup: settings0.body?.public_signup ?? 'on' });
 
   // --- signup validation ----------------------------------------------------
-  const badEmail = await api('/app/api/signup', { method: 'POST', body: JSON.stringify({ email: 'not-an-email', password: PASSWORD }) }, 'portal');
+  const badEmail = await api('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email: 'not-an-email', password: PASSWORD }) }, 'portal');
   check('signup: invalid email → 400', badEmail.status === 400);
-  const shortPw = await api('/app/api/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: 'short' }) }, 'portal');
+  const shortPw = await api('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: 'short' }) }, 'portal');
   check('signup: short password → 400', shortPw.status === 400);
 
   // keyless-native regression: anonymous gateway still served (before any account work)
   const { port } = await startMockUpstream();
   upstreamPort = port;
-  const prov = await api('/admin/providers', {
+  const prov = await api('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({ name: PROVIDER_NAME, adapter: 'openai', base_url: `http://127.0.0.1:${upstreamPort}/v1` }),
   });
   check('create smoke provider', prov.status === 201);
-  const model = await api('/admin/models', {
+  const model = await api('/api/admin/models', {
     method: 'POST',
     body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG, pricing_input: 2, pricing_output: 8 }),
   });
@@ -179,32 +179,32 @@ async function cleanup({ restoreSignup }) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model: SLUG, messages: [{ role: 'user', content: 'hi' }] }),
   });
-  check('keyless-native preserved: anonymous /v1 call → 200', anon.status === 200);
+  check('strict auth: anonymous /v1 call → 401 (no keyless)', anon.status === 401);
   await anon.text();
 
   // --- signup + session -----------------------------------------------------
-  const signup = await api('/app/api/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
+  const signup = await api('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
   check('signup → 201 + session cookie', signup.status === 201 && jar.portal.includes('khateway_user=') && signup.body?.user?.email === EMAIL);
   check('new user balance is 0', signup.body?.user?.balance_usd === 0);
-  const me0 = await api('/app/api/me', {}, 'portal');
+  const me0 = await api('/api/portal/me', {}, 'portal');
   check('me: authenticated, billing unconfigured', me0.status === 200 && me0.body?.user?.email === EMAIL && me0.body?.billing_configured === false);
 
-  const dup = await api('/app/api/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
+  const dup = await api('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
   check('duplicate signup → 409', dup.status === 409, `got ${dup.status} ${JSON.stringify(dup.body)}`);
 
-  const badLogin = await api('/app/api/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: 'wrong-password' }) }, 'portal');
+  const badLogin = await api('/api/portal/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: 'wrong-password' }) }, 'portal');
   check('login: wrong password → 401', badLogin.status === 401);
-  const noUser = await api('/app/api/login', { method: 'POST', body: JSON.stringify({ email: `ghost-${RUN}@example.com`, password: PASSWORD }) }, 'portal');
+  const noUser = await api('/api/portal/login', { method: 'POST', body: JSON.stringify({ email: `ghost-${RUN}@example.com`, password: PASSWORD }) }, 'portal');
   check('login: unknown email → same 401 (no oracle)', noUser.status === 401 && noUser.body?.error === badLogin.body?.error);
 
   // public_signup off closes the door
-  await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: 'off' }) });
-  const closed = await api('/app/api/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL2, password: PASSWORD }) }, 'portal');
+  await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: 'off' }) });
+  const closed = await api('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email: EMAIL2, password: PASSWORD }) }, 'portal');
   check('public_signup off → signup 403', closed.status === 403, `got ${closed.status} ${JSON.stringify(closed.body)}`);
-  await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: 'on' }) });
+  await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: 'on' }) });
 
   // --- user key + balance gate ----------------------------------------------
-  const keyRes = await api('/app/api/keys', { method: 'POST', body: JSON.stringify({ name: KEY_NAME }) }, 'portal');
+  const keyRes = await api('/api/portal/keys', { method: 'POST', body: JSON.stringify({ name: KEY_NAME }) }, 'portal');
   const rawKey = keyRes.body?.key ?? '';
   check('portal key created, raw shown once', keyRes.status === 201 && rawKey.startsWith('khat-') && keyRes.body?.key_prefix?.length === 9);
   const keyId = keyRes.body?.id;
@@ -222,19 +222,19 @@ async function cleanup({ restoreSignup }) {
   const broke = await gw(rawKey);
   check('balance 0 → gateway 429 insufficient_quota', broke.status === 429 && broke.body?.error?.code === 'insufficient_quota', JSON.stringify(broke.body?.error));
   const adminGw = await gw('');
-  check('keyless-native preserved: no-key call still 200', adminGw.status === 200);
+  check('strict auth: no-key call → 401 (no keyless)', adminGw.status === 401);
 
-  const credit = await api(`/admin/users`);
+  const credit = await api(`/api/admin/users`);
   const user0 = (credit.body ?? []).find((u) => u.email === EMAIL);
-  await api(`/admin/users/${user0.id}`, { method: 'PATCH', body: JSON.stringify({ balance_adjust_usd: 5, note: 'smoke grant' }) });
-  const bal5 = await waitFor(async () => (await api('/app/api/me', {}, 'portal')).body?.user);
+  await api(`/api/admin/users/${user0.id}`, { method: 'PATCH', body: JSON.stringify({ balance_adjust_usd: 5, note: 'smoke grant' }) });
+  const bal5 = await waitFor(async () => (await api('/api/portal/me', {}, 'portal')).body?.user);
   check('admin +$5 grant → balance 5', bal5?.balance_usd === 5, JSON.stringify(bal5));
 
   // --- usage debits ----------------------------------------------------------
   const ok1 = await gw(rawKey);
   check('funded account → gateway 200', ok1.status === 200 && ok1.body?.usage?.total_tokens === 8);
   const after1 = await waitFor(async () => {
-    const me = await api('/app/api/me', {}, 'portal');
+    const me = await api('/api/portal/me', {}, 'portal');
     return me.body?.user?.balance_usd != null && Math.abs(me.body.user.balance_usd - (5 - DEBIT_MICROS_PER_CALL / 1e6)) < 1e-9 ? me.body.user.balance_usd : null;
   });
   check(`non-stream debit = ${DEBIT_MICROS_PER_CALL} micros`, after1 != null, String(after1));
@@ -247,7 +247,7 @@ async function cleanup({ restoreSignup }) {
   check('streamed call → 200 SSE', streamRes.status === 200 && (streamRes.headers.get('content-type') ?? '').includes('text/event-stream'));
   await streamRes.text();
   const after2 = await waitFor(async () => {
-    const me = await api('/app/api/me', {}, 'portal');
+    const me = await api('/api/portal/me', {}, 'portal');
     const want = 5 - (2 * DEBIT_MICROS_PER_CALL) / 1e6;
     return me.body?.user?.balance_usd != null && Math.abs(me.body.user.balance_usd - want) < 1e-9 ? me.body.user.balance_usd : null;
   });
@@ -270,7 +270,7 @@ async function cleanup({ restoreSignup }) {
     );
   }
 
-  const ledger = await api('/app/api/billing', {}, 'portal');
+  const ledger = await api('/api/portal/billing', {}, 'portal');
   const usageEntries = (ledger.body?.entries ?? []).filter((e) => e.kind === 'usage');
   check(
     'ledger records usage debits',
@@ -279,19 +279,19 @@ async function cleanup({ restoreSignup }) {
   );
 
   // drain to zero → 429 again
-  const meNow = await api('/app/api/me', {}, 'portal');
+  const meNow = await api('/api/portal/me', {}, 'portal');
   const drainTo = -meNow.body.user.balance_usd - 0.01; // push slightly below zero
-  await api(`/admin/users/${user0.id}`, { method: 'PATCH', body: JSON.stringify({ balance_adjust_usd: drainTo }) });
+  await api(`/api/admin/users/${user0.id}`, { method: 'PATCH', body: JSON.stringify({ balance_adjust_usd: drainTo }) });
   const drained = await gw(rawKey);
   check('exhausted balance → 429 again', drained.status === 429 && drained.body?.error?.code === 'insufficient_quota');
 
   // --- lemon squeezy webhook --------------------------------------------------
-  const cfg = await api('/admin/billing/config', {
+  const cfg = await api('/api/admin/billing/config', {
     method: 'PATCH',
     body: JSON.stringify({ store_id: `smoke-store-${RUN}`, variant_id: `smoke-variant-${RUN}`, api_key: 'sk_ls_smoke', webhook_secret: 'whsec_smoke' }),
   });
   check('billing config saved (hints only)', cfg.status === 200 && cfg.body?.api_key_hint === 'moke' && cfg.body?.webhook_secret_set === true);
-  const meCfg = await api('/app/api/me', {}, 'portal');
+  const meCfg = await api('/api/portal/me', {}, 'portal');
   check('portal sees billing configured', meCfg.body?.billing_configured === true);
 
   const webhook = async (payloadObj, sig) => {
@@ -318,7 +318,7 @@ async function cleanup({ restoreSignup }) {
   const badSig = await webhook(order(`ord-${RUN}-a`), 'deadbeef');
   check('webhook with bad signature → 401', badSig.status === 401);
 
-  const balanceOf = async () => (await api('/app/api/me', {}, 'portal')).body?.user?.balance_usd;
+  const balanceOf = async () => (await api('/api/portal/me', {}, 'portal')).body?.user?.balance_usd;
   const beforeTopup = await balanceOf();
 
   const topup = await webhook(order(`ord-${RUN}-1`), sign('whsec_smoke', JSON.stringify(order(`ord-${RUN}-1`))));
@@ -348,37 +348,37 @@ async function cleanup({ restoreSignup }) {
   check('post-topup gateway call → 200', revived.status === 200);
 
   // --- key scoping + checkout API --------------------------------------------
-  const adminKey = await api('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Admin Only (smoke)' }) });
-  const portalKeys = await api('/app/api/keys', {}, 'portal');
+  const adminKey = await api('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Admin Only (smoke)' }) });
+  const portalKeys = await api('/api/portal/keys', {}, 'portal');
   check('portal sees only own keys (admin key invisible)', portalKeys.status === 200 && portalKeys.body?.some((k) => k.id === keyId) && !portalKeys.body?.some((k) => k.id === adminKey.body?.id));
-  const adminList = await api('/admin/api-keys');
+  const adminList = await api('/api/admin/api-keys');
   const mine = adminList.body?.find((k) => k.id === keyId);
   check('admin key list shows user attribution', mine?.user_id === user0.id && mine?.user_email === EMAIL);
-  await api(`/admin/api-keys/${adminKey.body?.id}`, { method: 'DELETE' });
+  await api(`/api/admin/api-keys/${adminKey.body?.id}`, { method: 'DELETE' });
 
-  const patchKey = await api(`/app/api/keys/${keyId}`, { method: 'PATCH', body: JSON.stringify({ name: 'M8 Key renamed (smoke)' }) }, 'portal');
+  const patchKey = await api(`/api/portal/keys/${keyId}`, { method: 'PATCH', body: JSON.stringify({ name: 'M8 Key renamed (smoke)' }) }, 'portal');
   check('portal key rename', patchKey.status === 200 && patchKey.body?.name === 'M8 Key renamed (smoke)');
 
-  const co = await api('/app/api/billing/checkout', { method: 'POST', body: JSON.stringify({ amount_usd: 10 }) }, 'portal');
+  const co = await api('/api/portal/billing/checkout', { method: 'POST', body: JSON.stringify({ amount_usd: 10 }) }, 'portal');
   check('checkout with fake LS creds → 502 upstream error surfaced', co.status === 502 && typeof co.body?.error === 'string');
-  const coBad = await api('/app/api/billing/checkout', { method: 'POST', body: JSON.stringify({ amount_usd: 10000 }) }, 'portal');
+  const coBad = await api('/api/portal/billing/checkout', { method: 'POST', body: JSON.stringify({ amount_usd: 10000 }) }, 'portal');
   check('checkout amount out of bounds → 400', coBad.status === 400);
 
   // --- logout / revocation -----------------------------------------------------
-  const logout = await api('/app/api/logout', { method: 'POST' }, 'portal');
+  const logout = await api('/api/portal/logout', { method: 'POST' }, 'portal');
   jar.portal = '';
-  const meAfterLogout = await api('/app/api/me', {}, 'portal');
+  const meAfterLogout = await api('/api/portal/me', {}, 'portal');
   check('portal logout revokes session (me → 401)', logout.status === 200 && meAfterLogout.status === 401);
-  const relogin = await api('/app/api/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
+  const relogin = await api('/api/portal/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
   check('portal login again → 200', relogin.status === 200, `got ${relogin.status} ${JSON.stringify(relogin.body)}`);
 
   // --- cleanup -----------------------------------------------------------------
   await cleanup({ restoreSignup: settings0.body?.public_signup ?? 'on' });
-  const meDeleted = await api('/app/api/me', {}, 'portal');
+  const meDeleted = await api('/api/portal/me', {}, 'portal');
   check('cleanup: user deleted → session dead (401)', meDeleted.status === 401);
-  const usersLeft = await api('/admin/users');
+  const usersLeft = await api('/api/admin/users');
   check('cleanup: no smoke users left', !(usersLeft.body ?? []).some((u) => u.email.includes(RUN)));
-  const provsLeft = await api('/admin/providers');
+  const provsLeft = await api('/api/admin/providers');
   check('cleanup: no smoke provider left', !(provsLeft.body ?? []).some((p) => p.name === PROVIDER_NAME));
 
   console.log('');

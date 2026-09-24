@@ -78,6 +78,20 @@
       "when": 1789833832539,
       "tag": "0010_m16_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790226178838,
+      "tag": "0011_device_codes",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790251549798,
+      "tag": "0012_oauth_signin",
+      "breakpoints": true
     }
   ]
 }

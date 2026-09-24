@@ -1,6 +1,6 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-19 (session 19)
+Last updated: 2026-09-24 (session 26)
 
 ## Project origin (the user's ask)
 
@@ -18,6 +18,131 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
 - Docs convention mirrors termagent: AGENTS/RULES/STATUS/MEMORY in-project. Workspace-level `racode/` AGENTS/RULES applied while the project lived there; **standalone since 2026-09-17** — its own AGENTS.md is the sole source of truth now.
 
 ## What the assistant did (honest history)
+
+- Social sign-in (2026-09-24, user: "Add Google + GitHub sign-in to the
+  khateway portal; email/password becomes the fallback; khode needs ZERO
+  changes"): planned (approved) then shipped the full design. Worker:
+  `src/worker/oauth/config.ts` (settings rows `oauth_google_client_id`,
+  `oauth_google_client_secret_enc`, `oauth_github_client_id`,
+  `oauth_github_secret_enc` — billing/config.ts pattern; a provider is
+  enabled iff BOTH rows exist; `oauthConfigStatus` echoes client ids IN
+  FULL — deliberate, they are public — plus per-origin callback URLs),
+  `src/worker/oauth/providers.ts` (authorize-URL builders + google/github
+  profile normalizers PURE + offline-tested; token exchange + profile
+  fetches thin, `OAuthProviderError` on anything odd), `src/worker/db/
+  oauth.ts` (PURE `decideOAuthSignIn`: identity row → sign_in, provider-
+  VERIFIED email match → link, else create under public_signup; refuse on
+  disabled users / signup closed / no email; `applyOAuthSignInDecision`
+  refuses an email conflict on create instead of linking — the
+  unverified-email takeover backstop), `src/worker/routes/oauth.ts`
+  (/start + /callback under /api/portal/oauth, mounted BEFORE portalApp so
+  the portalAuth catch-all can't swallow them — same rule as device vs
+  clientapi; state = random 32B hex + `khateway_oauth` HttpOnly Lax 10-min
+  cookie carrying b64url {random, provider, next}; callback consumes the
+  cookie one-shot; every failure → 302 /app/login?error=<message> with
+  next preserved — browser surface, never JSON). Migration 0012:
+  `oauth_identities` (unique provider+provider_user_id) +
+  `users.password_hash` NULLABLE; portal /login answers OAuth-only
+  accounts "This account signs in with Google/GitHub — use the buttons
+  above." Web: PortalLogin social buttons + "or continue with email"
+  divider + `?error=` inline; admin Settings "Social sign-in" card (client
+  id/secret + copyable callback URLs). Tests: tests/worker/oauth.test.ts
+  (22 offline: decision rules incl. never-link-unverified, state cookie
+  expiry/provider/state mismatches, normalizers, authorize URLs), NEW
+  scripts/smoke_oauth.mjs (14 failure-path checks incl. the mount-order
+  proof — unconfigured start 302s, never 401s). Verified: check clean,
+  npm test 326, all eight suites green vs dev, UI exercised in-browser
+  (login page + admin card save flow). BONUS FIX discovered by browser
+  verification: App.tsx's portal 401 guard re-navigated /app/login onto
+  itself (a background me() 401 fires on EVERY login-page mount), burying
+  ?error=/?next= inside a nested next= that PortalLogin rejects — the
+  guard now no-ops on /app/login, which also repairs the plain
+  device-link SPA round-trip that session 28 documented as working.
+  Real Google/GitHub round-trips remain manual (README walkthrough);
+  NOT deployed.
+- Session 26 (2026-09-24, user: admin is operator-only — why is it prominent
+  on the public landing?): removed all three /admin touchpoints from
+  `pages/Landing.tsx` (header emerald "Admin console" button — Portal took
+  its place as the header primary, hero "Admin sign in" secondary CTA, footer
+  "Admin" link). Landing now links only to /app; /admin/login stays reachable
+  by URL/bookmark (unchanged password + 10/min bucket). Contract: the public
+  landing NEVER links the operator console.
+- Session 25 (2026-09-23, user: "move fetch model and import model to the
+  model page instead since it make more sense there; also improve the ui of
+  adding model with just fetch from the provided provider base url, and give
+  options to add custom model when provider doesn't have '/models'"): moved
+  discovery+import out of the Providers modal into a new "Add models" modal
+  on the Models page with two tabs — "Fetch from provider" (default) and
+  "Custom model" (the old manual form; also the landing spot when a fetch
+  fails). Backend: import-models gained a discovery-enriched body
+  (`{models:[{id, display_name?, context_window?, max_output_tokens?}]}` —
+  imported rows land with names + limits filled; legacy `model_ids` intact),
+  and `listUpstreamModels` falls back to `DEFAULT_BASES[adapter]` when a
+  provider has no stored base_url (mirrors test-connection). api.ts lost
+  `fetchModelsPreview` (endpoint kept). Found + fixed a WIP dev-env bug en
+  route: the user's uncommitted vite proxy key `/api` prefix-matched the
+  app's own `/api.ts` module (vite root = src/web → top-level module URLs)
+  and proxied it to the worker, blanking every page under `npm run dev` —
+  key is now regex `^/api/`. smoke_gateway 212 → 216 (+4 enriched-import
+  checks; `mock-enriched` fixture added to the cleanup list). Verified: tsc
+  ×3, vitest 304/304, smoke_gateway 216/216, full browser pass (real
+  OpenRouter fetch → all rows "unsupported name" — OpenRouter ids contain
+  `/`, outside the global slug alphabet, pre-existing design; kios fetch →
+  filter/select/deselect → Import 2 → toast + table refresh; re-fetch shows
+  "already added" on imported + pre-existing rows; custom-tab register;
+  provider modal clean). Test rows + temp provider deleted after.
+- Session 24 (2026-09-23, user asked whether `context_window` /
+  `max_output_tokens` still make sense on the add-model form since models
+  are mostly imported from providers): kept both fields, with reasoning.
+  `max_output_tokens` is load-bearing: the anthropic adapter synthesizes the
+  API-required `max_tokens` from it when the client omits the cap
+  (adapters/anthropic.ts) — null falls back to a blanket 4096, which
+  silently truncates modern Claude models (sonnet-4.5 = 64k output). It is
+  NOT handled upstream for native anthropic providers: the Messages API 400s
+  without `max_tokens`, and Anthropic's `/v1/models` listing exposes no
+  limits, so import leaves the field null exactly where it matters. For
+  openai-compatible + gemini upstreams the cap is optional upstream-side —
+  there the field really is just metadata. `context_window` is unenforced
+  metadata (no request validation anywhere; upstream rejects over-long
+  requests) but feeds the OpenRouter-parity `/v1/models` `context_window`
+  field that client apps read. Gap fixed: the openai-shaped fetch-models
+  branch now falls back to `top_provider.max_completion_tokens`
+  (OpenRouter's nesting) for `max_output_tokens`; smoke_gateway mock + check
+  added (211 → 212). Verified: tsc ×3, vitest 304, smoke_gateway 212/212.
+  UI reframe built in the same session (user approved, then repositioned
+  on request): the model form collapses both fields into a "Token limits —
+  optional, auto-filled by Fetch models" section placed directly ABOVE the
+  Advanced block (same toggle pattern; auto-expands when editing a model
+  that has either value), with hints
+  stating what each feeds (/v1/models metadata, not enforced; anthropic
+  default max_tokens when the client omits it, else 4096). Payload/logic
+  unchanged. Verified: tsc ×3 + vite build. Then **deployed** to
+  khateway.chengsokdara.workers.dev (version 1e94206a, sessions 23+24
+  shipped together) — and caught that migration `0010_m16_attribution`
+  was STILL PENDING on the remote D1 (prior M16-M18 deploys never applied
+  it), so remote request_logs had been missing the attribution columns;
+  applied pre-deploy. Live checks green (health, landing SPA, keyless
+  /v1/models, /api/admin 401s).
+
+- Session 23 (2026-09-23, user asks: "Move admin pages to /admin and leave
+  the / for landing page" + "api should be live inside /api so that /app and
+  /admin is for pages"): **routing restructure + public landing page.**
+  Contract now: `/` = public landing (`pages/Landing.tsx`), `/admin/*` =
+  admin console PAGES only, `/app/*` = portal pages only, all management
+  APIs under `/api` (`/api/admin/*` was `/admin/*`, `/api/portal/*` was
+  `/app/api/*`; `/api/v1` client API already fit), `/v1` gateway and
+  `/webhooks/lemonsqueezy` UNTOUCHED (SDK surface + LS-configured callback).
+  wrangler `run_worker_first` is now `/v1(/*)`, `/api(/*)`, `/webhooks(/*)`,
+  `/health` — `/admin/*` pages ride the assets SPA fallback like `/app`
+  (no worker middleware; no content negotiation needed). App.tsx admin
+  routes moved under `/admin` (401 + logout → `/admin/login`, login success
+  → `/admin`); LEGACY_ROUTES map client-redirects old bookmarks
+  (`/overview`, `/providers`, `/login`, …) via a new history-`replace()` in
+  router.tsx (no back-button loops). vite proxy: `/admin` + `/app/api`
+  keys → single `/api`. Verified end-to-end (curl :8787 + :5174, browser
+  pass, all 7 smokes, vitest 304). Old SPA bundles calling `/admin/*` APIs
+  post-deploy would get the SPA HTML back (assets fallback owns the prefix
+  now) — self-heals on reload; no compat shim (admin-only surface).
 
 - Session 20 (2026-09-19, user ask: "Let's go M14."): **M14 — playground UI**
   built + verified, the last milestone in the user's stated post-MVP order.
@@ -746,6 +871,78 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
   API Keys page. Migration `0003_settings` was hand-written (simple CREATE
   TABLE) with the drizzle meta snapshot/journal edited by hand (same technique
   as 0002).
+- **Keyless gate — official-khode-build attestation (session 27, 2026-09-24;
+  do not regress)**: the user wants keyless access restricted to khode builds
+  THEY make, so an open-sourced khode's source builds stay locked out.
+  Mechanism (chosen by the user: static secret header, settings-stored): the
+  admin sets `keyless_gate_secret` via `PATCH /api/admin/settings` (16–256
+  chars; `''`/null clears; GET echoes only `keyless_gate: 'on'|'off'`; UI
+  card in the Gateway & accounts settings card) → `setKeylessGateSecret`
+  stores ONLY `sha256(secret)` in the `keyless_gate_secret_hash` settings
+  row (hash like M7 client keys, never plaintext) riding the 5 s snapshot
+  cache (fail-open = gate off on DB error — safe: without D1 no model
+  resolves). In the auth middleware (`routes/gateway.ts`), when no valid
+  key resolved (unknown/disabled tokens included), a set gate hash requires
+  `x-khateway-access: <secret>` — `sha256Hex` + `safeEqualHex` compare —
+  else 401 `unauthorized_client` in the path's dialect (openai envelope
+  everywhere except `/messages` → anthropic). Enrolled keys skip the gate;
+  enforcement-on 401s first (`invalid_api_key`), enforcement wins when both
+  are on. khode side (`~/Apps/khode`): `scripts/build-release.sh` bakes the
+  secret at compile time (`KHODE_ACCESS_SECRET` env → go ldflags
+  `-X khode/internal/llm.khatewayAccessSecret`; repo `var` stays EMPTY —
+  never committed) and khode sends `x-khateway-access` on every khateway
+  request (openai + anthropic SDK faces via `extraHeaders` →
+  `option.WithHeader`, plus raw `FetchModels`); the `anonymous` placeholder
+  is unchanged. Boundary (told the user): this stops source builds, curl and
+  other clients; it cannot stop someone extracting the secret from an
+  official binary (inherent to embedded credentials). Rollout: deploy with
+  gate off → set the secret in the remote admin console → rebuild khode with
+  the script → flip the gate on. Smoke: smoke_gateway.mjs 230 checks (14
+  gate checks: both envelopes 401/200 matrix, enrolled-key bypass, disabled
+  key gated, short-secret 400, enforcement precedence, clear restores).
+- **Device-flow onboarding + guest pool (session 28, 2026-09-24; the
+  product path for "khode is for other people")**: the user corrected the
+  gate session's framing — khode WILL be distributed, so keyless needed
+  identity + a ceiling. TWO mechanisms shipped together:
+  (1) Device flow (RFC 8628): khode `/login` → POST /api/v1/device/code →
+  user approves at /app/device (PORTAL SESSION IS THE AUTHORITY — whoever
+  approves owns the key) → POST /api/v1/device/token returns a one-shot
+  personal khat- key. Table `device_codes` (0011): device_code sha-256
+  hashed, user_code XXXX-XXXX unique-forever (unambiguous 32-char
+  alphabet), status pending→approved|denied→consumed, key_id audit.
+  Grant order matters: guarded UPDATE to consumed FIRST, then insert the
+  key (racing polls can never double-mint). Endpoints sit at
+  /api/v1/device, mounted BEFORE clientapi so its key-required catch-all
+  misses them; they are deliberately keyless-gate-exempt (they mint keys).
+  khode: internal/khateway package + internal/ui/devicelogin.go (`/login`),
+  key → auth.json, auto provider-switch + first-model pick.
+  (2) Guest pool: settings `keyless_guest_user_id` (admin card +
+  `keyless_guest_email` PATCH, email must resolve to a portal account) —
+  keyless requests inherit the pool account's user_id into every LogDraft
+  (attribution + debits ride writeRequestLog unchanged) and
+  enforcePostRoutingGates balance-gates the pool at $0 → 429. The POOL
+  BALANCE IS THE OPERATOR'S TOTAL KEYLESS EXPOSURE — fund it on the admin
+  Users page. Works with gate on or off; enrolled keys unaffected.
+  Portal login preserves ?next= (device verification links survive login).
+  smokes: smoke_device.mjs (21 checks, no mock upstream needed) +
+  smoke_gateway.mjs 242 (+12 guest-pool). NOT yet deployed; HMAC-rotation
+  of the gate secret remains deliberately deferred (optional hardening).
+- **KEYLESS REMOVED (session 29, 2026-09-24; SUPERSEDES sessions 11/27/28
+  auth notes — do not re-introduce)**: user call — device sign-in made
+  keyless pointless. Removed together: the keyless-native default,
+  `client_key_enforcement`, the official-build gate
+  (`keyless_gate_secret_hash` / `x-khateway-access`), and the guest pool
+  (`keyless_guest_user_id`). The /v1 middleware is unconditionally strict:
+  valid enabled key or 401 `invalid_api_key` in the path's dialect; the old
+  `anonymous` sentinel is just an invalid key now (it still never matches a
+  real hash). Settings rows from the removed flags linger in existing
+  deployments as ignored orphans (settings.ts no longer reads them; no
+  migration). The rate limiter's per-IP bucket has no live trigger (nothing
+  is anonymous) but stays in the builder. khateway-side smoke suites were
+  re-anchored (gateway 209 checks, m10 33). khode's keyless machinery
+  (`khatewayAnonKey`, `khatewayAccessSecret`, walkthrough keyless path) is
+  removed by a follow-up khode-side pass — until then old khode builds get
+  401 from the deployed gateway, which is intended pressure to rebuild.
 - **stream_options.include_usage (session 11)**: parsed into canonical
   `streamIncludeUsage` (removed from extras, so it never double-rides);
   openai adapter re-emits `stream_options:{include_usage}` for streaming
@@ -815,6 +1012,7 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
 ## Feature status snapshot
 
 See `STATUS.md` (kept live there — it is the resume point). **M1–M7 done — MVP COMPLETE** (admin console; gateway core; anthropic dialect + cross-dialect translation matrix with SSE both ways; `/v1/responses` third client dialect; tools/vision translation across all dialects + fallback chains & retries; client API keys + spend caps + allowed-model lists + request logs with usage/cost capture + logs UI + snippets — live-verified against z.ai; multi-adapter providers since session 10; keyless-native default since session 11; **M8 portal accounts + prepaid balances + Lemon Squeezy billing since session 13**; **M9 multi-user orgs/teams with shared org balances since session 14**; **M10 gateway rate limiting (Durable Object, per-key/per-IP/per-model, 429 + Retry-After) since session 15**; **M11 semantic cache (canonical-hash entries, opt-in per model/key, TTL + flush) since session 17**; **M12 native Gemini adapter (generateContent upstream, thinking budgets, native multiparts) since session 18**; **M13 embeddings (`POST /v1/embeddings` — openai + native-gemini upstreams, logged + priced like chat) since session 19**). The **offline golden-fixture vitest suite** (266/266) is the regression net over the wire surface (plus password/LS-webhook/rate-limit/cache-key/gemini/embeddings units).
+Post-M18 additions: **keys required, always (session 29 — keyless/gate/guest-pool removed)**; **RFC 8628 device flow (session 28 — khode `/login` → `/app/device` approval → one-shot personal key)**; **social sign-in — Google + GitHub OAuth on the portal (2026-09-24: `oauth_identities`, nullable `users.password_hash`, pure link-or-create with never-link-unverified, all failures redirect to `/app/login?error=`; offline tests + smoke_oauth green; real-provider round-trip manual per README)**.
 
 ## Known rough edges
 

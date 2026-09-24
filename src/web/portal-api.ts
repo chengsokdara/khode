@@ -1,4 +1,4 @@
-// Typed client for the /app/api portal + the shared /webhooks-free surface.
+// Typed client for the /api/portal portal + the shared /webhooks-free surface.
 // Mirrors api.ts conventions but dispatches a PORTAL unauthorized event so a
 // dead user session bounces to /app/login, never into the admin console.
 
@@ -126,43 +126,55 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const portalApi = {
   signup: (email: string, password: string) =>
-    req<{ user: PortalUser }>('/app/api/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
+    req<{ user: PortalUser }>('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
   login: (email: string, password: string) =>
-    req<{ user: PortalUser }>('/app/api/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  logout: () => req<{ ok: boolean }>('/app/api/logout', { method: 'POST' }),
-  me: () => req<MeResponse>('/app/api/me'),
+    req<{ user: PortalUser }>('/api/portal/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  logout: () => req<{ ok: boolean }>('/api/portal/logout', { method: 'POST' }),
+  me: () => req<MeResponse>('/api/portal/me'),
 
-  keys: () => req<PortalKey[]>('/app/api/keys'),
-  createKey: (k: Record<string, unknown>) => req<PortalKey>('/app/api/keys', { method: 'POST', body: JSON.stringify(k) }),
-  updateKey: (id: string, k: Record<string, unknown>) => req<PortalKey>(`/app/api/keys/${id}`, { method: 'PATCH', body: JSON.stringify(k) }),
-  deleteKey: (id: string) => req<{ ok: boolean }>(`/app/api/keys/${id}`, { method: 'DELETE' }),
+  keys: () => req<PortalKey[]>('/api/portal/keys'),
+  createKey: (k: Record<string, unknown>) => req<PortalKey>('/api/portal/keys', { method: 'POST', body: JSON.stringify(k) }),
+  updateKey: (id: string, k: Record<string, unknown>) => req<PortalKey>(`/api/portal/keys/${id}`, { method: 'PATCH', body: JSON.stringify(k) }),
+  deleteKey: (id: string) => req<{ ok: boolean }>(`/api/portal/keys/${id}`, { method: 'DELETE' }),
 
-  usage: (limit = 50) => req<PortalUsageRow[]>(`/app/api/usage?limit=${limit}`),
-  billing: () => req<BillingInfo>('/app/api/billing'),
+  usage: (limit = 50) => req<PortalUsageRow[]>(`/api/portal/usage?limit=${limit}`),
+  billing: () => req<BillingInfo>('/api/portal/billing'),
   createCheckout: (amountUsd: number) =>
-    req<{ url: string }>('/app/api/billing/checkout', { method: 'POST', body: JSON.stringify({ amount_usd: amountUsd }) }),
+    req<{ url: string }>('/api/portal/billing/checkout', { method: 'POST', body: JSON.stringify({ amount_usd: amountUsd }) }),
 
-  orgs: () => req<PortalOrg[]>('/app/api/orgs'),
-  createOrg: (name: string) => req<PortalOrg>('/app/api/orgs', { method: 'POST', body: JSON.stringify({ name }) }),
-  joinOrg: (code: string) => req<PortalOrg>('/app/api/orgs/join', { method: 'POST', body: JSON.stringify({ code }) }),
-  org: (id: string) => req<PortalOrg>(`/app/api/orgs/${id}`),
-  deleteOrg: (id: string) => req<{ ok: boolean }>(`/app/api/orgs/${id}`, { method: 'DELETE' }),
-  regenerateCode: (id: string) => req<{ join_code: string }>(`/app/api/orgs/${id}/regenerate-code`, { method: 'POST' }),
-  leaveOrg: (id: string) => req<{ ok: boolean }>(`/app/api/orgs/${id}/leave`, { method: 'POST' }),
+  orgs: () => req<PortalOrg[]>('/api/portal/orgs'),
+  createOrg: (name: string) => req<PortalOrg>('/api/portal/orgs', { method: 'POST', body: JSON.stringify({ name }) }),
+  joinOrg: (code: string) => req<PortalOrg>('/api/portal/orgs/join', { method: 'POST', body: JSON.stringify({ code }) }),
+  org: (id: string) => req<PortalOrg>(`/api/portal/orgs/${id}`),
+  deleteOrg: (id: string) => req<{ ok: boolean }>(`/api/portal/orgs/${id}`, { method: 'DELETE' }),
+  regenerateCode: (id: string) => req<{ join_code: string }>(`/api/portal/orgs/${id}/regenerate-code`, { method: 'POST' }),
+  leaveOrg: (id: string) => req<{ ok: boolean }>(`/api/portal/orgs/${id}/leave`, { method: 'POST' }),
   setMemberRole: (id: string, userId: string, role: OrgRole) =>
-    req<OrgMember>(`/app/api/orgs/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    req<OrgMember>(`/api/portal/orgs/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   removeMember: (id: string, userId: string) =>
-    req<{ ok: boolean }>(`/app/api/orgs/${id}/members/${userId}`, { method: 'DELETE' }),
+    req<{ ok: boolean }>(`/api/portal/orgs/${id}/members/${userId}`, { method: 'DELETE' }),
 
-  orgKeys: (id: string) => req<OrgKey[]>(`/app/api/orgs/${id}/keys`),
+  orgKeys: (id: string) => req<OrgKey[]>(`/api/portal/orgs/${id}/keys`),
   createOrgKey: (id: string, k: Record<string, unknown>) =>
-    req<OrgKey>(`/app/api/orgs/${id}/keys`, { method: 'POST', body: JSON.stringify(k) }),
+    req<OrgKey>(`/api/portal/orgs/${id}/keys`, { method: 'POST', body: JSON.stringify(k) }),
   updateOrgKey: (id: string, keyId: string, k: Record<string, unknown>) =>
-    req<OrgKey>(`/app/api/orgs/${id}/keys/${keyId}`, { method: 'PATCH', body: JSON.stringify(k) }),
-  deleteOrgKey: (id: string, keyId: string) => req<{ ok: boolean }>(`/app/api/orgs/${id}/keys/${keyId}`, { method: 'DELETE' }),
+    req<OrgKey>(`/api/portal/orgs/${id}/keys/${keyId}`, { method: 'PATCH', body: JSON.stringify(k) }),
+  deleteOrgKey: (id: string, keyId: string) => req<{ ok: boolean }>(`/api/portal/orgs/${id}/keys/${keyId}`, { method: 'DELETE' }),
 
-  orgUsage: (id: string, limit = 50) => req<OrgUsageRow[]>(`/app/api/orgs/${id}/usage?limit=${limit}`),
-  orgBilling: (id: string) => req<BillingInfo>(`/app/api/orgs/${id}/billing`),
+  orgUsage: (id: string, limit = 50) => req<OrgUsageRow[]>(`/api/portal/orgs/${id}/usage?limit=${limit}`),
+  orgBilling: (id: string) => req<BillingInfo>(`/api/portal/orgs/${id}/billing`),
   orgCheckout: (id: string, amountUsd: number) =>
-    req<{ url: string }>(`/app/api/orgs/${id}/billing/checkout`, { method: 'POST', body: JSON.stringify({ amount_usd: amountUsd }) }),
+    req<{ url: string }>(`/api/portal/orgs/${id}/billing/checkout`, { method: 'POST', body: JSON.stringify({ amount_usd: amountUsd }) }),
+
+  // Device-flow approval (RFC 8628): a CLI/TUI (khode) shows a short code;
+  // the signed-in user confirms it here. The portal session is the authority.
+  deviceInfo: (code: string) =>
+    req<{ status: 'pending' | 'approved' | 'denied' | 'consumed'; display_name: string | null; created_at: number }>(
+      `/api/portal/device/${encodeURIComponent(code)}`,
+    ),
+  approveDevice: (code: string, action: 'approve' | 'deny') =>
+    req<{ ok: boolean; status: 'approved' | 'denied' }>(`/api/portal/device/${encodeURIComponent(code)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
 };

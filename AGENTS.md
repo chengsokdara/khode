@@ -50,7 +50,7 @@ balance debit; anthropic-only providers answer 501; no semantic cache
 (chat-shaped eligibility gate — deliberate).
 **M14 done** — playground UI: in-admin chat tester (`/playground`) hitting
 the REAL gateway with a session-scoped client key (`api_keys.playground_session`
-= sha256 of the admin session token; `POST /admin/playground/key` rotates +
+= sha256 of the admin session token; `POST /api/admin/playground/key` rotates +
 mints — raw key returned once — hidden from the keys list, deleted at logout,
 swept when the session row dies); model picker, SSE streaming render,
 resulting log rows shown per request. The stated post-MVP order is exhausted.
@@ -82,8 +82,15 @@ upstreams, mapped to gemini `responseMimeType`+`responseSchema` (schema
 cleaned to the OpenAPI subset), best-effort system JSON directive on
 anthropic (documented non-guarantee); cache keys include reasoning +
 responseFormat only when present.
-**Keyless-native default** (khode integration): /v1 is served
-anonymously unless `client_key_enforcement` is switched on (admin settings).
+**Social sign-in done (2026-09-24)** — portal login offers "Continue with
+Google / GitHub" (pure OAuth 2.0 on fetch, no SDKs; `oauth_identities` +
+nullable `users.password_hash`); email/password stays as the fallback and
+khode's device flow inherits the one-click step via `?next=` preservation
+(architecture note below).
+**Keys required, always** (session 29): /v1 answers only valid client keys —
+onboarding is the device flow (`/api/v1/device`, khode `/login`) or portal/
+admin keys. The old keyless-native default, official-build gate and guest
+pool were removed with it.
 
 ## Stack (deliberate choices — do not churn)
 
@@ -106,7 +113,7 @@ src/shared/
 ├── adapters.ts     — Adapter type + KNOWN_ADAPTERS (dep-free, worker+web import)
 ├── vendor-urls.ts  — well-known vendor base-URL presets for the provider form
 src/worker/
-├── index.ts        — Hono entry: mounts /admin + /v1 + /app/api + /webhooks, /health, notFound/onError
+├── index.ts        — Hono entry: mounts /api/admin + /v1 + /api/portal + /api/v1 + /webhooks, /health, notFound/onError
 ├── env.ts          — Env bindings type, KNOWN_ADAPTERS, DEFAULT_BASES per adapter,
 │                     joinUrl + joinAdapterUrl (per-adapter URL shape for shared bases)
 ├── crypto.ts       — AES-256-GCM secret encrypt/decrypt, HMAC sign/verify, sha256, safe-equal,
@@ -136,15 +143,35 @@ src/worker/
 │                          flushCache, cacheStats (entries/bytes + 24 h hits/token savings)
 ├── db/
 │   ├── schema.ts   — drizzle: providers, models(+rate_limit_rpm,+cache_enabled), api_keys(+user_id,
-│   │                 +org_id,+rate_limit_rpm,+cache_enabled,+playground_session M14),
+│   │                 +org_id,+rate_limit_rpm,+cache_enabled,+playground_session M14), device_codes
+│   │                 (session 28: hashed device_code, unique XXXX-XXXX user_code,
+│   │                 pending→approved|denied→consumed, user_id/key_id), oauth_identities
+│   │                 (unique provider+provider_user_id → user_id; users.password_hash now
+│   │                 NULLABLE — null = OAuth-only account),
 │   │                 request_logs(+user_id,+org_id,
 │   │                 +cache_hit), sessions, user_sessions, users, orgs, org_members,
 │   │                 balance_entries(+org_id, user_id nullable — exactly one of the two),
 │   │                 webhook_events, settings, cache_entries (M11)
 │   ├── index.ts    — getDb(env)
+│   ├── oauth.ts    — social sign-in linking (db/oauth.ts): decideOAuthSignIn — the PURE
+│   │                link-or-create decision (identity → sign_in; provider-VERIFIED email
+│   │                match → link; else create (public_signup permitting) / refuse) —
+│   │                offline-tested; + applyOAuthSignInDecision executor (create refuses on
+│   │                email conflict instead of linking) + identity/email lookups
 │   └── settings.ts — deployment flags (client_key_enforcement, public_signup,
 │                      rate_limit_enabled/key_rpm/ip_rpm — M10) in one 5 s cached snapshot,
 │                      fail-open on read errors
+├── oauth/
+│   ├── config.ts    — social sign-in credentials in `settings` (billing/config.ts pattern):
+│   │                 oauth_google_client_id / oauth_google_client_secret_enc /
+│   │                 oauth_github_client_id / oauth_github_secret_enc; getOAuthConfig
+│   │                 (null unless BOTH rows exist = enabled), saveOAuthConfig (null/'' clears),
+│   │                 oauthConfigStatus (client ids public + callback URLs; secrets hint-only)
+│   └── providers.ts — no-SDK OAuth 2.0 faces: buildAuthorizeUrl + normalizeGoogleProfile /
+│                     normalizeGithubProfile (PURE, offline-tested) + exchangeCodeForToken /
+│                     fetchProviderProfile (thin fetches; OAuthProviderError on anything odd);
+│                     OAuthProfile = {provider, providerUserId (STABLE sub/numeric id), email,
+│                     emailVerified}
 ├── dialects/
 │   ├── openaiChat.ts        — client OpenAI dialect: parse→canonical, OpenAI error envelope,
 │   │                          upstream-error mapping, anthropic→openai response/SSE translation
@@ -186,11 +213,15 @@ src/worker/
     │                 users list/adjust-balance/enable/delete (M8; M9 delete
     │                 runs org-owner succession), orgs list/patch/delete (M9, global),
     │                 billing config GET/PATCH (M8), settings GET/PATCH (enforcement +
-    │                 public_signup), logs list/clear (M7; DTO carries user/org attribution),
-    │                 upstream model discovery + bulk import (fetch-models ×2, import-models)
-    ├── gateway.ts  — /v1 pipeline: client-key auth middleware + spend cap + allowed-models (M7)
-    │                 + prepaid-balance gate + usage debit (M8 personal / M9 org balance),
-    │                 + rate limits after routing (M10: per-key / per-IP anonymous / per-model,
+    │                 public_signup) + settings/oauth GET/PATCH (social sign-in clients —
+    │                 client ids echoed in full, secrets set/clear only), logs list/clear
+    │                 (M7; DTO carries user/org attribution),
+    │                 upstream model discovery + bulk import (fetch-models ×2, import-models —
+    │                 ids-only or discovery-enriched bodies; default-base fallback)
+    ├── gateway.ts  — /v1 pipeline: client-key auth middleware (STRICT since session 29 —
+    │                 every request needs a valid enabled key, 401 otherwise) + spend cap +
+    │                 allowed-models (M7) + prepaid-balance gate + usage debit (M8 personal /
+    │                 M9 org balance) + rate limits after routing (M10: per-key / per-IP / per-model,
     │                 429 + Retry-After in the caller's dialect; M16 success-path
     │                 x-ratelimit-limit/remaining/reset-requests from the binding bucket),
     │                 dialect×adapter matrix (/chat/completions, /responses, /messages),
@@ -203,12 +234,43 @@ src/worker/
     ├── clientapi.ts — /api/v1 client-facing key/credit API (M16, OpenRouter parity):
     │                 GET /auth/key + /key (label/limit/usage/limit_remaining) + /credits
     │                 (user balance / org balance / 404 no_balance for admin keys) — a real
-    │                 client key REQUIRED even under the keyless default; in-memory
-    │                 client-api bucket 60/min/IP
-    ├── portal.ts   — /app/api user portal (M8): signup/login/logout/me (public signup flag),
+    │                 client key REQUIRED (the gateway is keyless-free since session 29);
+    │                 in-memory client-api bucket 60/min/IP
+    ├── device.ts   — /api/v1/device RFC 8628 device flow (khode sign-in, session 28):
+    │                 POST /code (no auth — a pending request grants nothing; bucket 10/min/IP;
+    │                 device_code 32B hex stored hashed, user_code XXXX-XXXX unambiguous
+    │                 alphabet, unique forever; sweeps expired rows) + POST /token
+    │                 (bucket 60/min/IP; authorization_pending/access_denied/expired_token;
+    │                 approved → ONE-SHOT grant: guarded UPDATE to consumed first, then a
+    │                 personal khat- key named after display_name for the approver's
+    │                 account; returns {access_token, key, user{email,balance_usd}}).
+    │                 Mounted DEEPER than /api/v1 and before clientapi so the key-required
+    │                 catch-all never swallows it. The human step is portal.ts
+    │                 GET /device/:code + POST /device/:code/approve {action} behind
+    │                 portalAuth (the session is the authority; approving binds the key to
+    │                 that account). UI: /app/device (PortalDevice.tsx); PortalLogin keeps
+    │                 ?next= so the verification link survives login. Device keys are
+    │                 ordinary personal keys — visible/revocable at /app.
+    ├── portal.ts   — /api/portal user portal (M8): signup/login/logout/me (public signup flag),
     │                 PERSONAL keys CRUD (+usage/billing — org keys excluded via isNull(orgId)),
-    │                 balance + ledger entries, LS checkout URLs
-    ├── orgs.ts     — /app/api/orgs (M9): list/create/join/leave, detail (+members, owner-only
+    │                 balance + ledger entries, LS checkout URLs, device info/approve (session 28);
+    │                 /login refuses password auth on OAuth-only accounts (passwordHash null →
+    │                 "This account signs in with Google/GitHub — use the buttons above.")
+    ├── oauth.ts    — /api/portal/oauth social sign-in (Google + GitHub, no SDK): GET /:provider/start
+    │                 (validates configured, sets the khateway_oauth state cookie — HttpOnly
+    │                 SameSite=Lax 10 min b64url JSON {random, provider, next} — 302s to the
+    │                 authorize URL; redirect_uri = request origin + /api/portal/oauth/:p/callback)
+    │                 + GET /:provider/callback (timing-safe state check via verifyOAuthState,
+    │                 cookie consumed one-shot, code→token→profile, decideOAuthSignIn +
+    │                 applyOAuthSignInDecision, createUserSessionToken + khateway_user cookie,
+    │                 302 to next — ONLY /app paths, default /app). EVERY failure is a redirect
+    │                 to /app/login?error=<safe message> (browser surface, never JSON) with next
+    │                 preserved; buckets oauth-start/oauth-callback 20/min/IP. Mounted DEEPER
+    │                 than /api/portal and BEFORE portalApp so the portalAuth catch-all never
+    │                 swallows it (same ordering rule as device vs clientapi). Tests:
+    │                 tests/worker/oauth.test.ts (decision + state + normalizers, offline);
+    │                 scripts/smoke_oauth.mjs (failure paths + mount-order proof)
+    ├── orgs.ts     — /api/portal/orgs (M9): list/create/join/leave, detail (+members, owner-only
     │                 join_code, rotate), member role/remove (last-owner guard), org keys CRUD
     │                 (owner-any / member-own), org usage, org billing + owner-only LS checkout
     └── webhooks.ts — /webhooks/lemonsqueezy (M8): HMAC-verified MoR callbacks, two-layer
@@ -220,22 +282,33 @@ src/worker/
 
 src/web/
 ├── main.tsx        — QueryClient + root render (+ Toaster)
-├── App.tsx         — sidebar shell (admin), portal routes (/app*), unauth redirects, 404
-├── router.tsx      — tiny history-API router (navigate / useRoute / Link)
-├── api.ts          — typed admin client + DTO types + ApiError (401 → redirect)
-├── portal-api.ts   — typed /app/api client + PortalError (401 → /app/login redirect event)
+├── App.tsx         — landing page at /, sidebar shell for admin (/admin*), portal routes (/app*),
+│                     legacy admin-path redirects, unauth redirects, 404. The portal 401 guard
+│                     NO-OPS when already on /app/login — a background me() 401 fires there on
+│                     every mount, and re-navigating would bury the page's ?error=/?next=
+│                     (OAuth failure + device-link params) inside a nested next= that
+│                     PortalLogin then rejects
+├── router.tsx      — tiny history-API router (navigate / replace / useRoute / Link)
+├── api.ts          — typed admin client (/api/admin/*) + DTO types + ApiError (401 → redirect)
+├── portal-api.ts   — typed /api/portal client + PortalError (401 → /app/login redirect event)
 ├── components/ui.tsx — Button/Input/Select/Switch/Badge/Card/Modal/Toast/fmt helpers
-└── pages/          — Login.tsx, Overview.tsx, Providers.tsx, Models.tsx,
+└── pages/          — Landing.tsx (public landing at /), Login.tsx, Overview.tsx, Providers.tsx
+                      (CRUD/presets/test only — no discovery UI),
+                      Models.tsx (list + "Add models" modal: Fetch-from-provider tab — fetch,
+                      filterable picker, enriched import — and Custom-model tab; shared edit modal),
                       Playground.tsx (M14: chat tester — model picker, streaming SSE
                       render, session key badge, request-log card),
                       ApiKeys.tsx (M7: keys CRUD + one-time reveal + SDK snippets),
                       Logs.tsx (M7: filterable request logs, refresh, clear),
-                      admin/Users.tsx + admin/Settings.tsx (M8: accounts + billing config),
+                      admin/Users.tsx + admin/Settings.tsx (M8: accounts + billing config;
+                      Settings also has the Social sign-in card — per-provider client
+                      id/secret + copyable callback URLs + configured badges),
                       admin/Orgs.tsx (M9: global orgs table, edit/rename + ledgered balance
                       adjust, enable toggle, delete — with counts + join code),
-                      portal/ (M8: PortalLogin, PortalShell, PortalDashboard, PortalKeys;
-                      M9: PortalTeams — org list/create/join + per-org members, invite
-                      code, keys, usage, billing)
+                      portal/ (M8: PortalLogin — social sign-in buttons + "or continue with
+                      email" divider + ?error= surfaced inline, PortalShell, PortalDashboard,
+                      PortalKeys; M9: PortalTeams — org list/create/join + per-org members,
+                      invite code, keys, usage, billing)
 
 scripts/dev-all.mjs        — `npm run dev`: one-terminal hot-reload runner (wrangler dev
                             + vite, tagged output, clean Ctrl-C shutdown, no deps)
@@ -247,7 +320,10 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             branch + the M16 parity cells (models pricing, legacy /v1/completions
                             incl. attribution headers, /api/v1) + the M17 thinking
                             matrix (claude-think + gem-think mock faces) + the M18 structured-
-                            outputs cells — 211 checks as of 2026-09-21)
+                            outputs cells + fetch-models reading OpenRouter's
+                            top_provider.max_completion_tokens — 209 checks as of 2026-09-24
+                            (session 29 removed the keyless matrix: no-auth/anonymous/unknown/
+                            disabled keys all 401 now)
 scripts/smoke_m8.mjs       — accounts/balance/webhook e2e vs wrangler dev :8787 (signup → credit →
                             debit math → 429 → signed LS webhook → idempotency; 42 checks + 2 M16 /api/v1 checks = 45)
 scripts/smoke_m9.mjs       — orgs/teams e2e vs wrangler dev :8787 (2 orgs coexist, join codes,
@@ -266,6 +342,18 @@ scripts/smoke_m14.mjs      — playground e2e vs wrangler dev :8787 (mint 401 un
                             through the key, log row with exact cost + 'Playground' attribution,
                             re-mint rotation 401 under enforcement, logout revokes the session
                             key, fresh session works; enforcement restored off; 24 checks)
+scripts/smoke_device.mjs   — device-flow e2e vs wrangler dev :8787 (mint shape + pending poll,
+                             session-gated approve surface 401/400/404, approve → one-shot
+                             personal key for the approver, re-poll expired_token, key works
+                             at /v1/models + /api/v1/credits + portal keys list, deny →
+                             access_denied, garbage code → expired_token; 21 checks)
+scripts/smoke_oauth.mjs    — social sign-in failure paths vs wrangler dev :8787 (unconfigured/
+                             unknown provider start + no-state callback → /app/login?error=
+                             redirects, NEVER 401 — proves the mount ordering; fake google
+                             creds → start 302s to the authorize URL with state + redirect_uri
+                             + state cookie; mismatched state + garbage code + replay → error
+                             redirects; ?next= preserved on failure; fake rows cleared — skipped
+                             when google was pre-configured; ALL PASS = 14 checks)
 drizzle/            — generated SQL migrations (applied with wrangler d1 migrations apply)
                       (0005_m9_orgs adds orgs, org_members, api_keys.org_id,
                       request_logs.user_id/org_id, balance_entries.org_id + nullable user_id;
@@ -274,7 +362,9 @@ drizzle/            — generated SQL migrations (applied with wrangler d1 migra
                       the cache_entries table + expires/model indexes;
                       0008_m14_playground adds api_keys.playground_session;
                       0009_m15_log_indexes adds request_logs_api_key_idx;
-                      0010_m16_attribution adds request_logs.http_referer + x_title)
+                      0010_m16_attribution adds request_logs.http_referer + x_title;
+                      0011_device_codes adds the device-flow table (session 28);
+                      0012_oauth_signin adds oauth_identities + makes users.password_hash nullable)
 
 tests/              — offline golden-fixture suite (vitest; no server needed)
 ├── fixtures/       — arrays of {name, …input, expected} cases per wire-format area
@@ -291,31 +381,47 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
                         + embeddings.test.ts (M13 adapter/parse/normalize goldens),
                         + rate-limit.test.ts (builder goldens + real RateLimiterDO.fetch
                         against a fake SqlStorage)
+                        + oauth.test.ts (link-or-create decision incl. never-link-unverified,
+                        state-cookie create/verify incl. expiry/provider/state mismatches,
+                        google+github profile normalizers, authorize-URL shapes; 22 cases)
 ```
 
 ## Architecture notes (important)
 
 - **One deployable**: the Worker serves the built SPA from `web-dist/` (asset
   binding) and handles API paths. `run_worker_first` covers `/v1`, `/v1/*`,
-  `/admin`, `/admin/*`, `/app/api`, `/app/api/*`, `/webhooks`, `/webhooks/*`,
-  `/health` — everything else is static assets with SPA fallback (admin at
-  `/…`, user portal at `/app…`).
-- **Admin auth**: `POST /admin/login` compares `ADMIN_PASSWORD` (constant-time),
+  `/api`, `/api/*`, `/webhooks`, `/webhooks/*`, `/health` — everything else is
+  static assets with SPA fallback: public landing page at `/`, admin console
+  pages at `/admin…`, user portal at `/app…` (management APIs live under
+  `/api/admin/*` + `/api/portal/*` so page prefixes stay pure). Old root-level
+  admin bookmarks (`/overview`, `/providers`, `/login`, …) client-redirect to
+  their `/admin` homes (LEGACY_ROUTES map in App.tsx).
+- **Admin auth**: `POST /api/admin/login` compares `ADMIN_PASSWORD` (constant-time),
   sets an HttpOnly HMAC-signed cookie **and** stores `sha256(token)` in the
   `sessions` table — every request validates signature + expiry + DB row so
   logout truly revokes. Never downgrade to stateless-only tokens.
-- **Upstream model discovery + import**: `POST /admin/providers/fetch-models`
+- **Upstream model discovery + import**: `POST /api/admin/providers/fetch-models`
   (unsaved add-form: probes with form values, in-memory key only) and
-  `POST /admin/providers/:id/fetch-models` (saved provider: stored key)
+  `POST /api/admin/providers/:id/fetch-models` (saved provider: stored key)
   normalize the upstream `/models` listing (openai path per base_url shape,
   anthropic `/v1/models`, gemini `/v1beta/models` — strips the `models/`
   prefix, maps inputTokenLimit/outputTokenLimit, skips non-generateContent
-  entries) into `{models:[{id,display_name,context_window,max_output_tokens}]}`
-  (cap 500, deduped by id). `POST /admin/providers/:id/import-models` creates
-  one model per id (slug = upstream id, upstream_model = id), dedupes input,
+  entries; the openai-shaped branch falls back to OpenRouter's
+  `top_provider.max_completion_tokens` for max_output_tokens) into
+  `{models:[{id,display_name,context_window,max_output_tokens}]}`
+  (cap 500, deduped by id). A provider with NO stored base_url probes the
+  adapter default (`DEFAULT_BASES[adapter]` — same fallback as
+  test-connection). `POST /api/admin/providers/:id/import-models` creates one
+  model per id (slug = upstream id, upstream_model = id), dedupes input,
   skips existing slugs + ids outside the slug alphabet (reported in `skipped`),
-  max 100 per call. UI: provider modal "Fetch models" button + checkbox picker
-  + Import (add mode auto-creates the provider first).
+  max 100 per call. Body is legacy `{model_ids: string[]}` (bare rows) OR
+  `{models: [{id, display_name?, context_window?, max_output_tokens?}]}` —
+  the discovery-enriched shape; metadata lands on the created rows (both keys
+  → 400, bad enrichment → 400). UI: the MODELS page "Add models" modal —
+  segmented tabs "Fetch from provider" (default: provider select → fetch →
+  filterable picker with already-added/unsupported-name badges → footer
+  Import) and "Custom model" (the manual register form, for providers without
+  /models); the Providers modal has no discovery UI.
 - **Multi-adapter providers**: `providers.adapters` is a JSON array of upstream
   dialects (`["openai"]`, `["anthropic"]`, or both for dual-dialect endpoints
   like OpenRouter/LiteLLM/AI Gateway — ONE provider row, one shared base URL).
@@ -335,18 +441,76 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   Admin API accepts
   `adapters` (array) and legacy `adapter` (string) on create/patch; DTOs
   expose both (`adapters` array + `adapter` scalar = first).
-- **Gateway auth (M7, amended keyless-native)**: client-key enforcement is
-  OPT-IN via the `settings` row `client_key_enforcement` (`GET/PATCH
-  /admin/settings`; TTL-cached 5 s per isolate — anonymous requests cost no key
-  DB lookup). Default off: no-auth requests, the literal `anonymous` sentinel
-  (khode's keyless mode, Bearer or x-api-key) and unknown tokens are all served
-  anonymously; enrolled keys still get caps/allow-lists/log attribution.
-  Enforcement on: valid enabled `Authorization: Bearer khat-…` or `x-api-key`
-  required (khode users set `KHATEWAY_API_KEY`); anything else → 401 in the
-  path's error dialect. Keys are stored as sha-256 hashes only (raw shown once
-  at creation). Per-key spend caps (429 `insufficient_quota`) and allowed-model
-  lists (403 `permission_error`) are enforced in the chat pipeline whenever a
-  key resolved.
+- **Gateway auth (M7 → strict, session 29)**: the keyless-native default,
+  the `client_key_enforcement` setting, the official-build gate
+  (`x-khateway-access` + `keyless_gate_secret_hash`) and the guest pool were
+  REMOVED together — khode's device sign-in made them all redundant. Every
+  /v1 request must carry a valid enabled client key (`Authorization: Bearer
+  khat-…` or `x-api-key`); anything else — no header, the old `anonymous`
+  sentinel, unknown or disabled tokens — gets a 401 in the path's dialect
+  (`invalid_api_key` / `authentication_error`; anthropic envelope on
+  /messages). Onboarding: the device flow mints personal portal keys
+  (bullet below); humans create keys at /app or the admin console. Keys
+  that verify keep spend caps (429 `insufficient_quota`), allow-lists
+  (403 `permission_error`), log attribution and their M8/M9 balance gates.
+  Historical note: the removed rows in `settings` (client_key_enforcement,
+  keyless_gate_secret_hash, keyless_guest_user_id) are ignored orphans.
+- **Device flow (session 28)**: RFC 8628-shaped onboarding for CLI/TUI
+  clients (khode `/login`). `POST /api/v1/device/code` mints (no auth — a
+  pending request grants nothing; the security lives in the portal
+  approval); the user approves at `/app/device` (portal session binds the
+  request to THEIR account); `POST /api/v1/device/token` grants ONCE: a
+  personal `khat-` key named after `display_name` ("khode on <host>"),
+  ordinary in every way — portal-visible, revocable, balance-gated,
+  attributed. device_code stored hashed; user_code unique-forever
+  (~1.1e12 space, unambiguous alphabet); grant is a guarded UPDATE to
+  `consumed` BEFORE the key insert (a racing poll can never mint twice;
+  a failed insert after consume just means the client re-runs the flow).
+  Mounted at `/api/v1/device` (deeper + before clientapi so its
+  key-required `all('*')` catch-all can't swallow it). The endpoints take
+  no credential by design — a pending request grants nothing, and the
+  grant itself is a real key. khode side: `internal/khateway` client +
+  `internal/ui/devicelogin.go` dialog (`/login`), key → auth.json, khateway
+  becomes the active provider, first listed model auto-picked. Smoke:
+  `scripts/smoke_device.mjs` (21 checks) + gateway guest-pool block.
+- **Social sign-in (Google + GitHub)**: the portal login leads with
+  "Continue with Google/GitHub" (email/password below as the fallback).
+  Pure OAuth 2.0 authorization-code flow on fetch — no SDKs. Config lives in
+  `settings` rows (`oauth_google_client_id`, `oauth_google_client_secret_enc`,
+  `oauth_github_client_id`, `oauth_github_secret_enc`; billing/config.ts
+  pattern — a provider is enabled iff BOTH rows exist; secrets AES-256-GCM,
+  admin face `GET/PATCH /api/admin/settings/oauth` echoes client ids in full
+  + per-origin callback URLs, secrets set/clear only). Flow
+  (`routes/oauth.ts`): `/start` mints a state = random 32B hex + HttpOnly
+  SameSite=Lax `khateway_oauth` cookie carrying b64url
+  `{random, provider, next}` (10 min) and 302s to the provider;
+  `/callback` timing-safely verifies state↔cookie (provider + expiry +
+  `safeEqualStr`), consumes the cookie one-shot (deleteCookie regardless of
+  outcome — the cookie value itself is stateless, so a kept-alive client can
+  replay it but no code can validate twice), exchanges the code, downloads
+  the profile (Google `sub` / GitHub numeric id — emails/logins NEVER used
+  as identity keys), and links-or-creates.
+  **Linking rules (db/oauth.ts `decideOAuthSignIn`, pure + offline-tested)**,
+  in order: (a) an existing `oauth_identities` row → sign that user in
+  (disabled → refuse); (b) a provider-VERIFIED email matching an existing
+  user → link (disabled → refuse); (c) otherwise create a new account —
+  only while `public_signup` is on, else refuse. An UNVERIFIED email NEVER
+  links — not even via the create path's email-conflict backstop
+  (`applyOAuthSignInDecision` refuses `email_exists` instead of linking).
+  OAuth-only accounts have `users.password_hash = NULL` (migration 0012);
+  password login answers 401 "This account signs in with Google/GitHub —
+  use the buttons above." Sessions are ordinary `khateway_user` cookies via
+  `createUserSessionToken`; `next` rides INSIDE the state cookie and the
+  callback only redirects to `/app*` paths (no open redirects) — so the
+  khode device round-trip (`?next=/app/device?code=…`) survives untouched.
+  Every failure redirects to `/app/login?error=<safe message>` (browser
+  surface, never JSON). Mounted at `/api/portal/oauth` BEFORE `portalApp`
+  so the `portalAuth` catch-all can't swallow the anonymous routes (same
+  ordering rule as device vs clientapi). UI: PortalLogin social buttons +
+  divider + `?error=` inline; admin Settings → Social sign-in card
+  (client id/secret + copyable callback URLs). Tests: offline
+  `tests/worker/oauth.test.ts` (22 cases) + `scripts/smoke_oauth.mjs`
+  failure paths; real provider round-trips are manual (README walkthrough).
 - **Request logs (M7)**: every chat-pipeline request writes one
   `request_logs` row (status, latency, tokens in/out, cost snapshot, truncated
   error; `api_key_id` null for anonymous requests). Streamed responses tee the upstream body into `dialects/usage.ts` so
@@ -371,8 +535,8 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   unknown pricing or missing usage — never debits).
 - **Lemon Squeezy billing (M8)**: config lives in `settings` (`ls_store_id`,
   `ls_variant_id`, AES-256-GCM `ls_api_key_enc`, `ls_webhook_secret_enc`) via
-  `GET/PATCH /admin/billing/config` (secrets exposed only as hints/set-flags).
-  `POST /app/api/billing/checkout {amount_usd}` (1–500) creates a hosted
+  `GET/PATCH /api/admin/billing/config` (secrets exposed only as hints/set-flags).
+  `POST /api/portal/billing/checkout {amount_usd}` (1–500) creates a hosted
   custom-price checkout with `checkout_data.custom.user_id` and returns its
   URL. `POST /webhooks/lemonsqueezy` verifies HMAC-SHA256 (`X-Signature`, hex,
   over the raw body), records every delivery in `webhook_events` (unique
@@ -393,10 +557,10 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   the personal M8 user-balance path is untouched, and `debitBalanceUsage`
   debits exactly one of user/org. Portal personal surfaces (`/keys`,
   `/usage`, `ownKey`) exclude org keys via `isNull(orgId)`. Org API lives in
-  `routes/orgs.ts` under `/app/api/orgs*`; non-members and unknown orgs both
+  `routes/orgs.ts` under `/api/portal/orgs*`; non-members and unknown orgs both
   get 404 (no existence leak). LS checkouts carry `custom.org_id` and the
   webhook credits the org when it rides (org_id wins over user_id). Admin
-  stays GLOBAL: `/admin/orgs` (rename/enable/ledgered-adjust/delete);
+  stays GLOBAL: `/api/admin/orgs` (rename/enable/ledgered-adjust/delete);
   deleting a user promotes the longest-tenured remaining member in each of
   their orgs (memberless orgs die with keys + ledger). `request_logs.user_id`
   + `.org_id` attribute every request (dangling ids after deletion, audit
@@ -436,8 +600,8 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   Store path: `Response.clone()` → waitUntil read (≥512 KB, non-JSON or
   200-with-`error`-body payloads are skipped) → INSERT + expired-row sweep in
   one D1 batch, `onConflictDoNothing`. Fail-open everywhere: lookup error =
-  miss, store error = logged. Admin: `GET /admin/cache` (entries/bytes/24 h
-  hits/cached tokens), `POST /admin/cache/flush`. Settings UI card, Models +
+  miss, store error = logged. Admin: `GET /api/admin/cache` (entries/bytes/24 h
+  hits/cached tokens), `POST /api/admin/cache/flush`. Settings UI card, Models +
   ApiKeys toggles, Logs "cached" badge, Overview cached count. Portal/org key
   DTOs expose `cache_enabled` read-only.
 - **Native Gemini adapter (M12)**: `gemini` is a third UPSTREAM adapter —
@@ -509,15 +673,15 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   SESSION-SCOPED client key so the request exercises the same
   auth/rate-limit/fallback/logging path as any external client. Key
   lifecycle: `api_keys.playground_session` = sha256 of the admin session
-  token (nullable — null = normal key). `POST /admin/playground/key`
+  token (nullable — null = normal key). `POST /api/admin/playground/key`
   (adminAuth) ROTATES: deletes the session's previous key, sweeps playground
   keys whose session row is gone/expired (leftJoin on `sessions`), mints a
   fresh key (name 'Playground', no spend cap, no allow-list) and returns the
-  raw key ONCE. Hidden from `GET /admin/api-keys`
-  (`isNull(playgroundSession)`); deleted at `POST /admin/logout`; the web
+  raw key ONCE. Hidden from `GET /api/admin/api-keys`
+  (`isNull(playgroundSession)`); deleted at `POST /api/admin/logout`; the web
   client dedupes concurrent mints with a shared inflight promise (React
   StrictMode double-mount must share one key — mint = rotate). The page
-  polls `GET /admin/logs?api_key_id=<key>` after each completion (log rows
+  polls `GET /api/admin/logs?api_key_id=<key>` after each completion (log rows
   land in waitUntil after the stream ends). Gateway code is UNTOUCHED — a
   playground key is an ordinary enrolled key and satisfies enforcement.
 - **Rate limiting (login surfaces)**: `loginAllowed(bucket, ip)` — separate
@@ -563,6 +727,8 @@ npm run smoke:m9                # orgs/keys/org-balance/webhook e2e, while `npm 
 npm run smoke:m10               # rate limiting e2e (concurrent bursts), while `npm run dev` runs
 npm run smoke:m11               # semantic cache e2e, while `npm run dev` runs
 npm run smoke:m14               # playground e2e (session-scoped keys + streamed round-trip), while `npm run dev` runs
+npm run smoke:device            # device-flow e2e (mint/approve/poll → personal key), while `npm run dev` runs
+npm run smoke:oauth             # social sign-in failure paths (start/callback redirects), while `npm run dev` runs
 ```
 
 Schema changes: edit `src/worker/db/schema.ts` → `npm run generate` →

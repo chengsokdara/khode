@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, Database, Gauge, Globe } from 'lucide-react';
+import { CreditCard, Database, Fingerprint, Gauge, Globe } from 'lucide-react';
 import { api } from '../../api';
-import { Button, Card, Field, Input, PageHeader, Spinner, Switch, toast } from '../../components/ui';
+import { Badge, Button, Card, Field, Input, PageHeader, Spinner, Switch, toast } from '../../components/ui';
 
 function GatewayCard() {
   const qc = useQueryClient();
@@ -36,20 +36,11 @@ function GatewayCard() {
       <div className="mt-5 space-y-5">
         <div className="flex items-start justify-between gap-6">
           <div>
-            <div className="text-[13px] text-zinc-200">Client-key enforcement</div>
-            <p className="mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
-              Off (default): the gateway serves anonymous traffic — the keyless-native behavior khode relies on.
-              On: every /v1 call needs a valid <code className="text-zinc-400">khat-</code> key.
-            </p>
-          </div>
-          <Switch checked={s.client_key_enforcement === 'on'} onChange={(v) => patch.mutate({ client_key_enforcement: v ? 'on' : 'off' })} disabled={patch.isPending} />
-        </div>
-        <div className="flex items-start justify-between gap-6 border-t border-zinc-800/70 pt-5">
-          <div>
             <div className="text-[13px] text-zinc-200">Public signups</div>
             <p className="mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
               On (default): anyone can create a portal account at <code className="text-zinc-400">/app</code>.
-              Off: only existing accounts can sign in — new signups are rejected.
+              Off: only existing accounts can sign in — new signups are rejected. Gateway access always
+              requires a client key (device sign-in or a portal/admin key).
             </p>
           </div>
           <Switch checked={s.public_signup === 'on'} onChange={(v) => patch.mutate({ public_signup: v ? 'on' : 'off' })} disabled={patch.isPending} />
@@ -328,6 +319,143 @@ function CacheCard() {
   );
 }
 
+function OAuthProviderBlock(props: {
+  name: string;
+  configured: boolean;
+  clientId: string;
+  secretHint: string | null;
+  callbackUrl: string;
+  onClientId: (v: string) => void;
+  onSecret: (v: string) => void;
+  secret: string;
+}) {
+  const p = props;
+  const copyCallback = async () => {
+    try {
+      await navigator.clipboard.writeText(p.callbackUrl);
+      toast('Callback URL copied');
+    } catch {
+      toast('Copy failed — select the URL manually', 'err');
+    }
+  };
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <div className="text-[13px] text-zinc-200">{p.name}</div>
+        <Badge tone={p.configured ? 'ok' : 'default'}>{p.configured ? 'configured' : 'not configured'}</Badge>
+      </div>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        <Field label="Client ID">
+          <Input value={p.clientId} onChange={(e) => p.onClientId(e.target.value)} placeholder="from the provider's console" autoComplete="off" />
+        </Field>
+        <Field label="Client secret" hint={p.secretHint ? 'Saved. Enter a new value to replace.' : `Required to enable ${p.name} sign-in.`}>
+          <Input type="password" value={p.secret} onChange={(e) => p.onSecret(e.target.value)} placeholder={p.secretHint ? '•••••••• (unchanged)' : 'paste client secret'} autoComplete="off" />
+        </Field>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[11px] text-zinc-500">Callback URL (paste into the {p.name} OAuth app settings)</div>
+          <code className="mt-0.5 block truncate font-mono text-[12px] text-zinc-300">{p.callbackUrl}</code>
+        </div>
+        <Button variant="outline" size="sm" onClick={copyCallback}>
+          Copy
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SocialCard() {
+  const qc = useQueryClient();
+  const config = useQuery({ queryKey: ['admin-oauth-config'], queryFn: api.oauthSettings });
+  const [googleId, setGoogleId] = useState('');
+  const [googleSecret, setGoogleSecret] = useState('');
+  const [githubId, setGithubId] = useState('');
+  const [githubSecret, setGithubSecret] = useState('');
+
+  useEffect(() => {
+    const cfg = config.data;
+    if (cfg) {
+      setGoogleId(cfg.google.client_id ?? '');
+      setGithubId(cfg.github.client_id ?? '');
+    }
+  }, [config.data]);
+
+  const save = useMutation({
+    mutationFn: (patch: Record<string, unknown>) => api.updateOauthSettings(patch),
+    onSuccess: (cfg) => {
+      qc.setQueryData(['admin-oauth-config'], cfg);
+      setGoogleSecret('');
+      setGithubSecret('');
+      toast('Social sign-in config saved');
+    },
+    onError: (e) => toast(e instanceof Error ? e.message : 'Save failed', 'err'),
+  });
+
+  const c = config.data;
+  const dirty = c ? googleId !== (c.google.client_id ?? '') || githubId !== (c.github.client_id ?? '') : false;
+  const secretDirty = Boolean(googleSecret || githubSecret);
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2 text-[13px] font-medium text-zinc-200">
+        <Fingerprint className="h-4 w-4" />
+        Social sign-in
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+        One-click Google/GitHub buttons on the portal login (email/password stays as a fallback). Register the callback
+        URLs below in each provider's OAuth console, then paste the client id + secret here. A provider becomes active
+        once both values are saved; clearing the client id disables it again.
+      </p>
+      {config.isLoading ? (
+        <div className="flex justify-center py-10">
+          <Spinner />
+        </div>
+      ) : !c ? null : (
+        <>
+          <div className="mt-5 space-y-6">
+            <OAuthProviderBlock
+              name="Google"
+              configured={c.google.configured}
+              clientId={googleId}
+              secret={googleSecret}
+              secretHint={c.google.configured ? 'saved' : null}
+              callbackUrl={c.google.callback_url}
+              onClientId={setGoogleId}
+              onSecret={setGoogleSecret}
+            />
+            <div className="border-t border-zinc-800" />
+            <OAuthProviderBlock
+              name="GitHub"
+              configured={c.github.configured}
+              clientId={githubId}
+              secret={githubSecret}
+              secretHint={c.github.configured ? 'saved' : null}
+              callbackUrl={c.github.callback_url}
+              onClientId={setGithubId}
+              onSecret={setGithubSecret}
+            />
+          </div>
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-[11px] text-zinc-500">
+              Status:{' '}
+              {c.google.configured || c.github.configured ? (
+                <span className="text-emerald-400">sign-in enabled</span>
+              ) : (
+                <span className="text-amber-400">no provider active — buttons fall back to an error notice</span>
+              )}
+            </div>
+            <Button onClick={() => save.mutate({ google: { client_id: googleId || null, ...(googleSecret ? { client_secret: googleSecret } : {}) }, github: { client_id: githubId || null, ...(githubSecret ? { client_secret: githubSecret } : {}) } })} disabled={save.isPending || (!dirty && !secretDirty)}>
+              {save.isPending ? <Spinner className="border-zinc-900/70 border-t-transparent" /> : null}
+              Save social sign-in
+            </Button>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function Settings() {
   return (
     <>
@@ -336,6 +464,7 @@ export function Settings() {
         <GatewayCard />
         <RateLimitCard />
         <CacheCard />
+        <SocialCard />
         <BillingCard />
       </div>
     </>

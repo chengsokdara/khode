@@ -1,7 +1,15 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Boxes, Pencil, Plus, Trash2 } from 'lucide-react';
-import { ADAPTER_LABELS, api, CAPABILITIES, type ModelRow, type Provider } from '../api';
+import { Boxes, CheckSquare, Download, Pencil, Plus, Square, Trash2 } from 'lucide-react';
+import {
+  ADAPTER_LABELS,
+  api,
+  CAPABILITIES,
+  type ImportResult,
+  type ModelRow,
+  type Provider,
+  type UpstreamModel,
+} from '../api';
 import { navigate } from '../router';
 import {
   Badge,
@@ -38,6 +46,9 @@ type FormState = {
   enabled: boolean;
 };
 
+/** Slugs must match the admin API's alphabet so imports never 400. */
+const SLUG_ALPHABET = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
 /** '' | null | number — '' is treated as null (inherit / unset). */
 function numOrNull(s: string, allowFloat: boolean): number | null | 'invalid' {
   const v = s.trim();
@@ -48,19 +59,33 @@ function numOrNull(s: string, allowFloat: boolean): number | null | 'invalid' {
   return n;
 }
 
+/**
+ * Add/edit model modal. Add mode offers two paths: fetch the provider's
+ * /models catalog and bulk-import picks (the default), or register a custom
+ * slug by hand (providers without a /models endpoint). Edit mode is the
+ * plain custom form.
+ */
 function ModelModal({
   initial,
   providers,
+  existingSlugs,
+  defaultProviderId,
   onClose,
 }: {
   initial: ModelRow | null;
   providers: Provider[];
+  existingSlugs: Set<string>;
+  defaultProviderId?: string;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
   const isEdit = !!initial;
+  const [tab, setTab] = useState<'fetch' | 'custom'>('fetch');
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(!!(initial?.base_url_override || initial?.key_hint));
+  const [limitsOpen, setLimitsOpen] = useState(
+    !!initial && (initial.context_window != null || initial.max_output_tokens != null),
+  );
   const [form, setForm] = useState<FormState>(() =>
     initial
       ? {
@@ -80,7 +105,7 @@ function ModelModal({
           enabled: initial.enabled,
         }
       : {
-          provider_id: providers[0]?.id ?? '',
+          provider_id: defaultProviderId ?? providers[0]?.id ?? '',
           slug: '',
           display_name: '',
           upstream_model: '',
@@ -99,6 +124,91 @@ function ModelModal({
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // ---- fetch-from-provider pane (add mode) --------------------------------
+  const [providerId, setProviderId] = useState(defaultProviderId ?? providers[0]?.id ?? '');
+  const [upstreamModels, setUpstreamModels] = useState<UpstreamModel[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [listFilter, setListFilter] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+
+  /** Picker rows that can be imported: parseable slug, not registered yet. */
+  const isSelectable = (m: UpstreamModel) => SLUG_ALPHABET.test(m.id) && !existingSlugs.has(m.id);
+
+  const visibleModels = useMemo(() => {
+    if (!upstreamModels) return [];
+    const s = listFilter.trim().toLowerCase();
+    if (!s) return upstreamModels;
+    return upstreamModels.filter(
+      (m) => m.id.toLowerCase().includes(s) || (m.display_name ?? '').toLowerCase().includes(s),
+    );
+  }, [upstreamModels, listFilter]);
+
+  const importTargets = useMemo(
+    () => (upstreamModels ?? []).filter((m) => selected.has(m.id)),
+    [upstreamModels, selected],
+  );
+
+  const fetchModels = async () => {
+    if (!providerId) return;
+    setFetching(true);
+    setDiscoveryError(null);
+    try {
+      // Saved provider: probed with its stored key and base URL.
+      const models = (await api.fetchProviderModels(providerId)).models;
+      setUpstreamModels(models);
+      setSelected(new Set(models.filter((m) => isSelectable(m)).map((m) => m.id)));
+      setListFilter('');
+      if (models.length === 0) setDiscoveryError('The upstream returned no models (or none parseable).');
+    } catch (e) {
+      setUpstreamModels(null);
+      setSelected(new Set());
+      setDiscoveryError(e instanceof Error ? e.message : 'Fetching models failed');
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const importSelected = async () => {
+    if (importTargets.length === 0) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const result: ImportResult = await api.importModels(providerId, importTargets);
+      qc.invalidateQueries({ queryKey: ['models'] });
+      qc.invalidateQueries({ queryKey: ['providers'] });
+      qc.invalidateQueries({ queryKey: ['overview'] });
+      const skippedNote = result.skipped.length ? ` · ${result.skipped.length} skipped (${result.skipped[0].reason})` : '';
+      toast(`Imported ${result.created.length} model(s)${skippedNote}`);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const toggleModel = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const selectableVisible = visibleModels.filter((m) => isSelectable(m));
+  const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every((m) => selected.has(m.id));
+  const toggleVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const m of selectableVisible) {
+        if (allVisibleSelected) next.delete(m.id);
+        else next.add(m.id);
+      }
+      return next;
+    });
 
   const save = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -164,157 +274,315 @@ function ModelModal({
     save.mutate(payload);
   };
 
+  const showFetch = !isEdit && tab === 'fetch';
+
   return (
     <Modal
       open
       onClose={onClose}
-      title={isEdit ? `Edit model — ${initial!.slug}` : 'Register model'}
-      description="The slug is what clients send in the model field; routing maps it to this provider."
+      title={isEdit ? `Edit model — ${initial!.slug}` : 'Add models'}
+      description={
+        isEdit
+          ? 'The slug is what clients send in the model field; routing maps it to this provider.'
+          : 'Fetch a provider’s catalog and import in bulk, or register a custom slug by hand.'
+      }
       width="lg"
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={save.isPending}>
+          <Button variant="outline" onClick={onClose} disabled={save.isPending || importing}>
             Cancel
           </Button>
-          <Button type="submit" form="model-form" disabled={save.isPending}>
-            {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Register model'}
-          </Button>
+          {showFetch ? (
+            <Button
+              type="button"
+              onClick={importSelected}
+              disabled={importing || importTargets.length === 0 || importTargets.length > 100}
+              title={importTargets.length > 100 ? 'Import at most 100 models at a time' : undefined}
+            >
+              {importing ? <Spinner /> : <Download className="h-4 w-4" />}
+              Import {importTargets.length || ''}
+            </Button>
+          ) : (
+            <Button type="submit" form="model-form" disabled={save.isPending}>
+              {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Register model'}
+            </Button>
+          )}
         </>
       }
     >
-      <form id="model-form" onSubmit={submit} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Provider">
-            <Select value={form.provider_id} onChange={(e) => setField('provider_id', e.target.value)}>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Slug" hint="Globally unique, e.g. gpt-5, claude-sonnet-4-5">
-            <Input value={form.slug} onChange={(e) => setField('slug', e.target.value)} placeholder="gpt-5" autoFocus={!isEdit} />
-          </Field>
+      {!isEdit ? (
+        <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1">
+          {(
+            [
+              ['fetch', 'Fetch from provider'],
+              ['custom', 'Custom model'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex-1 rounded-md px-3 py-1.5 text-[13px] transition-colors ${
+                tab === key ? 'bg-emerald-500/15 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+      ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Display name" hint="Optional, dashboard only">
-            <Input value={form.display_name} onChange={(e) => setField('display_name', e.target.value)} placeholder="GPT-5" />
-          </Field>
-          <Field label="Upstream model ID" hint="Sent to the provider; blank = same as slug">
-            <Input
-              value={form.upstream_model}
-              onChange={(e) => setField('upstream_model', e.target.value)}
-              placeholder="gpt-5 (defaults to slug)"
-              className="font-mono text-xs"
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Context window">
-            <Input type="number" min={0} value={form.context_window} onChange={(e) => setField('context_window', e.target.value)} placeholder="200000" />
-          </Field>
-          <Field label="Max output tokens">
-            <Input type="number" min={0} value={form.max_output_tokens} onChange={(e) => setField('max_output_tokens', e.target.value)} placeholder="8192" />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Pricing input" hint="USD per 1M tokens, e.g. 3.00">
-            <Input type="number" min={0} step={0.0001} value={form.pricing_input} onChange={(e) => setField('pricing_input', e.target.value)} />
-          </Field>
-          <Field label="Pricing output" hint="USD per 1M tokens, e.g. 15.00">
-            <Input type="number" min={0} step={0.0001} value={form.pricing_output} onChange={(e) => setField('pricing_output', e.target.value)} />
-          </Field>
-        </div>
-
-        <Field label="Rate limit" hint="Global requests/minute for this model, shared by all clients — blank = unlimited">
-          <Input type="number" min={1} value={form.rate_limit_rpm} onChange={(e) => setField('rate_limit_rpm', e.target.value)} placeholder="unlimited" />
-        </Field>
-
-        <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-300">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-3.5 w-3.5 accent-emerald-500"
-            checked={form.cache_enabled}
-            onChange={(e) => setField('cache_enabled', e.target.checked)}
-          />
-          <span>
-            Semantic cache
-            <span className="block text-[11px] leading-relaxed text-zinc-500">
-              Repeat text-only, non-streaming requests are served from cache until the entry expires (Settings
-              sets the lifetime). Still logged and billed.
-            </span>
-          </span>
-        </label>
-
-        <Field label="Capabilities">
-          <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1">
-            {CAPABILITIES.map((c) => {
-              const checked = form.capabilities.includes(c);
-              return (
-                <label key={c} className="flex cursor-pointer items-center gap-1.5 text-xs text-zinc-300">
-                  <input
-                    type="checkbox"
-                    className="h-3.5 w-3.5 accent-emerald-500"
-                    checked={checked}
-                    onChange={() => {
-                      setForm((f) => ({
-                        ...f,
-                        capabilities: checked ? f.capabilities.filter((x) => x !== c) : [...f.capabilities, c],
-                      }));
-                    }}
-                  />
-                  {c}
-                </label>
-              );
-            })}
-          </div>
-        </Field>
-
-        <div>
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen((v) => !v)}
-            className="text-xs font-medium text-zinc-400 hover:text-zinc-200"
-          >
-            Advanced {advancedOpen ? '▾' : '▸'}
-          </button>
-          {advancedOpen ? (
-            <div className="mt-3 space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/50 p-4">
-              <Field label="Base URL override" hint="Leave blank to inherit the provider's base URL">
-                <Input
-                  value={form.base_url_override}
-                  onChange={(e) => setField('base_url_override', e.target.value)}
-                  placeholder="https://… (inherit)"
-                  className="font-mono text-xs"
-                />
-              </Field>
-              <Field
-                label="API key override"
-                hint={isEdit && initial?.key_hint ? `Current override ends “${initial.key_hint}” — blank keeps it` : 'Overrides the provider key for this model'}
+      {showFetch ? (
+        <div className="space-y-4">
+          <Field label="Provider" hint="Probes the provider’s /models listing with its stored base URL and key">
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <Select
+                value={providerId}
+                onChange={(e) => {
+                  setProviderId(e.target.value);
+                  setUpstreamModels(null);
+                  setSelected(new Set());
+                  setDiscoveryError(null);
+                }}
               >
-                <Input
-                  type="password"
-                  value={form.api_key_override}
-                  onChange={(e) => setField('api_key_override', e.target.value)}
-                  placeholder={isEdit && initial?.key_hint ? '••••••••••••' : 'sk-… (inherit by default)'}
-                  autoComplete="new-password"
-                />
-              </Field>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={fetchModels}
+                disabled={fetching || importing || !providerId}
+                title="List the models this upstream offers"
+              >
+                {fetching ? <Spinner /> : <Download className="h-4 w-4" />}
+                Fetch models
+              </Button>
+            </div>
+          </Field>
+
+          {discoveryError ? (
+            <div className="space-y-1.5">
+              <p className="text-xs text-red-400">{discoveryError}</p>
+              <button
+                type="button"
+                onClick={() => setTab('custom')}
+                className="text-xs text-emerald-400 hover:text-emerald-300"
+              >
+                Provider has no /models endpoint? Add it manually instead →
+              </button>
             </div>
           ) : null}
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Switch checked={form.enabled} onChange={(v) => setField('enabled', v)} />
-          <span className="text-[13px] text-zinc-400">Enabled</span>
-        </div>
+          {upstreamModels !== null && upstreamModels.length > 0 ? (
+            <Field
+              label={`Upstream models — ${selected.size} of ${upstreamModels.filter(isSelectable).length} selectable`}
+              hint="Slugs come from the upstream ids; already-registered and unparseable ids can’t be imported."
+            >
+              <Input
+                value={listFilter}
+                onChange={(e) => setListFilter(e.target.value)}
+                placeholder="Filter this list…"
+                className="mb-2 h-8 text-xs"
+              />
+              <div className="max-h-72 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/60">
+                {visibleModels.map((m) => {
+                  const selectable = isSelectable(m);
+                  const already = existingSlugs.has(m.id);
+                  return (
+                    <label
+                      key={m.id}
+                      className={`flex items-center gap-2.5 border-b border-zinc-800/60 px-3 py-1.5 text-[13px] last:border-b-0 ${
+                        selectable ? 'cursor-pointer hover:bg-zinc-900/60' : 'cursor-not-allowed opacity-40'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={!selectable}
+                        checked={selected.has(m.id)}
+                        onChange={() => toggleModel(m.id)}
+                        className="h-3.5 w-3.5 accent-emerald-500"
+                      />
+                      <span className="font-mono text-zinc-200">{m.id}</span>
+                      {m.display_name && m.display_name !== m.id ? <span className="text-zinc-500">{m.display_name}</span> : null}
+                      <span className="ml-auto flex items-center gap-1.5">
+                        {already ? <Badge>already added</Badge> : null}
+                        {!selectable && !already ? <Badge tone="warn">unsupported name</Badge> : null}
+                        {m.context_window != null ? (
+                          <span className="font-mono text-[11px] text-zinc-600">{Math.round(m.context_window / 1000)}k ctx</span>
+                        ) : null}
+                      </span>
+                    </label>
+                  );
+                })}
+                {visibleModels.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-zinc-500">No models match “{listFilter}”.</p>
+                ) : null}
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <Button type="button" variant="ghost" size="sm" onClick={toggleVisible} disabled={selectableVisible.length === 0}>
+                  {allVisibleSelected ? <Square className="h-3.5 w-3.5" /> : <CheckSquare className="h-3.5 w-3.5" />}
+                  {allVisibleSelected ? 'Deselect shown' : 'Select all shown'}
+                </Button>
+                <span className="text-[11px] text-zinc-600">
+                  Context limits + display names are filled in — set pricing per model after import.
+                </span>
+              </div>
+            </Field>
+          ) : null}
 
-        {error ? <p className="text-xs text-red-400">{error}</p> : null}
-      </form>
+          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+        </div>
+      ) : (
+        <form id="model-form" onSubmit={submit} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Provider">
+              <Select value={form.provider_id} onChange={(e) => setField('provider_id', e.target.value)}>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Slug" hint="Globally unique, e.g. gpt-5, claude-sonnet-4-5">
+              <Input value={form.slug} onChange={(e) => setField('slug', e.target.value)} placeholder="gpt-5" autoFocus={!isEdit} />
+            </Field>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Display name" hint="Optional, dashboard only">
+              <Input value={form.display_name} onChange={(e) => setField('display_name', e.target.value)} placeholder="GPT-5" />
+            </Field>
+            <Field label="Upstream model ID" hint="Sent to the provider; blank = same as slug">
+              <Input
+                value={form.upstream_model}
+                onChange={(e) => setField('upstream_model', e.target.value)}
+                placeholder="gpt-5 (defaults to slug)"
+                className="font-mono text-xs"
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Pricing input" hint="USD per 1M tokens, e.g. 3.00">
+              <Input type="number" min={0} step={0.0001} value={form.pricing_input} onChange={(e) => setField('pricing_input', e.target.value)} />
+            </Field>
+            <Field label="Pricing output" hint="USD per 1M tokens, e.g. 15.00">
+              <Input type="number" min={0} step={0.0001} value={form.pricing_output} onChange={(e) => setField('pricing_output', e.target.value)} />
+            </Field>
+          </div>
+
+          <Field label="Rate limit" hint="Global requests/minute for this model, shared by all clients — blank = unlimited">
+            <Input type="number" min={1} value={form.rate_limit_rpm} onChange={(e) => setField('rate_limit_rpm', e.target.value)} placeholder="unlimited" />
+          </Field>
+
+          <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-300">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 accent-emerald-500"
+              checked={form.cache_enabled}
+              onChange={(e) => setField('cache_enabled', e.target.checked)}
+            />
+            <span>
+              Semantic cache
+              <span className="block text-[11px] leading-relaxed text-zinc-500">
+                Repeat text-only, non-streaming requests are served from cache until the entry expires (Settings
+                sets the lifetime). Still logged and billed.
+              </span>
+            </span>
+          </label>
+
+          <Field label="Capabilities">
+            <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1">
+              {CAPABILITIES.map((c) => {
+                const checked = form.capabilities.includes(c);
+                return (
+                  <label key={c} className="flex cursor-pointer items-center gap-1.5 text-xs text-zinc-300">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-emerald-500"
+                      checked={checked}
+                      onChange={() => {
+                        setForm((f) => ({
+                          ...f,
+                          capabilities: checked ? f.capabilities.filter((x) => x !== c) : [...f.capabilities, c],
+                        }));
+                      }}
+                    />
+                    {c}
+                  </label>
+                );
+              })}
+            </div>
+          </Field>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setLimitsOpen((v) => !v)}
+              className="text-xs font-medium text-zinc-400 hover:text-zinc-200"
+            >
+              Token limits {limitsOpen ? '▾' : '▸'}
+            </button>
+            <span className="ml-2 text-[11px] text-zinc-600">optional — auto-filled by Fetch models</span>
+            {limitsOpen ? (
+              <div className="mt-3 space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/50 p-4">
+                <Field label="Context window" hint="Shown to clients in /v1/models — not enforced (the provider rejects over-long requests)">
+                  <Input type="number" min={0} value={form.context_window} onChange={(e) => setField('context_window', e.target.value)} placeholder="200000" />
+                </Field>
+                <Field label="Max output tokens" hint="Default max_tokens for Anthropic upstreams when the client omits it — otherwise 4096">
+                  <Input type="number" min={0} value={form.max_output_tokens} onChange={(e) => setField('max_output_tokens', e.target.value)} placeholder="8192" />
+                </Field>
+              </div>
+            ) : null}
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="text-xs font-medium text-zinc-400 hover:text-zinc-200"
+            >
+              Advanced {advancedOpen ? '▾' : '▸'}
+            </button>
+            {advancedOpen ? (
+              <div className="mt-3 space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/50 p-4">
+                <Field label="Base URL override" hint="Leave blank to inherit the provider's base URL">
+                  <Input
+                    value={form.base_url_override}
+                    onChange={(e) => setField('base_url_override', e.target.value)}
+                    placeholder="https://… (inherit)"
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Field
+                  label="API key override"
+                  hint={isEdit && initial?.key_hint ? `Current override ends “${initial.key_hint}” — blank keeps it` : 'Overrides the provider key for this model'}
+                >
+                  <Input
+                    type="password"
+                    value={form.api_key_override}
+                    onChange={(e) => setField('api_key_override', e.target.value)}
+                    placeholder={isEdit && initial?.key_hint ? '••••••••••••' : 'sk-… (inherit by default)'}
+                    autoComplete="new-password"
+                  />
+                </Field>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Switch checked={form.enabled} onChange={(v) => setField('enabled', v)} />
+            <span className="text-[13px] text-zinc-400">Enabled</span>
+          </div>
+
+          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+        </form>
+      )}
     </Modal>
   );
 }
@@ -327,13 +595,18 @@ export function Models() {
     queryKey: ['models', providerFilter],
     queryFn: () => api.models(providerFilter || undefined),
   });
+  // Unfiltered slug set for the import picker's "already added" markers
+  // (slug uniqueness is global across providers).
+  const allQ = useQuery({ queryKey: ['models', ''], queryFn: () => api.models() });
 
   const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState<ModelRow | null | undefined>(undefined);
+  const [editing, setEditing] = useState<ModelRow | null>(null);
+  const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ModelRow | null>(null);
 
   const providers = pq.data ?? [];
   const models = mq.data ?? [];
+  const existingSlugs = useMemo(() => new Set((allQ.data ?? []).map((m) => m.slug)), [allQ.data]);
 
   const toggle = useMutation({
     mutationFn: (m: ModelRow) => api.updateModel(m.id, { enabled: !m.enabled }),
@@ -373,7 +646,7 @@ export function Models() {
         subtitle="Platform slugs clients route through — each maps to a provider's upstream model."
         action={
           <Button
-            onClick={() => setEditing(null)}
+            onClick={() => setAdding(true)}
             disabled={noProviders}
             title={noProviders ? 'Add a provider first' : undefined}
           >
@@ -393,7 +666,7 @@ export function Models() {
             icon={<Boxes className="h-8 w-8" />}
             title="No providers yet"
             description="Models are registered against a provider. Add OpenAI, Anthropic, or any OpenAI-compatible endpoint first."
-            action={<Button onClick={() => navigate('/providers')}>Go to providers</Button>}
+            action={<Button onClick={() => navigate('/admin/providers')}>Go to providers</Button>}
           />
         </Card>
       ) : models.length === 0 ? (
@@ -401,11 +674,11 @@ export function Models() {
           <EmptyState
             icon={<Boxes className="h-8 w-8" />}
             title="No models yet"
-            description="Register the slugs your clients will use and map them to a provider's upstream model ID."
+            description="Fetch a provider's catalog to import its models in bulk, or register slugs by hand."
             action={
-              <Button onClick={() => setEditing(null)}>
+              <Button onClick={() => setAdding(true)}>
                 <Plus className="h-4 w-4" />
-                Register your first model
+                Add your first model
               </Button>
             }
           />
@@ -509,8 +782,17 @@ export function Models() {
         <p className="mt-3 text-center text-xs text-zinc-500">No models match “{search}”.</p>
       ) : null}
 
-      {editing !== undefined ? (
-        <ModelModal initial={editing} providers={providers} onClose={() => setEditing(undefined)} />
+      {editing ? (
+        <ModelModal initial={editing} providers={providers} existingSlugs={existingSlugs} onClose={() => setEditing(null)} />
+      ) : null}
+      {adding ? (
+        <ModelModal
+          initial={null}
+          providers={providers}
+          existingSlugs={existingSlugs}
+          defaultProviderId={providerFilter || undefined}
+          onClose={() => setAdding(false)}
+        />
       ) : null}
 
       <ConfirmDialog

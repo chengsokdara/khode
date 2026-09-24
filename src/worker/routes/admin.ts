@@ -1,4 +1,4 @@
-// /admin console API: login + session, overview, providers CRUD + test-connection,
+// /api/admin console API: login + session, overview, providers CRUD + test-connection,
 // models CRUD. All mutations validate input server-side; provider API keys are
 // encrypted at rest and never returned by the API (only a key_hint).
 import { Hono } from 'hono';
@@ -14,8 +14,6 @@ import {
   CACHE_ENABLED_OFF,
   CACHE_ENABLED_ON,
   CACHE_TTL_MAX,
-  CLIENT_KEY_ENFORCEMENT_OFF,
-  CLIENT_KEY_ENFORCEMENT_ON,
   PUBLIC_SIGNUP_OFF,
   PUBLIC_SIGNUP_ON,
   RATE_LIMIT_DEFAULT_IP_RPM,
@@ -24,16 +22,15 @@ import {
   RATE_LIMIT_ENABLED_ON,
   RATE_LIMIT_RPM_MAX,
   getCacheSettings,
-  getClientKeyEnforcement,
   getPublicSignup,
   getRateLimitSettings,
   setCacheSettings,
-  setClientKeyEnforcement,
   setPublicSignup,
   setRateLimitSettings,
 } from '../db/settings';
 import { cacheStats, flushCache } from '../cache/store';
 import { billingConfigStatus, saveBillingConfig } from '../billing/config';
+import { getOAuthConfig, oauthConfigStatus, saveOAuthConfig } from '../oauth/config';
 import { decryptSecret, encryptSecret } from '../crypto';
 import {
   SESSION_COOKIE,
@@ -419,14 +416,14 @@ adminApp.get('/overview', async (c) => {
 // admin opts in (khode users then set KHATEWAY_API_KEY).
 
 adminApp.get('/settings', async (c) => {
-  const [enforcement, publicSignup, rateLimit, cache] = await Promise.all([
-    getClientKeyEnforcement(c.env),
+  const [publicSignup, rateLimit, cache] = await Promise.all([
     getPublicSignup(c.env),
     getRateLimitSettings(c.env),
     getCacheSettings(c.env),
   ]);
+  // Auth is not settings-dependent any more: every /v1 request requires a
+  // valid client key (device flow / portal keys are the onboarding paths).
   return c.json({
-    client_key_enforcement: enforcement,
     public_signup: publicSignup,
     rate_limit_enabled: rateLimit.enabled ? RATE_LIMIT_ENABLED_ON : RATE_LIMIT_ENABLED_OFF,
     rate_limit_key_rpm: rateLimit.keyRpm,
@@ -440,17 +437,10 @@ adminApp.patch('/settings', async (c) => {
   const body = await readJson(c);
   if (!body) return c.json(apiErr('Invalid JSON body'), 400);
   const patch: {
-    enforcement?: string;
     signup?: string;
     rateLimit?: { enabled?: boolean; keyRpm?: number; ipRpm?: number };
     cache?: { enabled?: boolean; ttlSeconds?: number };
   } = {};
-  if (body.client_key_enforcement !== undefined) {
-    if (body.client_key_enforcement !== CLIENT_KEY_ENFORCEMENT_ON && body.client_key_enforcement !== CLIENT_KEY_ENFORCEMENT_OFF) {
-      return c.json(apiErr(`client_key_enforcement must be '${CLIENT_KEY_ENFORCEMENT_ON}' or '${CLIENT_KEY_ENFORCEMENT_OFF}'`), 400);
-    }
-    patch.enforcement = body.client_key_enforcement;
-  }
   if (body.public_signup !== undefined) {
     if (body.public_signup !== PUBLIC_SIGNUP_ON && body.public_signup !== PUBLIC_SIGNUP_OFF) {
       return c.json(apiErr(`public_signup must be '${PUBLIC_SIGNUP_ON}' or '${PUBLIC_SIGNUP_OFF}'`), 400);
@@ -488,18 +478,15 @@ adminApp.patch('/settings', async (c) => {
     }
     patch.cache = { ...(patch.cache ?? {}), ttlSeconds: body.cache_ttl_seconds };
   }
-  if (patch.enforcement !== undefined) await setClientKeyEnforcement(c.env, patch.enforcement as typeof CLIENT_KEY_ENFORCEMENT_ON | typeof CLIENT_KEY_ENFORCEMENT_OFF);
   if (patch.signup !== undefined) await setPublicSignup(c.env, patch.signup as typeof PUBLIC_SIGNUP_ON | typeof PUBLIC_SIGNUP_OFF);
   if (patch.rateLimit !== undefined) await setRateLimitSettings(c.env, patch.rateLimit);
   if (patch.cache !== undefined) await setCacheSettings(c.env, patch.cache);
-  const [enforcement, publicSignup, rateLimit, cache] = await Promise.all([
-    getClientKeyEnforcement(c.env),
+  const [publicSignup, rateLimit, cache] = await Promise.all([
     getPublicSignup(c.env),
     getRateLimitSettings(c.env),
     getCacheSettings(c.env),
   ]);
   return c.json({
-    client_key_enforcement: enforcement,
     public_signup: publicSignup,
     rate_limit_enabled: rateLimit.enabled ? RATE_LIMIT_ENABLED_ON : RATE_LIMIT_ENABLED_OFF,
     rate_limit_key_rpm: rateLimit.keyRpm,
@@ -507,6 +494,48 @@ adminApp.patch('/settings', async (c) => {
     cache_enabled: cache.enabled ? CACHE_ENABLED_ON : CACHE_ENABLED_OFF,
     cache_ttl_seconds: cache.ttlSeconds,
   });
+});
+
+// ------------------------------------------------------- social sign-in config
+// Google/GitHub OAuth clients for the portal login. Client ids are public and
+// echoed in full; client secrets are encrypted at rest and only ever surface
+// as presence flags. The callback URLs are computed from the request origin —
+// the operator pastes them into the provider's console verbatim.
+
+adminApp.get('/settings/oauth', async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const [google, github] = await Promise.all([getOAuthConfig(c.env, 'google'), getOAuthConfig(c.env, 'github')]);
+  return c.json(oauthConfigStatus({ google, github }, origin));
+});
+
+adminApp.patch('/settings/oauth', async (c) => {
+  const body = await readJson(c);
+  if (!body) return c.json(apiErr('Invalid JSON body'), 400);
+  const patch: Parameters<typeof saveOAuthConfig>[1] = {};
+  for (const provider of ['google', 'github'] as const) {
+    const entry = body[provider];
+    if (entry === undefined) continue;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return c.json(apiErr(`${provider} must be an object with client_id / client_secret`), 400);
+    }
+    const fields = entry as Record<string, unknown>;
+    const parsed: { clientId?: string | null; clientSecret?: string | null } = {};
+    for (const field of ['client_id', 'client_secret'] as const) {
+      const v = fields[field];
+      if (v === undefined) continue;
+      if (v !== null && typeof v !== 'string') return c.json(apiErr(`${provider}.${field} must be a string or null`), 400);
+      const s = typeof v === 'string' ? v.trim() : null;
+      const max = field === 'client_id' ? 256 : 4096;
+      if (s && s.length > max) return c.json(apiErr(`${provider}.${field} must be at most ${max} characters`), 400);
+      if (field === 'client_id') parsed.clientId = s || null;
+      else parsed.clientSecret = s || null;
+    }
+    patch[provider] = parsed;
+  }
+  await saveOAuthConfig(c.env, patch);
+  const origin = new URL(c.req.url).origin;
+  const [google, github] = await Promise.all([getOAuthConfig(c.env, 'google'), getOAuthConfig(c.env, 'github')]);
+  return c.json(oauthConfigStatus({ google, github }, origin));
 });
 
 // ------------------------------------------------------- semantic cache (M11)
@@ -803,6 +832,8 @@ const UPSTREAM_MODELS_MAX = 500;
  * credentials and default headers, and normalizes the result into
  * UpstreamModel entries. Model discovery is best-effort: entries with
  * unusable ids are skipped, everything else passes through as offered.
+ * A provider without a stored base URL rides the adapter default —
+ * discovery probes there too (same fallback the connection test uses).
  */
 async function listUpstreamModels(env: Env, p: ProviderRow): Promise<{ ok: true; models: UpstreamModel[] } | { ok: false; error: string; status: number | null }> {
   let key: string | null = null;
@@ -811,15 +842,12 @@ async function listUpstreamModels(env: Env, p: ProviderRow): Promise<{ ok: true;
   } catch (e) {
     return { ok: false, status: null, error: `Stored API key unreadable: ${e instanceof Error ? e.message : 'decrypt failed'}` };
   }
-  if (!p.baseUrl) {
-    return { ok: false, status: null, error: 'No base URL configured — set one to discover models.' };
-  }
 
   const adapters = parseAdapters(p.adapters);
   const adapter: Adapter = adapters[0] ?? 'openai';
   const isAnthropic = adapter === 'anthropic';
   const isGemini = adapter === 'gemini';
-  const base = p.baseUrl.replace(/\/+$/, '');
+  const base = (p.baseUrl ?? DEFAULT_BASES[adapter]).replace(/\/+$/, '');
   const url = joinAdapterUrl(base, adapter, isAnthropic ? '/v1/models' : '/models');
   const headers: Record<string, string> = {
     ...(parseJsonObject(p.defaultHeaders) ?? {}),
@@ -881,7 +909,12 @@ async function listUpstreamModels(env: Env, p: ProviderRow): Promise<{ ok: true;
       if (!id || seen.has(id)) continue;
       seen.add(id);
       const ctx = typeof m.context_window === 'number' ? m.context_window : typeof m.context_length === 'number' ? m.context_length : null;
-      const out = typeof m.max_output_tokens === 'number' ? m.max_output_tokens : null;
+      // OpenRouter-style listings nest the output cap in top_provider.max_completion_tokens.
+      const tp = (m.top_provider ?? null) as Record<string, unknown> | null;
+      const out =
+        typeof m.max_output_tokens === 'number' ? m.max_output_tokens
+        : tp && typeof tp.max_completion_tokens === 'number' ? tp.max_completion_tokens
+        : null;
       const name = typeof m.display_name === 'string' && m.display_name.trim() ? m.display_name.trim() : null;
       models.push({ id, displayName: name, contextWindow: ctx, maxOutputTokens: out });
       if (models.length >= UPSTREAM_MODELS_MAX) break;
@@ -983,8 +1016,26 @@ adminApp.post('/providers/fetch-models', async (c) => {
   });
 });
 
+/** One row to create: an upstream id plus optional discovery metadata. */
+interface ImportEntry {
+  id: string;
+  displayName: string | null;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+}
+
+/** undefined/null → null; otherwise a non-negative integer or 'invalid'. */
+function optionalNonNegativeInt(v: unknown): number | null | 'invalid' {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return 'invalid';
+  return v;
+}
+
 /**
- * Bulk model import: creates one model per slug for a saved provider.
+ * Bulk model import: creates one model per slug for a saved provider. The
+ * body is either `{model_ids: string[]}` (bare rows) or `{models: [{id,
+ * display_name?, context_window?, max_output_tokens?}]}` (discovery results
+ * — the metadata the /models listing offered lands on the created rows).
  * Slug rules match POST /models; already-existing slugs are skipped (and
  * reported) so re-running an import never duplicates. All-or-nothing per
  * entry; the response reports created/skipped lists.
@@ -996,34 +1047,70 @@ adminApp.post('/providers/:id/import-models', async (c) => {
   const body = await readJson(c);
   if (!body) return c.json(apiErr('Invalid JSON body'), 400);
 
-  const ids = Array.isArray(body.model_ids) ? body.model_ids.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : [];
-  if (ids.length === 0) return c.json(apiErr('model_ids must be a non-empty array of upstream model ids'), 400);
-  if (ids.length > 100) return c.json(apiErr('Import at most 100 models at a time'), 400);
-  const unique = [...new Set(ids.map((x) => x.trim()))];
+  const entryErr = 'Send model_ids (string array) or models (array of { id, display_name?, context_window?, max_output_tokens? })';
+  if (body.model_ids !== undefined && body.models !== undefined) {
+    return c.json(apiErr('Send either model_ids or models, not both'), 400);
+  }
+
+  let entries: ImportEntry[];
+  if (body.models !== undefined) {
+    if (!Array.isArray(body.models) || body.models.length === 0) return c.json(apiErr(entryErr), 400);
+    if (body.models.length > 100) return c.json(apiErr('Import at most 100 models at a time'), 400);
+    entries = [];
+    for (const raw of body.models) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return c.json(apiErr(entryErr), 400);
+      const m = raw as Record<string, unknown>;
+      if (typeof m.id !== 'string' || !m.id.trim()) return c.json(apiErr('Every models entry needs a non-empty id string'), 400);
+      const ctx = optionalNonNegativeInt(m.context_window);
+      const out = optionalNonNegativeInt(m.max_output_tokens);
+      if (ctx === 'invalid' || out === 'invalid') {
+        return c.json(apiErr('context_window / max_output_tokens must be integers ≥ 0'), 400);
+      }
+      entries.push({
+        id: m.id.trim(),
+        displayName: typeof m.display_name === 'string' && m.display_name.trim() ? m.display_name.trim().slice(0, 200) : null,
+        contextWindow: ctx,
+        maxOutputTokens: out,
+      });
+    }
+  } else {
+    const ids = Array.isArray(body.model_ids)
+      ? body.model_ids.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : [];
+    if (ids.length === 0) return c.json(apiErr(entryErr), 400);
+    if (ids.length > 100) return c.json(apiErr('Import at most 100 models at a time'), 400);
+    entries = [...new Set(ids.map((x) => x.trim()))].map((id) => ({ id, displayName: null, contextWindow: null, maxOutputTokens: null }));
+  }
+  // First occurrence wins on duplicate ids within one import.
+  const seenId = new Set<string>();
+  entries = entries.filter((e) => (seenId.has(e.id) ? false : (seenId.add(e.id), true)));
 
   const created: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
-  for (const id of unique) {
-    if (!SLUG_RE.test(id)) {
-      skipped.push({ id, reason: 'id contains characters outside the slug alphabet (letters, digits, dots, dashes, underscores)' });
+  for (const entry of entries) {
+    if (!SLUG_RE.test(entry.id)) {
+      skipped.push({ id: entry.id, reason: 'id contains characters outside the slug alphabet (letters, digits, dots, dashes, underscores)' });
       continue;
     }
-    const [dup] = await db.select({ id: models.id }).from(models).where(eq(models.slug, id));
+    const [dup] = await db.select({ id: models.id }).from(models).where(eq(models.slug, entry.id));
     if (dup) {
-      skipped.push({ id, reason: 'slug already in use' });
+      skipped.push({ id: entry.id, reason: 'slug already in use' });
       continue;
     }
     const val: ModelInsert = {
       id: crypto.randomUUID(),
       providerId: p.id,
-      slug: id,
-      upstreamModel: id,
+      slug: entry.id,
+      upstreamModel: entry.id,
+      displayName: entry.displayName,
+      contextWindow: entry.contextWindow,
+      maxOutputTokens: entry.maxOutputTokens,
       enabled: true,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
     await db.insert(models).values(val);
-    created.push(id);
+    created.push(entry.id);
   }
   return c.json({ created, skipped }, 201);
 });
@@ -1201,7 +1288,7 @@ adminApp.post('/playground/key', async (c) => {
 // in the create response — the DB stores its sha-256 hash and a short prefix
 // for the UI. Logs are kept when a key is deleted (historical record).
 // Session-scoped playground keys (M14) are derived state of an admin session —
-// not listed here; they are created/revoked by /admin/playground/key + logout.
+// not listed here; they are created/revoked by /api/admin/playground/key + logout.
 
 type ApiKeyInsert = typeof apiKeys.$inferInsert;
 

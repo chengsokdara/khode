@@ -4,13 +4,26 @@ import { navigate } from '../../router';
 import { Button, Field, Input, Logo, Spinner } from '../../components/ui';
 import { cn } from '../../components/ui';
 
-/** Portal auth: sign in for existing accounts, create-account tab for signups. */
+/** Portal auth: social sign-in (Google/GitHub — backend-driven 302s) on top,
+ * email/password as the fallback below. A `?next=` param (set by the portal
+ * guard or an OAuth failure redirect) returns the user to where they were
+ * headed — e.g. a device verification link; `?error=` carries a message back
+ * from the OAuth callback. */
 export function PortalLogin() {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => new URLSearchParams(window.location.search).get('error'));
   const [busy, setBusy] = useState(false);
+  const urlParams = new URLSearchParams(window.location.search);
+  const nextRaw = urlParams.get('next') ?? '';
+  const next = nextRaw.startsWith('/app') && !nextRaw.startsWith('/app/login') ? nextRaw : '/app';
+
+  // The social buttons leave the SPA for a backend route that 302s to the
+  // provider; the callback mints the session cookie and lands back on `next`.
+  const socialStart = (provider: 'google' | 'github') => {
+    window.location.href = `/api/portal/oauth/${provider}/start?next=${encodeURIComponent(next)}`;
+  };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -23,7 +36,7 @@ export function PortalLogin() {
     try {
       if (mode === 'signup') await portalApi.signup(email, password);
       else await portalApi.login(email, password);
-      navigate('/app');
+      navigate(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed');
       setBusy(false);
@@ -41,6 +54,19 @@ export function PortalLogin() {
           </div>
         </div>
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 shadow-2xl shadow-black/50">
+          <div className="grid gap-2">
+            <Button variant="outline" className="w-full" onClick={() => socialStart('google')}>
+              Continue with Google
+            </Button>
+            <Button variant="outline" className="w-full" onClick={() => socialStart('github')}>
+              Continue with GitHub
+            </Button>
+          </div>
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-zinc-800" />
+            <span className="text-[11px] text-zinc-600">or continue with email</span>
+            <div className="h-px flex-1 bg-zinc-800" />
+          </div>
           <div className="mb-5 grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-1 text-[13px]">
             {(['login', 'signup'] as const).map((m) => (
               <button

@@ -65,22 +65,22 @@ const SLUGS = [
   'mock-log-json', 'mock-log-stream',
   'mock-gemini', 'mock-gemini-tools', 'mock-gemini-400', 'mock-gemini-429',
   'mock-emb', 'mock-emb-fb', 'mock-emb-anthropic', 'mock-gem-emb',
-  'mock-claude-think', 'mock-gem-think',
+  'mock-claude-think', 'mock-gem-think', 'mock-enriched',
 ];
 const KEY_NAMES = ['Smoke Key (smoke)', 'Restricted (smoke)', 'Capped (smoke)'];
 
 async function cleanup() {
-  const providers = await j('/admin/providers');
+  const providers = await j('/api/admin/providers');
   for (const p of providers.body ?? []) {
-    if (PROVIDER_NAMES.includes(p.name)) await j(`/admin/providers/${p.id}`, { method: 'DELETE' });
+    if (PROVIDER_NAMES.includes(p.name)) await j(`/api/admin/providers/${p.id}`, { method: 'DELETE' });
   }
-  const models = await j('/admin/models');
+  const models = await j('/api/admin/models');
   for (const m of models.body ?? []) {
-    if (SLUGS.includes(m.slug)) await j(`/admin/models/${m.id}`, { method: 'DELETE' });
+    if (SLUGS.includes(m.slug)) await j(`/api/admin/models/${m.id}`, { method: 'DELETE' });
   }
-  const keys = await j('/admin/api-keys');
+  const keys = await j('/api/admin/api-keys');
   for (const k of keys.body ?? []) {
-    if (KEY_NAMES.includes(k.name)) await j(`/admin/api-keys/${k.id}`, { method: 'DELETE' });
+    if (KEY_NAMES.includes(k.name)) await j(`/api/admin/api-keys/${k.id}`, { method: 'DELETE' });
   }
 }
 
@@ -131,7 +131,7 @@ function startMockUpstream() {
             object: 'list',
             data: [
               { id: 'mock', object: 'model' },
-              { id: 'mock-chat', object: 'model', context_window: 128000 },
+              { id: 'mock-chat', object: 'model', context_window: 128000, top_provider: { max_completion_tokens: 16384 } },
               { id: 'mock-chat-stream', object: 'model', display_name: 'Mock Chat (stream)' },
               { id: 'bad/slug+id', object: 'model' }, // exercise slug filtering on import
             ],
@@ -422,7 +422,7 @@ function startMockUpstream() {
 const mock = await startMockUpstream();
 
 (async () => {
-  const login = await j('/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
+  const login = await j('/api/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
   if (login.status !== 200) {
     fail('admin login (is `npm run dev` running on :8787?)', `status=${login.status}`);
     process.exitCode = 1;
@@ -434,18 +434,18 @@ const mock = await startMockUpstream();
   // M10 rate limiting is ON by default — this suite bursts hundreds of
   // anonymous/keyed requests per minute from one dev IP, so disable it here
   // (smoke_m10.mjs is the suite that exercises the limiter itself).
-  const rlOff = await j('/admin/settings', {
+  const rlOff = await j('/api/admin/settings', {
     method: 'PATCH',
     body: JSON.stringify({ rate_limit_enabled: 'off' }),
   });
-  check('PATCH /admin/settings rate_limit_enabled=off (M10 burst safety)', rlOff.status === 200 && rlOff.body?.rate_limit_enabled === 'off', JSON.stringify(rlOff.body));
+  check('PATCH /api/admin/settings rate_limit_enabled=off (M10 burst safety)', rlOff.status === 200 && rlOff.body?.rate_limit_enabled === 'off', JSON.stringify(rlOff.body));
 
-  const prov = await j('/admin/providers', {
+  const prov = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({ name: 'Khateway Mock (smoke)', adapter: 'openai', base_url: `http://127.0.0.1:${mock.port}/v1` }),
   });
   // Anthropic-style base: bare origin, no /v1 — the adapter appends /v1/messages.
-  const provAnthropic = await j('/admin/providers', {
+  const provAnthropic = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({
       name: 'Anthropic Mock (smoke)',
@@ -456,7 +456,7 @@ const mock = await startMockUpstream();
   });
   // Dual-dialect provider: ONE row speaking both upstream dialects against a
   // single openai-style /v1 base URL (joinAdapterUrl strips /v1 for anthropic).
-  const provDual = await j('/admin/providers', {
+  const provDual = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({
       name: 'Dual Mock (smoke)',
@@ -468,7 +468,7 @@ const mock = await startMockUpstream();
   // Same idea with the OTHER paste style: bare origin, no /v1 — proves the
   // openai path inserts /v1 while anthropic keeps the origin (bidirectional
   // URL normalization).
-  const provDualBare = await j('/admin/providers', {
+  const provDualBare = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({
       name: 'Dual Mock Bare (smoke)',
@@ -479,7 +479,7 @@ const mock = await startMockUpstream();
   });
   // Native Gemini provider (M12): one adapter row against the /v1beta root —
   // the adapter builds /models/{model}:generateContent(:streamGenerateContent?alt=sse).
-  const provGemini = await j('/admin/providers', {
+  const provGemini = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({
       name: 'Gemini Mock (smoke)',
@@ -500,7 +500,7 @@ const mock = await startMockUpstream();
   );
 
   const mkModel = async (slug, upstream, providerId, fallbacks) =>
-    j('/admin/models', {
+    j('/api/admin/models', {
       method: 'POST',
       body: JSON.stringify({
         provider_id: providerId,
@@ -555,7 +555,7 @@ const mock = await startMockUpstream();
   // Give mock-chat pricing so cost snapshots are assertable: 3 in / 5 out at
   // $2/$8 per 1M → $0.000046 per request.
   const mockChatModel = created.find(([s]) => s === 'mock-chat');
-  const priced = await j(`/admin/models/${mockChatModel[1].body.id}`, {
+  const priced = await j(`/api/admin/models/${mockChatModel[1].body.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ pricing_input: 2, pricing_output: 8 }),
   });
@@ -564,7 +564,7 @@ const mock = await startMockUpstream();
   // mock-gemini: 4 prompt in / 6 candidates + 2 thoughts out at $2/$8 per 1M
   // → $0.000072 per request (thinking tokens bill as output).
   const geminiModel = created.find(([s]) => s === 'mock-gemini');
-  const pricedGemini = await j(`/admin/models/${geminiModel[1].body.id}`, {
+  const pricedGemini = await j(`/api/admin/models/${geminiModel[1].body.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ pricing_input: 2, pricing_output: 8 }),
   });
@@ -573,20 +573,26 @@ const mock = await startMockUpstream();
   // M13 embeddings models price INPUT only ($2/1M): 3 prompt tokens → $0.000006.
   for (const slug of ['mock-emb', 'mock-emb-fb', 'mock-gem-emb']) {
     const m = created.find(([s]) => s === slug);
-    const r = await j(`/admin/models/${m[1].body.id}`, { method: 'PATCH', body: JSON.stringify({ pricing_input: 2 }) });
+    const r = await j(`/api/admin/models/${m[1].body.id}`, { method: 'PATCH', body: JSON.stringify({ pricing_input: 2 }) });
     check(`set ${slug} input pricing for cost assertions`, r.status === 200, JSON.stringify(r.body));
   }
 
   // -- model discovery + bulk import (saved provider) -----------------------
-  const fetched = await j(`/admin/providers/${prov.body.id}/fetch-models`, { method: 'POST' });
+  const fetched = await j(`/api/admin/providers/${prov.body.id}/fetch-models`, { method: 'POST' });
   const fetchedIds = (fetched.body?.models ?? []).map((m) => m.id);
   check(
     'fetch-models (saved provider) normalizes upstream /models list',
     fetched.status === 200 && fetchedIds.includes('mock-chat') && fetchedIds.includes('mock-chat-stream'),
     JSON.stringify(fetched.body),
   );
+  const openRouterShaped = (fetched.body?.models ?? []).find((m) => m.id === 'mock-chat');
+  check(
+    'fetch-models reads top_provider.max_completion_tokens (OpenRouter shape) → max_output_tokens',
+    openRouterShaped?.max_output_tokens === 16384 && openRouterShaped?.context_window === 128000,
+    JSON.stringify(openRouterShaped),
+  );
 
-  const imported = await j(`/admin/providers/${prov.body.id}/import-models`, {
+  const imported = await j(`/api/admin/providers/${prov.body.id}/import-models`, {
     method: 'POST',
     body: JSON.stringify({ model_ids: ['mock-chat', 'mock-chat-stream', 'mock-chat', 'bad/slug+id'] }),
   });
@@ -603,15 +609,58 @@ const mock = await startMockUpstream();
       skippedMap.get('bad/slug+id')?.includes('slug alphabet'),
     JSON.stringify(imported.body),
   );
-  const importedList = await j('/admin/models?provider_id=' + prov.body.id);
+  const importedList = await j('/api/admin/models?provider_id=' + prov.body.id);
   check(
     'imported models exist with upstream id as slug + upstream_model',
     importedList.body?.some((m) => m.slug === 'mock-chat' && m.upstream_model === 'mock-chat') && importedList.body?.some((m) => m.slug === 'mock-chat-stream'),
     JSON.stringify(importedList.body?.map((m) => m.slug)),
   );
 
+  // -- enriched import body ({models:[…]}) — the Models-page picker path -----
+  const enrichedImport = await j(`/api/admin/providers/${prov.body.id}/import-models`, {
+    method: 'POST',
+    body: JSON.stringify({
+      models: [
+        { id: 'mock-enriched', display_name: 'Mock Enriched', context_window: 32000, max_output_tokens: 4096 },
+        { id: 'mock-enriched', display_name: 'duplicate entry is ignored' },
+        { id: 'mock-chat-stream', display_name: 'collides with an existing slug' },
+      ],
+    }),
+  });
+  const enrichedCreated = (enrichedImport.body?.created ?? []).includes('mock-enriched');
+  const enrichedSkipped =
+    (enrichedImport.body?.skipped ?? []).find((s) => s.id === 'mock-enriched')?.reason === 'slug already in use';
+  check(
+    'import-models {models} dedupes entries + reports colliding slugs',
+    enrichedImport.status === 201 &&
+      (enrichedCreated || enrichedSkipped) &&
+      (enrichedImport.body?.skipped ?? []).some((s) => s.id === 'mock-chat-stream'),
+    JSON.stringify(enrichedImport.body),
+  );
+  const enrichedList = await j('/api/admin/models?provider_id=' + prov.body.id);
+  const enrichedModel = (enrichedList.body ?? []).find((m) => m.slug === 'mock-enriched');
+  check(
+    'import-models {models} lands display_name/context/max_output on the created row',
+    enrichedCreated
+      ? enrichedModel?.display_name === 'Mock Enriched' &&
+          enrichedModel?.context_window === 32000 &&
+          enrichedModel?.max_output_tokens === 4096
+      : !!enrichedModel,
+    JSON.stringify(enrichedModel),
+  );
+  const bothBodies = await j(`/api/admin/providers/${prov.body.id}/import-models`, {
+    method: 'POST',
+    body: JSON.stringify({ model_ids: ['x'], models: [{ id: 'x' }] }),
+  });
+  check('import-models rejects model_ids + models together → 400', bothBodies.status === 400, JSON.stringify(bothBodies.body));
+  const badEnrichment = await j(`/api/admin/providers/${prov.body.id}/import-models`, {
+    method: 'POST',
+    body: JSON.stringify({ models: [{ id: 'ok-slug', context_window: -5 }] }),
+  });
+  check('import-models validates enrichment fields → 400', badEnrichment.status === 400, JSON.stringify(badEnrichment.body));
+
   // -- model discovery for the UNSAVED add form -----------------------------
-  const preview = await j('/admin/providers/fetch-models', {
+  const preview = await j('/api/admin/providers/fetch-models', {
     method: 'POST',
     body: JSON.stringify({ adapters: ['openai'], base_url: `http://127.0.0.1:${mock.port}/v1`, api_key: 'sk-preview' }),
   });
@@ -620,7 +669,7 @@ const mock = await startMockUpstream();
     preview.status === 200 && (preview.body?.models ?? []).some((m) => m.id === 'mock-chat'),
     JSON.stringify(preview.body),
   );
-  const previewAnthropic = await j('/admin/providers/fetch-models', {
+  const previewAnthropic = await j('/api/admin/providers/fetch-models', {
     method: 'POST',
     body: JSON.stringify({ adapters: ['anthropic'], base_url: `http://127.0.0.1:${mock.port}` }),
   });
@@ -629,24 +678,28 @@ const mock = await startMockUpstream();
     previewAnthropic.status === 200 && lastReq.path.endsWith('/v1/models') && (previewAnthropic.body?.models ?? []).length === 4,
     JSON.stringify({ path: lastReq.path, body: previewAnthropic.body }),
   );
-  const previewBad = await j('/admin/providers/fetch-models', { method: 'POST', body: JSON.stringify({ base_url: 'not-a-url' }) });
+  const previewBad = await j('/api/admin/providers/fetch-models', { method: 'POST', body: JSON.stringify({ base_url: 'not-a-url' }) });
   check('fetch-models preview validates base_url → 400', previewBad.status === 400, JSON.stringify(previewBad.body));
 
-  // -- deployment settings (keyless-native default) ------------------------
-  const settingsOff = await j('/admin/settings');
+  // -- deployment settings (session 29: no keyless surface) -----------------
+  const settingsNow = await j('/api/admin/settings');
   check(
-    'GET /admin/settings → enforcement off by default (keyless-native)',
-    settingsOff.status === 200 && settingsOff.body?.client_key_enforcement === 'off',
-    JSON.stringify(settingsOff.body),
+    'GET /api/admin/settings → flags only, no keyless/enforcement fields',
+    settingsNow.status === 200 &&
+      settingsNow.body?.client_key_enforcement === undefined &&
+      settingsNow.body?.keyless_gate === undefined &&
+      settingsNow.body?.keyless_guest === undefined &&
+      settingsNow.body?.rate_limit_enabled !== undefined,
+    JSON.stringify(settingsNow.body),
   );
-  const settingsBad = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ client_key_enforcement: 'sometimes' }) });
-  check('PATCH /admin/settings rejects bad values → 400', settingsBad.status === 400, JSON.stringify(settingsBad.body));
+  const settingsBad = await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_key_rpm: 'lots' }) });
+  check('PATCH /api/admin/settings rejects bad values → 400', settingsBad.status === 400, JSON.stringify(settingsBad.body));
 
   // -- M7 client key: every /v1 call below authenticates with it -----------
-  const keyRes = await j('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Smoke Key (smoke)' }) });
+  const keyRes = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Smoke Key (smoke)' }) });
   check('create smoke client key', keyRes.status === 201 && typeof keyRes.body?.key === 'string' && keyRes.body.key.startsWith('khat-'), JSON.stringify({ ...keyRes.body, key: keyRes.body?.key?.slice(0, 9) + '…' }));
   apiKey = keyRes.body?.key ?? '';
-  check('key list hides raw key + shows prefix', (await j('/admin/api-keys')).body?.every((k) => !k.key && typeof k.key_prefix === 'string'), '');
+  check('key list hides raw key + shows prefix', (await j('/api/admin/api-keys')).body?.every((k) => !k.key && typeof k.key_prefix === 'string'), '');
 
   // -- GET /v1/models ------------------------------------------------------
   const models = await j('/v1/models');
@@ -1597,14 +1650,14 @@ const mock = await startMockUpstream();
   // ==================================================================
 
   // -- admin surfaces: test-connection + discovery speak gemini -------------
-  const gemTest = await j(`/admin/providers/${provGemini.body.id}/test`, { method: 'POST' });
+  const gemTest = await j(`/api/admin/providers/${provGemini.body.id}/test`, { method: 'POST' });
   check(
     'M12 test-connection probes /v1beta/models with x-goog-api-key',
     gemTest.status === 200 && gemTest.body?.ok === true && gemTest.body?.model_count === 2,
     JSON.stringify(gemTest.body),
   );
 
-  const gemFetched = await j(`/admin/providers/${provGemini.body.id}/fetch-models`, { method: 'POST' });
+  const gemFetched = await j(`/api/admin/providers/${provGemini.body.id}/fetch-models`, { method: 'POST' });
   const gemFetchedIds = (gemFetched.body?.models ?? []).map((m) => m.id);
   check(
     'M12 fetch-models normalizes the gemini listing (strips models/ prefix, skips non-generateContent)',
@@ -1612,7 +1665,7 @@ const mock = await startMockUpstream();
     JSON.stringify(gemFetched.body),
   );
 
-  const gemPreview = await j('/admin/providers/fetch-models', {
+  const gemPreview = await j('/api/admin/providers/fetch-models', {
     method: 'POST',
     body: JSON.stringify({ adapters: ['gemini'], base_url: `http://127.0.0.1:${mock.port}/v1beta`, api_key: 'sk-gemini-preview' }),
   });
@@ -1780,14 +1833,16 @@ const mock = await startMockUpstream();
   // ==================================================================
 
   // ==================================================================
-  // Keyless-native auth matrix (default mode: enforcement off).
+  // Strict-auth matrix (session 29): every /v1 request needs a valid key —
+  // no header, the old `anonymous` sentinel, unknown and disabled tokens
+  // all get a 401 in the path's dialect.
   // ==================================================================
 
   const modelsNoAuth = await fetch(base + '/v1/models').then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
   check(
-    'keyless: GET /v1/models with NO auth header → 200 model list',
-    modelsNoAuth.status === 200 && modelsNoAuth.body?.object === 'list' && Array.isArray(modelsNoAuth.body?.data),
-    `status=${modelsNoAuth.status} n=${modelsNoAuth.body?.data?.length}`,
+    'strict: GET /v1/models with NO auth header → 401 invalid_api_key',
+    modelsNoAuth.status === 401 && modelsNoAuth.body?.error?.code === 'invalid_api_key',
+    JSON.stringify(modelsNoAuth.body),
   );
 
   const chatNoAuthStream = await fetch(base + '/v1/chat/completions', {
@@ -1795,32 +1850,35 @@ const mock = await startMockUpstream();
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }], stream: true }),
   });
-  const chatNoAuthText = await chatNoAuthStream.text();
   check(
-    'keyless: chat with NO auth header → 200 SSE stream',
-    chatNoAuthStream.status === 200 && (chatNoAuthStream.headers.get('content-type') ?? '').includes('text/event-stream') && chatNoAuthText.includes('data: [DONE]') && chatNoAuthText.includes('Hello from the mock'),
-    `status=${chatNoAuthStream.status} ct=${chatNoAuthStream.headers.get('content-type')}`,
+    'strict: chat with NO auth header → 401 openai envelope',
+    chatNoAuthStream.status === 401 && (await chatNoAuthStream.text()).includes('invalid_api_key'),
+    String(chatNoAuthStream.status),
   );
 
   const chatBearerAnon = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), 'anonymous');
-  check('keyless: chat with `Authorization: Bearer anonymous` → 200 (sentinel ignored)', chatBearerAnon.status === 200, JSON.stringify(chatBearerAnon.body));
+  check('strict: chat with `Authorization: Bearer anonymous` → 401 (sentinel is not a key)', chatBearerAnon.status === 401, JSON.stringify(chatBearerAnon.body));
 
   const msgAnonKey = await fetch(base + '/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': 'anonymous' },
     body: JSON.stringify({ model: 'mock-claude', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }] }),
-  });
-  check('keyless: /v1/messages with `x-api-key: anonymous` → 200 (sentinel ignored)', msgAnonKey.status === 200, String(msgAnonKey.status));
+  }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  check(
+    'strict: /v1/messages with `x-api-key: anonymous` → 401 anthropic envelope',
+    msgAnonKey.status === 401 && msgAnonKey.body?.type === 'error' && msgAnonKey.body?.error?.type === 'authentication_error',
+    JSON.stringify(msgAnonKey.body),
+  );
 
   const msgBadKeyDefault = await fetch(base + '/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer khat-00000000000000000000000000000000' },
     body: JSON.stringify({ model: 'mock-claude', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }] }),
-  });
+  }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
   check(
-    'keyless: invalid khat- key → NOT rejected with 401 (rides anonymously; mock-claude has no fallback so upstream errors surface)',
-    msgBadKeyDefault.status !== 401,
-    `status=${msgBadKeyDefault.status} code=${msgBadKeyDefault.body?.error?.code ?? msgBadKeyDefault.body?.error?.type}`,
+    'strict: invalid khat- key → 401 (unknown tokens no longer ride anonymously)',
+    msgBadKeyDefault.status === 401,
+    String(msgBadKeyDefault.status),
   );
 
   const xApiKeyRes = await fetch(base + '/v1/messages', {
@@ -1831,7 +1889,7 @@ const mock = await startMockUpstream();
   check('M7 x-api-key header accepted (Anthropic SDK form)', xApiKeyRes.status === 200, String(xApiKeyRes.status));
 
   // -- per-key allow-lists + spend caps -------------------------------------
-  const restricted = await j('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Restricted (smoke)', allowed_models: ['mock-chat'] }) });
+  const restricted = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Restricted (smoke)', allowed_models: ['mock-chat'] }) });
   check(
     'M7 create allow-listed key',
     restricted.status === 201 && restricted.body?.key?.startsWith('khat-') && restricted.body?.allowed_models?.[0] === 'mock-chat',
@@ -1848,7 +1906,7 @@ const mock = await startMockUpstream();
   const permitted = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), restricted.body.key);
   check('M7 allow-listed key → allowed model 200', permitted.status === 200, JSON.stringify(permitted.body));
 
-  const capped = await j('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Capped (smoke)', spend_limit_usd: 0 }) });
+  const capped = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: 'Capped (smoke)', spend_limit_usd: 0 }) });
   const cappedReq = await fetchOrPost('/v1/responses', JSON.stringify({ model: 'mock-chat', input: 'hi' }), capped.body.key);
   check(
     'M7 spend-capped key (limit 0) → 429 insufficient_quota / spend_limit_exceeded',
@@ -1856,13 +1914,9 @@ const mock = await startMockUpstream();
     JSON.stringify(cappedReq.body),
   );
 
-  await j(`/admin/api-keys/${restricted.body.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: false }) });
+  await j(`/api/admin/api-keys/${restricted.body.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: false }) });
   const disabledReq = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), restricted.body.key);
-  check(
-    'M7 disabled key: enforcement off → rides anonymously (no 401); enforcement on → 401 (pinned above)',
-    disabledReq.status === 200,
-    String(disabledReq.status),
-  );
+  check('M7 disabled key → 401 (disabled keys are no longer anonymous riders)', disabledReq.status === 401, String(disabledReq.status));
 
   // -- request logs ----------------------------------------------------------
   // JSON pairing: usage parsed from the upstream body; no pricing → cost null.
@@ -2016,7 +2070,7 @@ const mock = await startMockUpstream();
   check('M7 log row: unknown model 404 logged', !!notFoundRow, JSON.stringify(notFoundRow));
 
   // -- key usage stats -------------------------------------------------------
-  const keysNow = await j('/admin/api-keys');
+  const keysNow = await j('/api/admin/api-keys');
   const smokeKey = (keysNow.body ?? []).find((k) => k.name === 'Smoke Key (smoke)');
   check(
     'M7 key stats: last_used_at + request_count reflect gateway traffic',
@@ -2025,72 +2079,22 @@ const mock = await startMockUpstream();
   );
 
   // -- log filters + clear -----------------------------------------------------
-  const err4xx = await j('/admin/logs?status=4xx&limit=500');
+  const err4xx = await j('/api/admin/logs?status=4xx&limit=500');
   check(
     'M7 logs filter status=4xx → only 4xx rows',
     Array.isArray(err4xx.body) && err4xx.body.length > 0 && err4xx.body.every((r) => r.status >= 400 && r.status < 500),
     `count=${err4xx.body?.length}`,
   );
-  const byKey = await j(`/admin/logs?api_key_id=${restricted.body.id}`);
+  const byKey = await j(`/api/admin/logs?api_key_id=${restricted.body.id}`);
   check(
     'M7 logs filter by key → only that key’s rows',
     Array.isArray(byKey.body) && byKey.body.length > 0 && byKey.body.every((r) => r.api_key_id === restricted.body.id),
     JSON.stringify(byKey.body?.[0]),
   );
 
-  const cleared = await j('/admin/logs', { method: 'DELETE' });
-  const afterClear = await j('/admin/logs');
-  check('M7 DELETE /admin/logs clears every row', cleared.status === 200 && Array.isArray(afterClear.body) && afterClear.body.length === 0, `after=${afterClear.body?.length}`);
-
-  // ==================================================================
-  // Enforcement mode: flip client_key_enforcement on, verify the strict
-  // M7 behavior, flip it back off (default) for a clean end state.
-  // ==================================================================
-
-  const enforceOn = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ client_key_enforcement: 'on' }) });
-  check('PATCH /admin/settings on → enforcement enabled', enforceOn.status === 200 && enforceOn.body?.client_key_enforcement === 'on', JSON.stringify(enforceOn.body));
-  // The enforcement flag is TTL-cached in the worker isolate (5 s); wait it out
-  // so the toggle is guaranteed visible regardless of isolate pooling.
-  await new Promise((r) => setTimeout(r, 5300));
-
-  const modelsEnforced = await fetch(base + '/v1/models').then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
-  check(
-    'enforced: /v1/models without key → 401 invalid_api_key',
-    modelsEnforced.status === 401 && modelsEnforced.body?.error?.code === 'invalid_api_key' && modelsEnforced.body?.error?.type === 'authentication_error',
-    JSON.stringify(modelsEnforced.body),
-  );
-
-  const chatAnonEnforced = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), 'anonymous');
-  check(
-    'enforced: Bearer anonymous → 401 (sentinel never validated against keys)',
-    chatAnonEnforced.status === 401 && chatAnonEnforced.body?.error?.code === 'invalid_api_key',
-    JSON.stringify(chatAnonEnforced.body),
-  );
-
-  const msgBadKeyEnforced = await fetch(base + '/v1/messages', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer khat-00000000000000000000000000000000' },
-    body: JSON.stringify({ model: 'mock-claude', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }] }),
-  }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
-  check(
-    'enforced: invalid khat- key → 401 anthropic envelope (authentication_error)',
-    msgBadKeyEnforced.status === 401 && msgBadKeyEnforced.body?.type === 'error' && msgBadKeyEnforced.body?.error?.type === 'authentication_error',
-    JSON.stringify(msgBadKeyEnforced.body),
-  );
-
-  const chatValidEnforced = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }));
-  check('enforced: valid khat- key still works → 200', chatValidEnforced.status === 200, String(chatValidEnforced.status));
-
-  const enforceOff = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ client_key_enforcement: 'off' }) });
-  check('PATCH /admin/settings off → back to keyless default', enforceOff.status === 200 && enforceOff.body?.client_key_enforcement === 'off', JSON.stringify(enforceOff.body));
-  await new Promise((r) => setTimeout(r, 5300)); // TTL convergence (see above)
-
-  const chatKeylessAgain = await fetch(base + '/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }),
-  }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
-  check('keyless again after toggle-back: no-auth chat → 200', chatKeylessAgain.status === 200, String(chatKeylessAgain.status));
+  const cleared = await j('/api/admin/logs', { method: 'DELETE' });
+  const afterClear = await j('/api/admin/logs');
+  check('M7 DELETE /api/admin/logs clears every row', cleared.status === 200 && Array.isArray(afterClear.body) && afterClear.body.length === 0, `after=${afterClear.body?.length}`);
 
   // ==================================================================
   // M17 — reasoning/thinking end-to-end: anthropic thinking param in/out,
@@ -2363,7 +2367,7 @@ const mock = await startMockUpstream();
   // Log row + attribution (log writes land in waitUntil after the response).
   // Logs list is newest-first; the x_title pins THE attributed call's row.
   await new Promise((r) => setTimeout(r, 400));
-  const m16logs = await j('/admin/logs?limit=200');
+  const m16logs = await j('/api/admin/logs?limit=200');
   const compLog = m16logs.body?.find((r) => r.dialect === 'completions' && r.x_title === 'SmokeApp');
   check(
     'M16 completions log row: dialect completions + usage + exact cost',
@@ -2430,12 +2434,12 @@ function unknownModelOk(r) {
   return r.status === 404 && r.body?.error?.code === 'model_not_found';
 }
 
-/** Polls /admin/logs until a row matching `predicate` appears (streamed usage lands asynchronously). */
+/** Polls /api/admin/logs until a row matching `predicate` appears (streamed usage lands asynchronously). */
 async function waitForLog(filter, predicate, timeoutMs = 6000) {
   const deadline = Date.now() + timeoutMs;
   const qs = new URLSearchParams(filter);
   while (Date.now() < deadline) {
-    const res = await j(`/admin/logs?${qs}`);
+    const res = await j(`/api/admin/logs?${qs}`);
     const hit = (res.body ?? []).find(predicate);
     if (hit) return hit;
     await new Promise((r) => setTimeout(r, 300));

@@ -3,8 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, Boxes, Building, KeyRound, LogOut, MessageSquare, ScrollText, Server, Settings as SettingsIcon, Users as UsersIcon, type LucideIcon } from 'lucide-react';
 import { api } from './api';
 import { portalApi } from './portal-api';
-import { navigate, useRoute, Link } from './router';
+import { navigate, replace, useRoute, Link } from './router';
 import { cn, Logo, Spinner } from './components/ui';
+import { Landing } from './pages/Landing';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
 import { Providers } from './pages/Providers';
@@ -20,18 +21,38 @@ import { PortalShell } from './pages/portal/PortalShell';
 import { PortalDashboard } from './pages/portal/PortalDashboard';
 import { PortalKeys } from './pages/portal/PortalKeys';
 import { PortalTeams } from './pages/portal/PortalTeams';
+import { PortalDevice } from './pages/portal/PortalDevice';
 
 const NAV: { to: string; label: string; icon: LucideIcon; soon?: string }[] = [
-  { to: '/', label: 'Overview', icon: Activity },
-  { to: '/providers', label: 'Providers', icon: Server },
-  { to: '/models', label: 'Models', icon: Boxes },
-  { to: '/playground', label: 'Playground', icon: MessageSquare },
-  { to: '/api-keys', label: 'API Keys', icon: KeyRound },
-  { to: '/users', label: 'Users', icon: UsersIcon },
-  { to: '/orgs', label: 'Organizations', icon: Building },
-  { to: '/logs', label: 'Logs', icon: ScrollText },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon },
+  { to: '/admin', label: 'Overview', icon: Activity },
+  { to: '/admin/providers', label: 'Providers', icon: Server },
+  { to: '/admin/models', label: 'Models', icon: Boxes },
+  { to: '/admin/playground', label: 'Playground', icon: MessageSquare },
+  { to: '/admin/api-keys', label: 'API Keys', icon: KeyRound },
+  { to: '/admin/users', label: 'Users', icon: UsersIcon },
+  { to: '/admin/orgs', label: 'Organizations', icon: Building },
+  { to: '/admin/logs', label: 'Logs', icon: ScrollText },
+  { to: '/admin/settings', label: 'Settings', icon: SettingsIcon },
 ];
+
+/** Pre-/admin bookmarks: root-level console paths redirect to their /admin homes. */
+const LEGACY_ROUTES: Record<string, string> = {
+  '/login': '/admin/login',
+  '/overview': '/admin',
+  '/providers': '/admin/providers',
+  '/models': '/admin/models',
+  '/playground': '/admin/playground',
+  '/api-keys': '/admin/api-keys',
+  '/users': '/admin/users',
+  '/orgs': '/admin/orgs',
+  '/logs': '/admin/logs',
+  '/settings': '/admin/settings',
+};
+
+function Redirect({ to }: { to: string }) {
+  useEffect(() => replace(to), [to]);
+  return null;
+}
 
 function Shell({ children, onLogout }: { children: ReactNode; onLogout: () => void }) {
   const path = useRoute();
@@ -95,14 +116,23 @@ function Portal() {
   const path = useRoute();
   const qc = useQueryClient();
 
+  /** Login target that remembers where the user was headed — the device
+   * verification link must survive the login round-trip. */
+  const loginWithNext = (p: string) => `/app/login?next=${encodeURIComponent(p + window.location.search)}`;
+
   useEffect(() => {
     const go = () => {
+      // Already on the login page: a background me() 401 fires here on every
+      // mount, and re-navigating would bury the page's own ?error=/?next=
+      // inside a nested next= (the OAuth failure + device-link params).
+      if (path === '/app/login') return;
       qc.clear();
-      navigate('/app/login');
+      navigate(loginWithNext(path));
     };
     window.addEventListener('khateway:portal-unauthorized', go);
     return () => window.removeEventListener('khateway:portal-unauthorized', go);
-  }, [qc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qc, path]);
 
   const me = useQuery({ queryKey: ['portal-me'], queryFn: portalApi.me, retry: false });
 
@@ -114,11 +144,12 @@ function Portal() {
       </div>
     );
   }
-  if (me.isError || !me.data) return <PortalLogin />;
+  if (me.isError || !me.data) return <Redirect to={loginWithNext(path === '/app/login' ? '/app' : path)} />;
 
   let page: ReactNode;
   if (path === '/app') page = <PortalDashboard />;
   else if (path === '/app/keys') page = <PortalKeys />;
+  else if (path === '/app/device') page = <PortalDevice />;
   else if (path === '/app/teams' || path.startsWith('/app/teams/')) page = <PortalTeams />;
   else
     page = (
@@ -136,29 +167,40 @@ export default function App() {
   useEffect(() => {
     const go = () => {
       qc.clear();
-      navigate('/login');
+      navigate('/admin/login');
     };
     window.addEventListener('khateway:unauthorized', go);
     return () => window.removeEventListener('khateway:unauthorized', go);
   }, [qc]);
 
-  if (path === '/login') return <Login />;
+  if (path === '/') return <Landing />;
   if (path === '/app' || path.startsWith('/app/')) return <Portal />;
+  if (LEGACY_ROUTES[path]) return <Redirect to={LEGACY_ROUTES[path]} />;
+  if (path === '/admin/login') return <Login />;
+
+  if (path !== '/admin' && !path.startsWith('/admin/'))
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-6 py-14 text-center text-sm text-zinc-400">
+          Page not found. <Link to="/" className="text-emerald-400 hover:underline">Back home</Link>
+        </div>
+      </div>
+    );
 
   let page: ReactNode;
-  if (path === '/') page = <Overview />;
-  else if (path === '/providers') page = <Providers />;
-  else if (path === '/models') page = <Models />;
-  else if (path === '/playground') page = <Playground />;
-  else if (path === '/api-keys') page = <ApiKeys />;
-  else if (path === '/users') page = <Users />;
-  else if (path === '/orgs') page = <Orgs />;
-  else if (path === '/logs') page = <Logs />;
-  else if (path === '/settings') page = <Settings />;
+  if (path === '/admin') page = <Overview />;
+  else if (path === '/admin/providers') page = <Providers />;
+  else if (path === '/admin/models') page = <Models />;
+  else if (path === '/admin/playground') page = <Playground />;
+  else if (path === '/admin/api-keys') page = <ApiKeys />;
+  else if (path === '/admin/users') page = <Users />;
+  else if (path === '/admin/orgs') page = <Orgs />;
+  else if (path === '/admin/logs') page = <Logs />;
+  else if (path === '/admin/settings') page = <Settings />;
   else
     page = (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-6 py-14 text-center text-sm text-zinc-400">
-        Page not found. <Link to="/" className="text-emerald-400 hover:underline">Back to overview</Link>
+        Page not found. <Link to="/admin" className="text-emerald-400 hover:underline">Back to overview</Link>
       </div>
     );
 
@@ -169,7 +211,7 @@ export default function App() {
       // ignore network errors during sign-out
     }
     qc.clear();
-    navigate('/login');
+    navigate('/admin/login');
   };
 
   return <Shell onLogout={logout}>{page}</Shell>;

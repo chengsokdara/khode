@@ -18,6 +18,8 @@
     "deploy": "npm run -s build:web && wrangler deploy",
     "smoke": "node scripts/smoke.mjs",
     "smoke:gateway": "node scripts/smoke_gateway.mjs",
+    "smoke:device": "node scripts/smoke_device.mjs",
+    "smoke:oauth": "node scripts/smoke_oauth.mjs",
     "smoke:m8": "node scripts/smoke_m8.mjs",
     "smoke:m9": "node scripts/smoke_m9.mjs",
     "smoke:m10": "node scripts/smoke_m10.mjs",

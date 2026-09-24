@@ -14,6 +14,12 @@ export function navigate(to: string): void {
   listeners.forEach((l) => l());
 }
 
+/** navigate() that replaces the history entry — for legacy-path redirects. */
+export function replace(to: string): void {
+  window.history.replaceState({}, '', to);
+  listeners.forEach((l) => l());
+}
+
 export function useRoute(): string {
   const [path, setPath] = useState(currentPath);
   useEffect(() => {

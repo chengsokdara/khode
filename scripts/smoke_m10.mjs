@@ -6,7 +6,7 @@
 // limit 3/min, one model with a global 4/min cap, one key with a 2/min
 // override. Every burst uses its OWN bucket (fresh key / model / anonymous-IP
 // phase ordering) so phases cannot interfere inside the shared 60s window:
-//   1. anonymous burst → IP bucket denies at 4, openai 429 envelope + Retry-After
+//   1. anonymous requests 401 at the auth middleware (no keyless since session 29)
 //   2. keyed burst → key bucket denies at 6; anthropic face gets the
 //      anthropic 429 envelope on an already-exhausted key
 //   3. per-key override (2/min) beats the 5/min default
@@ -95,10 +95,10 @@ async function deleteIfExists(path, listFilter) {
 }
 
 async function cleanup() {
-  for (const name of KEY_NAMES) await deleteIfExists('/admin/api-keys', (k) => k.name === name);
-  await deleteIfExists('/admin/models', (m) => [SLUG_A, SLUG_B].includes(m.slug));
-  await deleteIfExists('/admin/providers', (p) => p.name === PROVIDER_NAME);
-  await j('/admin/logs', { method: 'DELETE' });
+  for (const name of KEY_NAMES) await deleteIfExists('/api/admin/api-keys', (k) => k.name === name);
+  await deleteIfExists('/api/admin/models', (m) => [SLUG_A, SLUG_B].includes(m.slug));
+  await deleteIfExists('/api/admin/providers', (p) => p.name === PROVIDER_NAME);
+  await j('/api/admin/logs', { method: 'DELETE' });
 }
 
 const chat = async (slug, key, path = '/v1/chat/completions') => {
@@ -137,7 +137,7 @@ async function burst(n, fn) {
 
 (async () => {
   const mock = await startMockUpstream();
-  const login = await j('/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
+  const login = await j('/api/admin/login', { method: 'POST', body: JSON.stringify({ password: 'khateway-admin' }) });
   if (login.status !== 200) {
     fail('admin login (is `npm run dev` running on :8787?)', `status=${login.status}`);
     process.exitCode = 1;
@@ -145,32 +145,32 @@ async function burst(n, fn) {
   }
 
   await cleanup();
-  await j('/admin/logs', { method: 'DELETE' });
+  await j('/api/admin/logs', { method: 'DELETE' });
 
   // --- config: limits ON, tiny values, provider + models + keys -------------
-  const settings = await j('/admin/settings', {
+  const settings = await j('/api/admin/settings', {
     method: 'PATCH',
     body: JSON.stringify({ rate_limit_enabled: 'on', rate_limit_key_rpm: 5, rate_limit_ip_rpm: 3 }),
   });
   check('PATCH settings → limits on (key 5/min, ip 3/min)', settings.status === 200 && settings.body?.rate_limit_enabled === 'on' && settings.body?.rate_limit_key_rpm === 5 && settings.body?.rate_limit_ip_rpm === 3, JSON.stringify(settings.body));
 
-  const badSettings = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_key_rpm: 0 }) });
+  const badSettings = await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_key_rpm: 0 }) });
   check('PATCH settings rejects rpm < 1 → 400', badSettings.status === 400, JSON.stringify(badSettings.body));
 
-  const prov = await j('/admin/providers', {
+  const prov = await j('/api/admin/providers', {
     method: 'POST',
     body: JSON.stringify({ name: PROVIDER_NAME, adapter: 'openai', base_url: `http://127.0.0.1:${mock.port}/v1` }),
   });
   check('create smoke provider', prov.status === 201, JSON.stringify(prov.body));
-  const modelA = await j('/admin/models', { method: 'POST', body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG_A }) });
+  const modelA = await j('/api/admin/models', { method: 'POST', body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG_A }) });
   check('create uncapped model', modelA.status === 201 && modelA.body?.rate_limit_rpm === null);
-  const modelB = await j('/admin/models', { method: 'POST', body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG_B, rate_limit_rpm: 4 }) });
+  const modelB = await j('/api/admin/models', { method: 'POST', body: JSON.stringify({ provider_id: prov.body.id, slug: SLUG_B, rate_limit_rpm: 4 }) });
   check('create model with 4/min global cap', modelB.status === 201 && modelB.body?.rate_limit_rpm === 4);
 
   const keys = {};
   for (const name of KEY_NAMES) {
     const rpm = name.includes('override') ? 2 : null;
-    const created = await j('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name, rate_limit_rpm: rpm }) });
+    const created = await j('/api/admin/api-keys', { method: 'POST', body: JSON.stringify({ name, rate_limit_rpm: rpm }) });
     check(`create key "${name}"${rpm ? ' (override 2/min)' : ''}`, created.status === 201 && created.body?.rate_limit_rpm === rpm, JSON.stringify(created.body));
     keys[name] = created.body?.key;
   }
@@ -184,17 +184,13 @@ async function burst(n, fn) {
   // gateway isolate is guaranteed to serve the tiny limits configured above.
   await sleep(5_500);
 
-  // --- 1. anonymous → IP bucket --------------------------------------------
+  // --- 1. anonymous → 401 before any bucket ---------------------------------
+  // Session 29 removed keyless: an anonymous request is refused by the auth
+  // middleware and never reaches the rate limiter, so the per-IP bucket has
+  // no live keyless trigger any more (kept in the builder for completeness).
   {
-    const r = await burst(8, () => chat(SLUG_A, null));
-    // `allowed` can be 0 when a previous m10 run happened within this window
-    // (the IP bucket is keyed by address, and dev shares one) — the limit is
-    // what matters: at most 3 may pass.
-    check('anonymous burst 8: ip limit 3 → at most 3 allowed', r.allowed <= 3, `allowed=${r.allowed}`);
-    check('anonymous burst 8: the rest → 429', r.denied.length === 8 - r.allowed, `denied=${r.denied.length}`);
-    check('429 carries integer Retry-After ≥ 1s', r.lastDenied?.retryAfter != null && Number.isInteger(Number(r.lastDenied.retryAfter)) && Number(r.lastDenied.retryAfter) >= 1, `retry-after=${r.lastDenied?.retryAfter}`);
-    check('openai 429 envelope code rate_limit_exceeded', r.lastDenied?.body?.error?.code === 'rate_limit_exceeded' && r.lastDenied?.body?.error?.type === 'rate_limit_error', JSON.stringify(r.lastDenied?.body));
-    check('429 message names the IP bucket', String(r.lastDenied?.body?.error?.message ?? '').includes('IP address'), JSON.stringify(r.lastDenied?.body));
+    const r = await burst(3, () => chat(SLUG_A, null));
+    check('anonymous burst → every request 401 (no keyless, no bucket reach)', r.results.length === 3 && r.results.every((x) => x.status === 401), JSON.stringify(r.results[0]?.body).slice(0, 120));
   }
 
   // --- 2. keyed → key bucket (default 5/min) --------------------------------
@@ -248,19 +244,19 @@ async function burst(n, fn) {
 
   // --- 6. disabled bypasses every bucket -------------------------------------
   {
-    const off = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'off' }) });
+    const off = await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'off' }) });
     check('PATCH settings → limits off', off.status === 200 && off.body?.rate_limit_enabled === 'off');
     await sleep(5_500); // settings TTL
-    const r = await burst(8, () => chat(SLUG_A, null));
-    check('limits off: anonymous burst 8 → all 200 (stored ip counts ignored)', r.allowed === 8, `allowed=${r.allowed} first=${JSON.stringify(r.results[0]?.body).slice(0, 120)}`);
+    const r = await burst(8, () => chat(SLUG_A, keys[KEY_NAMES[0]]));
+    check('limits off: keyed burst 8 → all 200 (stored counts ignored)', r.allowed === 8, `allowed=${r.allowed} first=${JSON.stringify(r.results[0]?.body).slice(0, 120)}`);
   }
 
   // --- logs: 429s are recorded like any other outcome ------------------------
   {
-    const on = await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'on' }) });
+    const on = await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'on' }) });
     check('PATCH settings → limits back on', on.status === 200 && on.body?.rate_limit_enabled === 'on');
     await sleep(5_500);
-    const logs = await j('/admin/logs?limit=100');
+    const logs = await j('/api/admin/logs?limit=100');
     const rateLimited = (logs.body ?? []).filter((l) => l.status === 429 && [SLUG_A, SLUG_B].includes(l.model_slug));
     check('request_logs recorded the 429s with model attribution', rateLimited.length >= 3, `rows=${rateLimited.length}`);
     check('rate-limited log rows carry the error text', rateLimited.every((l) => typeof l.error === 'string' && l.error.includes('Rate limit exceeded')));
@@ -268,7 +264,7 @@ async function burst(n, fn) {
 
   // --- cleanup ----------------------------------------------------------------
   await cleanup();
-  await j('/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'off', rate_limit_key_rpm: 120, rate_limit_ip_rpm: 60 }) });
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ rate_limit_enabled: 'off', rate_limit_key_rpm: 120, rate_limit_ip_rpm: 60 }) });
   mock.server.close();
 
   console.log(`\n${passes.length} passed, ${failures} failed`);

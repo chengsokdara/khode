@@ -296,53 +296,10 @@ function SnippetsCard() {
 
 // ------------------------------------------------------------------ page
 
-/** Deployment-wide auth-mode card: keyless-native default vs enforced client keys. */
-function EnforcementCard() {
-  const qc = useQueryClient();
-  const sq = useQuery({ queryKey: ['settings'], queryFn: api.settings });
-  const enforced = sq.data?.client_key_enforcement === 'on';
-
-  const toggle = useMutation({
-    mutationFn: (on: boolean) => api.updateSettings({ client_key_enforcement: on ? 'on' : 'off' }),
-    onSuccess: (s) => {
-      qc.invalidateQueries({ queryKey: ['settings'] });
-      toast(s.client_key_enforcement === 'on' ? 'Client-key enforcement enabled' : 'Keyless access enabled');
-    },
-    onError: (e) => toast(e instanceof Error ? e.message : 'Update failed', 'err'),
-  });
-
-  return (
-    <Card className="mb-6 p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-sm font-medium text-zinc-300">Client-key enforcement</h2>
-          <p className="mt-1 max-w-2xl text-xs text-zinc-500">
-            {enforced ? (
-              <>
-                <span className="font-medium text-zinc-300">On —</span> every /v1 request needs a valid client key (khode
-                users set <code className="text-zinc-400">KHATEWAY_API_KEY</code>). Requests without one get 401.
-              </>
-            ) : (
-              <>
-                <span className="font-medium text-zinc-300">Off (default) —</span> keyless-native: clients can chat
-                without a key (khode's “anonymous” mode just works). Enrolled keys still get their spend caps,
-                allow-lists and log attribution.
-              </>
-            )}
-          </p>
-        </div>
-        <Switch checked={enforced} disabled={sq.isLoading || toggle.isPending} onChange={(v) => toggle.mutate(v)} />
-      </div>
-    </Card>
-  );
-}
-
 export function ApiKeys() {
   const qc = useQueryClient();
   const kq = useQuery({ queryKey: ['api-keys'], queryFn: api.apiKeys });
   const mq = useQuery({ queryKey: ['models', ''], queryFn: () => api.models(undefined) });
-  const sq = useQuery({ queryKey: ['settings'], queryFn: api.settings });
-  const sqData = sq.data;
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ApiKey | null | undefined>(undefined);
@@ -367,7 +324,6 @@ export function ApiKeys() {
   });
 
   const keys = kq.data ?? [];
-  const enforced = sqData?.client_key_enforcement === 'on';
   const modelSlugs = (mq.data ?? []).map((m) => m.slug);
 
   const actionBtns = (children: ReactNode) => <div className="inline-flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">{children}</div>;
@@ -385,8 +341,6 @@ export function ApiKeys() {
         }
       />
 
-      <EnforcementCard />
-
       {kq.isLoading ? (
         <div className="flex justify-center py-20">
           <Spinner />
@@ -396,11 +350,7 @@ export function ApiKeys() {
           <EmptyState
             icon={<KeyRound className="h-8 w-8" />}
             title="No API keys yet"
-            description={
-              enforced
-                ? 'Enforcement is on — create a key, then point any OpenAI or Anthropic SDK at this deployment with it.'
-                : 'Clients can already use the gateway without a key. Create one anyway to cap spend or restrict models.'
-            }
+            description="Create a key, then point any OpenAI or Anthropic SDK at this deployment with it — every /v1 request requires one." 
             action={
               <Button onClick={() => setCreating(true)}>
                 <Plus className="h-4 w-4" />

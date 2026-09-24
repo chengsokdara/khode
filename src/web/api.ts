@@ -159,8 +159,6 @@ export interface LogFilter {
 }
 
 export interface GatewaySettings {
-  /** 'off' (default) = keyless-native: anonymous /v1 traffic is served. 'on' = a valid client key is required. */
-  client_key_enforcement: 'on' | 'off';
   /** 'on' (default) = anonymous portal signups allowed. 'off' = existing accounts only. */
   public_signup: 'on' | 'off';
   /** M10 gateway rate limiting: 'on' (default) enforces per-key / per-IP /
@@ -207,6 +205,19 @@ export interface BillingConfigInfo {
   configured: boolean;
 }
 
+/** Social sign-in, per provider. Client ids are public and echoed in full;
+ * secrets only surface as `configured`/presence in the PATCH echo. */
+export interface OAuthProviderInfo {
+  configured: boolean;
+  client_id: string | null;
+  callback_url: string;
+}
+
+export interface OAuthSettingsInfo {
+  google: OAuthProviderInfo;
+  github: OAuthProviderInfo;
+}
+
 export interface CacheStats {
   entries: number;
   bytes: number;
@@ -251,39 +262,44 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  login: (password: string) => req<{ ok: boolean }>('/admin/login', { method: 'POST', body: JSON.stringify({ password }) }),
-  logout: () => req<{ ok: boolean }>('/admin/logout', { method: 'POST' }),
+  login: (password: string) => req<{ ok: boolean }>('/api/admin/login', { method: 'POST', body: JSON.stringify({ password }) }),
+  logout: () => req<{ ok: boolean }>('/api/admin/logout', { method: 'POST' }),
 
-  overview: () => req<Overview>('/admin/overview'),
-  providers: () => req<Provider[]>('/admin/providers'),
-  createProvider: (p: Record<string, unknown>) => req<Provider>('/admin/providers', { method: 'POST', body: JSON.stringify(p) }),
-  updateProvider: (id: string, p: Record<string, unknown>) => req<Provider>(`/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
-  deleteProvider: (id: string) => req<{ ok: boolean }>(`/admin/providers/${id}`, { method: 'DELETE' }),
-  testProvider: (id: string) => req<TestResult>(`/admin/providers/${id}/test`, { method: 'POST' }),
+  overview: () => req<Overview>('/api/admin/overview'),
+  providers: () => req<Provider[]>('/api/admin/providers'),
+  createProvider: (p: Record<string, unknown>) => req<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(p) }),
+  updateProvider: (id: string, p: Record<string, unknown>) => req<Provider>(`/api/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteProvider: (id: string) => req<{ ok: boolean }>(`/api/admin/providers/${id}`, { method: 'DELETE' }),
+  testProvider: (id: string) => req<TestResult>(`/api/admin/providers/${id}/test`, { method: 'POST' }),
   /** Model discovery for a saved provider (uses its stored key). */
   fetchProviderModels: (id: string) =>
-    req<{ models: UpstreamModel[] }>(`/admin/providers/${id}/fetch-models`, { method: 'POST' }),
-  /** Model discovery with unsaved form values (key used in-memory only). */
-  fetchModelsPreview: (p: Record<string, unknown>) =>
-    req<{ models: UpstreamModel[] }>('/admin/providers/fetch-models', { method: 'POST', body: JSON.stringify(p) }),
-  importModels: (id: string, modelIds: string[]) =>
-    req<ImportResult>(`/admin/providers/${id}/import-models`, {
+    req<{ models: UpstreamModel[] }>(`/api/admin/providers/${id}/fetch-models`, { method: 'POST' }),
+  /** Bulk import: sends the discovery picks with their metadata for enrichment. */
+  importModels: (id: string, models: UpstreamModel[]) =>
+    req<ImportResult>(`/api/admin/providers/${id}/import-models`, {
       method: 'POST',
-      body: JSON.stringify({ model_ids: modelIds }),
+      body: JSON.stringify({
+        models: models.map((m) => ({
+          id: m.id,
+          display_name: m.display_name,
+          context_window: m.context_window,
+          max_output_tokens: m.max_output_tokens,
+        })),
+      }),
     }),
 
   models: (providerId?: string) =>
-    req<ModelRow[]>(`/admin/models${providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ''}`),
-  createModel: (m: Record<string, unknown>) => req<ModelRow>('/admin/models', { method: 'POST', body: JSON.stringify(m) }),
-  updateModel: (id: string, m: Record<string, unknown>) => req<ModelRow>(`/admin/models/${id}`, { method: 'PATCH', body: JSON.stringify(m) }),
-  deleteModel: (id: string) => req<{ ok: boolean }>(`/admin/models/${id}`, { method: 'DELETE' }),
+    req<ModelRow[]>(`/api/admin/models${providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ''}`),
+  createModel: (m: Record<string, unknown>) => req<ModelRow>('/api/admin/models', { method: 'POST', body: JSON.stringify(m) }),
+  updateModel: (id: string, m: Record<string, unknown>) => req<ModelRow>(`/api/admin/models/${id}`, { method: 'PATCH', body: JSON.stringify(m) }),
+  deleteModel: (id: string) => req<{ ok: boolean }>(`/api/admin/models/${id}`, { method: 'DELETE' }),
 
-  apiKeys: () => req<ApiKey[]>('/admin/api-keys'),
-  settings: () => req<GatewaySettings>('/admin/settings'),
-  updateSettings: (s: Partial<GatewaySettings>) => req<GatewaySettings>('/admin/settings', { method: 'PATCH', body: JSON.stringify(s) }),
-  createApiKey: (k: Record<string, unknown>) => req<ApiKey>('/admin/api-keys', { method: 'POST', body: JSON.stringify(k) }),
-  updateApiKey: (id: string, k: Record<string, unknown>) => req<ApiKey>(`/admin/api-keys/${id}`, { method: 'PATCH', body: JSON.stringify(k) }),
-  deleteApiKey: (id: string) => req<{ ok: boolean }>(`/admin/api-keys/${id}`, { method: 'DELETE' }),
+  apiKeys: () => req<ApiKey[]>('/api/admin/api-keys'),
+  settings: () => req<GatewaySettings>('/api/admin/settings'),
+  updateSettings: (s: Partial<GatewaySettings>) => req<GatewaySettings>('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(s) }),
+  createApiKey: (k: Record<string, unknown>) => req<ApiKey>('/api/admin/api-keys', { method: 'POST', body: JSON.stringify(k) }),
+  updateApiKey: (id: string, k: Record<string, unknown>) => req<ApiKey>(`/api/admin/api-keys/${id}`, { method: 'PATCH', body: JSON.stringify(k) }),
+  deleteApiKey: (id: string) => req<{ ok: boolean }>(`/api/admin/api-keys/${id}`, { method: 'DELETE' }),
 
   logs: (f: LogFilter = {}) => {
     const p = new URLSearchParams();
@@ -294,20 +310,20 @@ export const api = {
     if (f.limit) p.set('limit', String(f.limit));
     if (f.offset) p.set('offset', String(f.offset));
     const qs = p.toString();
-    return req<LogRow[]>(`/admin/logs${qs ? `?${qs}` : ''}`);
+    return req<LogRow[]>(`/api/admin/logs${qs ? `?${qs}` : ''}`);
   },
-  clearLogs: () => req<{ ok: boolean }>('/admin/logs', { method: 'DELETE' }),
+  clearLogs: () => req<{ ok: boolean }>('/api/admin/logs', { method: 'DELETE' }),
 
   // M11 — semantic cache stats + flush
-  cacheStats: () => req<CacheStats>('/admin/cache'),
-  flushCache: () => req<{ ok: boolean; flushed: number }>('/admin/cache/flush', { method: 'POST' }),
+  cacheStats: () => req<CacheStats>('/api/admin/cache'),
+  flushCache: () => req<{ ok: boolean; flushed: number }>('/api/admin/cache/flush', { method: 'POST' }),
 
   // M14 — playground session key. Every mint rotates the session's key; the
   // inflight dedupe keeps React StrictMode's double-mount from minting twice
   // (both mounts must share one key, since mint #2 would revoke mint #1's).
   createPlaygroundKey: (): Promise<PlaygroundKey> => {
     if (!playgroundKeyInflight) {
-      playgroundKeyInflight = req<PlaygroundKey>('/admin/playground/key', { method: 'POST' }).finally(() => {
+      playgroundKeyInflight = req<PlaygroundKey>('/api/admin/playground/key', { method: 'POST' }).finally(() => {
         playgroundKeyInflight = null;
       });
     }
@@ -315,17 +331,20 @@ export const api = {
   },
 
   // M8 — portal accounts + MoR billing
-  users: () => req<PortalUserRow[]>('/admin/users'),
+  users: () => req<PortalUserRow[]>('/api/admin/users'),
   updateUser: (id: string, patch: Record<string, unknown>) =>
-    req<PortalUserRow>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  deleteUser: (id: string) => req<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE' }),
-  billingConfig: () => req<BillingConfigInfo>('/admin/billing/config'),
+    req<PortalUserRow>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteUser: (id: string) => req<{ ok: boolean }>(`/api/admin/users/${id}`, { method: 'DELETE' }),
+  billingConfig: () => req<BillingConfigInfo>('/api/admin/billing/config'),
   updateBillingConfig: (patch: Record<string, unknown>) =>
-    req<BillingConfigInfo>('/admin/billing/config', { method: 'PATCH', body: JSON.stringify(patch) }),
+    req<BillingConfigInfo>('/api/admin/billing/config', { method: 'PATCH', body: JSON.stringify(patch) }),
+  oauthSettings: () => req<OAuthSettingsInfo>('/api/admin/settings/oauth'),
+  updateOauthSettings: (patch: Record<string, unknown>) =>
+    req<OAuthSettingsInfo>('/api/admin/settings/oauth', { method: 'PATCH', body: JSON.stringify(patch) }),
 
   // M9 — orgs / teams (admin is global: sees and manages every org)
-  orgs: () => req<OrgRow[]>('/admin/orgs'),
+  orgs: () => req<OrgRow[]>('/api/admin/orgs'),
   updateOrg: (id: string, patch: Record<string, unknown>) =>
-    req<OrgRow>(`/admin/orgs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  deleteOrg: (id: string) => req<{ ok: boolean }>(`/admin/orgs/${id}`, { method: 'DELETE' }),
+    req<OrgRow>(`/api/admin/orgs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteOrg: (id: string) => req<{ ok: boolean }>(`/api/admin/orgs/${id}`, { method: 'DELETE' }),
 };
