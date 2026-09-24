@@ -125,7 +125,7 @@ describe('loginAllowed through the DO (P2 — cross-isolate login buckets)', () 
   }
 
   it('counts per surface + IP in a fixed window and denies past the limit', async () => {
-    const env = fakeEnv(makeDo().check ? new RateLimiterDO({ storage: { sql: new FakeSql() } } as unknown as DurableObjectState, {}) : undefined);
+    const env = fakeEnv(new RateLimiterDO({ storage: { sql: new FakeSql() } } as unknown as DurableObjectState, {}));
     const results = [];
     for (let i = 0; i < 12; i++) results.push(await loginAllowed(env, 'admin', '1.2.3.4'));
     expect(results.filter(Boolean).length).toBe(10);

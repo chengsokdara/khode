@@ -93,6 +93,7 @@ async function cleanup() {
 
 const lastReq = { path: '', headers: {}, body: {} };
 let lastGemThinking = null; // M17: last generationConfig.thinkingConfig seen by the gemini face
+let flakyHits = 0; // P3: first flaky-429 hit answers 429, the retry succeeds
 
 function startMockUpstream() {
   const server = http.createServer((req, res) => {
@@ -174,7 +175,7 @@ function startMockUpstream() {
           );
         }
         if (model === 'claude-429') {
-          res.writeHead(429, { 'content-type': 'application/json' });
+          res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '30' });
           return res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Slow down' } }));
         }
         if (model === 'claude-tools') {
@@ -319,6 +320,15 @@ function startMockUpstream() {
       if (!url.endsWith('/chat/completions')) {
         res.writeHead(404, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ error: { message: `mock upstream: no such path ${url}` } }));
+      }
+      if (model === 'flaky-429') {
+        // P3: transient 429 (Retry-After 1) on the first try, success on the retry.
+        flakyHits++;
+        if (flakyHits === 1) {
+          res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+          return res.end(JSON.stringify({ error: { message: 'blip' } }));
+        }
+        // falls through to the generic completion below
       }
       if (model === 'mock-429') {
         res.writeHead(429, { 'content-type': 'application/json' });
@@ -514,6 +524,7 @@ const mock = await startMockUpstream();
   for (const [slug, upstream, provId, fallbacks] of [
     ['mock-chat', 'mock-chat', prov.body.id],
     ['mock-chat-429', 'mock-429', prov.body.id],
+    ['mock-flaky', 'flaky-429', prov.body.id],
     ['mock-chat-401', 'mock-401', prov.body.id],
     ['mock-chat-500', 'mock-500', prov.body.id],
     ['mock-chat-500t', 'mock-500-text', prov.body.id],
@@ -909,6 +920,11 @@ const mock = await startMockUpstream();
     'messages → anthropic upstream 429 kept in anthropic envelope',
     anthAnth429.status === 429 && anthAnth429.body?.type === 'error' && anthAnth429.body?.error?.type === 'rate_limit_error' && anthAnth429.body?.error?.message === 'Slow down',
     JSON.stringify(anthAnth429.body),
+  );
+  check(
+    'P3 chain-exhausted 429 relays the upstream Retry-After',
+    anthAnth429.headers.get('retry-after') === '30',
+    JSON.stringify({ retryAfter: anthAnth429.headers?.get('retry-after') }),
   );
 
   // -- anthropic client → openai upstream (request + response translation) --
@@ -1584,31 +1600,43 @@ const mock = await startMockUpstream();
 
   const fb500 = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-fb-500', messages: [{ role: 'user', content: 'hi' }] }));
   check(
-    'M6 fallback: upstream 500 → falls through to mock-chat → 200 (attempts 2)',
+    'M6 fallback: upstream 500 → one same-upstream retry → falls through to mock-chat → 200 (attempts 3)',
     fb500.status === 200 && fb500.body?.choices?.[0]?.message?.content === 'Hello from the mock upstream!'
       && fb500.headers.get('x-khateway-provider') === 'Khateway Mock (smoke)'
-      && fb500.headers.get('x-khateway-attempts') === '2',
+      && fb500.headers.get('x-khateway-attempts') === '3',
     JSON.stringify(fb500.body),
   );
 
   const fb429 = await fetchOrPost('/v1/responses', JSON.stringify({ model: 'mock-fb-429', input: 'hi' }));
   check(
-    'M6 fallback: upstream 429 → falls through (responses dialect) → 200 attempts 2',
-    fb429.status === 200 && fb429.body?.object === 'response' && fb429.headers.get('x-khateway-attempts') === '2',
+    'M6 fallback: upstream 429 → one retry → falls through (responses dialect) → 200 attempts 3',
+    fb429.status === 200 && fb429.body?.object === 'response' && fb429.headers.get('x-khateway-attempts') === '3',
     JSON.stringify(fb429.body),
   );
 
   const fbAnth = await fetchOrPost('/v1/messages', JSON.stringify({ model: 'mock-fb-anthropic', max_tokens: 32, messages: [{ role: 'user', content: 'hi' }] }));
   check(
-    'M6 fallback: cross-adapter (anthropic 429 → openai provider) → 200 attempts 2',
+    'M6 fallback: cross-adapter (anthropic 429, Retry-After > cap → no same-retry) → 200 attempts 2',
     fbAnth.status === 200 && fbAnth.body?.type === 'message' && fbAnth.headers.get('x-khateway-attempts') === '2',
     JSON.stringify(fbAnth.body),
   );
 
+  // P3: a transient 429 (Retry-After 1) is absorbed by ONE same-upstream
+  // retry — the fallback provider is never touched.
+  const flakyT0 = Date.now();
+  const flakyRes = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-flaky', messages: [{ role: 'user', content: 'hi' }] }));
+  check(
+    'P3 same-upstream retry: 429 (Retry-After 1) → retry succeeds → 200 attempts 2, ~1s waited',
+    flakyRes.status === 200 && flakyRes.headers.get('x-khateway-attempts') === '2'
+      && flakyRes.headers.get('x-khateway-provider') === 'Khateway Mock (smoke)'
+      && Date.now() - flakyT0 >= 1000,
+    JSON.stringify({ status: flakyRes.status, attempts: flakyRes.headers?.get('x-khateway-attempts'), ms: Date.now() - flakyT0 }),
+  );
+
   const fbDead = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-fb-dead', messages: [{ role: 'user', content: 'hi' }] }));
   check(
-    'M6 fallback: dead fallback entry skipped → last upstream 500 surfaced',
-    fbDead.status === 500 && fbDead.body?.error?.type === 'api_error' && fbDead.headers.get('x-khateway-attempts') === '1',
+    'M6 fallback: dead fallback entry skipped → one retry, then last upstream 500 surfaced',
+    fbDead.status === 500 && fbDead.body?.error?.type === 'api_error' && fbDead.headers.get('x-khateway-attempts') === '2',
     JSON.stringify(fbDead.body),
   );
 
@@ -1823,8 +1851,8 @@ const mock = await startMockUpstream();
 
   const gem429 = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-gemini-429', messages: [{ role: 'user', content: 'hi' }] }));
   check(
-    'M12 gemini 429 RESOURCE_EXHAUSTED → rate_limit_error (chain-exhausted mapping)',
-    gem429.status === 429 && gem429.body?.error?.type === 'rate_limit_error' && gem429.body?.error?.message === 'Resource exhausted.' && gem429.headers.get('x-khateway-attempts') === '1',
+    'M12 gemini 429 RESOURCE_EXHAUSTED → rate_limit_error (one retry, chain-exhausted mapping)',
+    gem429.status === 429 && gem429.body?.error?.type === 'rate_limit_error' && gem429.body?.error?.message === 'Resource exhausted.' && gem429.headers.get('x-khateway-attempts') === '2',
     JSON.stringify(gem429.body),
   );
 
@@ -2043,8 +2071,8 @@ const mock = await startMockUpstream();
   // Fallback chain: 429 on the primary embeddings upstream → fallback serves.
   const embFb = await fetchOrPost('/v1/embeddings', JSON.stringify({ model: 'mock-emb-fb', input: 'retry me' }));
   check(
-    'M13: embeddings fallback chain — 429 primary → fallback serves, attempts=2',
-    embFb.status === 200 && embFb.headers?.get('x-khateway-attempts') === '2' && embFb.body?.usage?.prompt_tokens === 3,
+    'M13: embeddings fallback chain — 429 primary → one retry → fallback serves, attempts=3',
+    embFb.status === 200 && embFb.headers?.get('x-khateway-attempts') === '3' && embFb.body?.usage?.prompt_tokens === 3,
     JSON.stringify({ status: embFb.status, attempts: embFb.headers?.get('x-khateway-attempts') }),
   );
 

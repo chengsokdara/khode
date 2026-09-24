@@ -68,6 +68,7 @@ import type { RateLimitDecision } from '../ratelimit/do';
 import { buildCacheKey, evaluateCacheEligibility } from '../cache/key';
 import { lookupCacheEntry, storeCacheEntry } from '../cache/store';
 import { invokeUpstream, UpstreamMisconfigError, UnsupportedTranslationError, type UpstreamOutcome, type UpstreamRequest } from '../adapters/base';
+import { retryDecision, sleep } from '../backoff';
 import { buildOpenAiChatRequest, buildOpenAiEmbeddingsRequest } from '../adapters/openai';
 import { buildAnthropicMessagesRequest } from '../adapters/anthropic';
 import { buildGeminiEmbeddingsRequest, buildGeminiGenerateContentRequest } from '../adapters/gemini';
@@ -1015,11 +1016,13 @@ async function chatPipeline(
     // Last failure of each kind wins when the chain is exhausted.
     let lastTimeout: { provider: string; timeoutMs: number } | null = null;
     let lastNetwork: { provider: string; message: string } | null = null;
-    let lastUpstreamError: { status: number; raw: string; meta: ChatMeta } | null = null;
+    let lastUpstreamError: { status: number; raw: string; retryAfter: string | null; meta: ChatMeta } | null = null;
     let lastBuildError: unknown = null;
+    // P3: wall-clock already spent waiting between retries (shared budget).
+    let totalWaitedMs = 0;
 
     let attempts = 0;
-    for (const cand of chain) {
+    chatAdapterLoop: for (const cand of chain) {
       // Providers declare the upstream dialects they speak (≥1 — admin CRUD
       // validates). A dual-adapter provider tries its preferred adapter first
       // and can serve the same request through the other one on translation
@@ -1036,8 +1039,13 @@ async function chatPipeline(
       }
       const adapterOrder: UpstreamAdapter[] = [preferredAdapter(dialect, usable), ...usable.filter((a) => a !== preferredAdapter(dialect, usable))];
 
-      for (const upstream of adapterOrder) {
-        attempts++;
+      // P3: a transient upstream failure (429/5xx) retries THIS upstream once
+      // after a budgeted wait before the chain falls through.
+      adapterRetry: for (const upstream of adapterOrder) {
+        let triesOnUpstream = 0;
+        while (true) {
+          triesOnUpstream++;
+          attempts++;
         const meta: ChatMeta = {
           requested: parsed.model,
           candidate: cand,
@@ -1069,30 +1077,40 @@ async function chatPipeline(
             // This adapter cannot express the request (e.g. n>1 on Messages).
             // Dual-adapter providers get retried through their other dialect.
             lastBuildError = err;
-            continue;
+            continue adapterRetry;
           }
           if (err instanceof UpstreamMisconfigError) {
             // Credentials/config are adapter-independent — skip the provider.
             lastBuildError = err;
-            break;
+            continue chatAdapterLoop;
           }
           throw err;
         }
 
         if (outcome.kind === 'timeout') {
           lastTimeout = { provider: cand.provider.name, timeoutMs: built.timeoutMs };
-          break;
+          continue chatAdapterLoop;
         }
         if (outcome.kind === 'network') {
           lastNetwork = { provider: cand.provider.name, message: outcome.message };
-          break;
+          continue chatAdapterLoop;
         }
 
         if (outcome.res.status >= 500 || outcome.res.status === 429) {
-          // Retryable upstream failure — remember it (small body) and fall through.
+          // Retryable upstream failure — remember it (small body); retry THIS
+          // upstream once after a budgeted wait (P3), else fall through.
           const raw = await outcome.res.text().catch(() => '');
-          lastUpstreamError = { status: outcome.res.status, raw, meta };
-          break;
+          const retryAfter = outcome.res.headers.get('retry-after');
+          lastUpstreamError = { status: outcome.res.status, raw, retryAfter, meta };
+          if (triesOnUpstream < 2) {
+            const decision = retryDecision({ status: outcome.res.status, retryAfterHeader: retryAfter, attempt: triesOnUpstream - 1, totalWaitedMs });
+            if (decision.retrySame) {
+              if (decision.waitMs > 0) await sleep(decision.waitMs);
+              totalWaitedMs += decision.waitMs;
+              continue;
+            }
+          }
+          continue chatAdapterLoop;
         }
 
         if (outcome.res.status >= 400) {
@@ -1124,6 +1142,7 @@ async function chatPipeline(
           }
         }
         return await respondTranslated(outcome.res, meta, draft);
+        }
       }
     }
 
@@ -1134,7 +1153,11 @@ async function chatPipeline(
         dialect,
         lastUpstreamError.status,
         upstreamErrorBody(dialect, lastUpstreamError.meta.upstream, lastUpstreamError.status, lastUpstreamError.raw),
-        khatewayHeaders(lastUpstreamError.meta),
+        // P3: a chain-exhausted 429 relays the upstream's own Retry-After.
+        {
+          ...khatewayHeaders(lastUpstreamError.meta),
+          ...(lastUpstreamError.status === 429 && lastUpstreamError.retryAfter ? { 'retry-after': lastUpstreamError.retryAfter } : {}),
+        },
       );
     }
     if (lastTimeout) {
@@ -1327,11 +1350,12 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
     // mapping as the chat pipeline).
     let lastTimeout: { provider: string; timeoutMs: number } | null = null;
     let lastNetwork: { provider: string; message: string } | null = null;
-    let lastUpstreamError: { status: number; raw: string; meta: ChatMeta } | null = null;
+    let lastUpstreamError: { status: number; raw: string; retryAfter: string | null; meta: ChatMeta } | null = null;
     let lastBuildError: UpstreamMisconfigError | null = null;
 
     let attempts = 0;
-    for (const cand of chain) {
+    let totalWaitedMs = 0; // P3: shared between-retry wait budget
+    embedAdapterLoop: for (const cand of chain) {
       // Embeddings-capable upstream adapters: openai-compatible (POST
       // /embeddings) and native Gemini (:embedContent / :batchEmbedContents).
       const usable = cand.provider.adapters.filter((a): a is 'openai' | 'gemini' => a === 'openai' || a === 'gemini');
@@ -1353,17 +1377,21 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
         ? ['openai', ...usable.filter((a) => a !== 'openai')]
         : usable;
 
-      for (const upstream of adapterOrder) {
-        attempts++;
-        const meta: ChatMeta = {
-          requested: parsed.model,
-          candidate: cand,
-          latencyMs: Date.now() - t0,
-          dialect,
-          upstream,
-          attempts,
-          rateHeaders,
-        };
+      embedRetry: for (const upstream of adapterOrder) {
+        // P3: one budgeted same-upstream retry for transient failures.
+        let triesOnUpstream = 0;
+        while (true) {
+          triesOnUpstream++;
+          attempts++;
+          const meta: ChatMeta = {
+            requested: parsed.model,
+            candidate: cand,
+            latencyMs: Date.now() - t0,
+            dialect,
+            upstream,
+            attempts,
+            rateHeaders,
+          };
         // The last candidate tried owns the log row (matches the last-failure-wins mapping).
         draft.providerId = cand.provider.id;
         draft.upstreamModel = cand.model.upstreamModel;
@@ -1382,25 +1410,35 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
           if (err instanceof UpstreamMisconfigError) {
             // Credentials/config are adapter-independent — skip the provider.
             lastBuildError = err;
-            break;
+            continue embedAdapterLoop;
           }
           throw err;
         }
 
         if (outcome.kind === 'timeout') {
           lastTimeout = { provider: cand.provider.name, timeoutMs: built.timeoutMs };
-          break;
+          continue embedAdapterLoop;
         }
         if (outcome.kind === 'network') {
           lastNetwork = { provider: cand.provider.name, message: outcome.message };
-          break;
+          continue embedAdapterLoop;
         }
 
         if (outcome.res.status >= 500 || outcome.res.status === 429) {
-          // Retryable upstream failure — remember it (small body) and fall through.
+          // Retryable upstream failure — remember it (small body); retry THIS
+          // upstream once after a budgeted wait (P3), else fall through.
           const raw = await outcome.res.text().catch(() => '');
-          lastUpstreamError = { status: outcome.res.status, raw, meta };
-          break;
+          const retryAfter = outcome.res.headers.get('retry-after');
+          lastUpstreamError = { status: outcome.res.status, raw, retryAfter, meta };
+          if (triesOnUpstream < 2) {
+            const decision = retryDecision({ status: outcome.res.status, retryAfterHeader: retryAfter, attempt: triesOnUpstream - 1, totalWaitedMs });
+            if (decision.retrySame) {
+              if (decision.waitMs > 0) await sleep(decision.waitMs);
+              totalWaitedMs += decision.waitMs;
+              continue;
+            }
+          }
+          continue embedAdapterLoop;
         }
 
         if (outcome.res.status >= 400) {
@@ -1435,6 +1473,7 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
         // branch for the JSON usage watcher (tokens + cost land after the
         // client-facing response has been returned, exactly like chat).
         return passthrough(outcome.res, meta, draft);
+        }
       }
     }
 
@@ -1445,7 +1484,11 @@ async function embeddingsPipeline(c: Context<GatewayEnv>, draft: LogDraft, t0: n
         dialect,
         lastUpstreamError.status,
         upstreamErrorBody(dialect, lastUpstreamError.meta.upstream, lastUpstreamError.status, lastUpstreamError.raw),
-        khatewayHeaders(lastUpstreamError.meta),
+        // P3: a chain-exhausted 429 relays the upstream's own Retry-After.
+        {
+          ...khatewayHeaders(lastUpstreamError.meta),
+          ...(lastUpstreamError.status === 429 && lastUpstreamError.retryAfter ? { 'retry-after': lastUpstreamError.retryAfter } : {}),
+        },
       );
     }
     if (lastTimeout) {
