@@ -6,7 +6,7 @@
 // all three dialect parsers — they normalize each dialect's wire shape onto
 // the canonical form (src/worker/canonical.ts).
 
-import type { CanonicalImage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
+import type { CanonicalCacheControl, CanonicalImage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
 
 export type OptResult = { err?: string; val?: number | null };
 
@@ -140,6 +140,22 @@ export function boolOption(v: unknown, param: string): { err?: string; val?: boo
 // ------------------------------------------------------------------- tools
 
 /**
+ * P1: anthropic `cache_control` block marker → canonical. Accepts
+ * `{type:'ephemeral'}` with an optional `ttl` ('5m' default | '1h'); unknown
+ * ttl values are rejected so a typo never silently loses caching. Absent/null
+ * → undefined (no marker).
+ */
+export function cacheControlOption(v: unknown, param: string): { err?: string; val?: CanonicalCacheControl } {
+  if (v === undefined || v === null) return {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { err: `${param} must be an object like {type: "ephemeral"}` };
+  const c = v as Record<string, unknown>;
+  if (c.type !== 'ephemeral') return { err: `${param}.type must be 'ephemeral'` };
+  if (c.ttl === undefined || c.ttl === null) return { val: { type: 'ephemeral' } };
+  if (c.ttl !== '5m' && c.ttl !== '1h') return { err: `${param}.ttl must be '5m' or '1h'` };
+  return { val: { type: 'ephemeral', ttl: c.ttl } };
+}
+
+/**
  * Client-declared tools → canonical defs, per source dialect:
  * - `openai`: `[{type:'function', function:{name, description?, parameters?}}]`
  * - `anthropic`: `[{name, description?, input_schema}]`
@@ -172,10 +188,14 @@ export function toolDefsOption(
       if (!t.input_schema || typeof t.input_schema !== 'object' || Array.isArray(t.input_schema)) {
         return { err: `tools[${i}].input_schema must be a JSON schema object` };
       }
+      // P1: anthropic tool defs can carry a prompt-cache marker.
+      const cc = cacheControlOption(t.cache_control, `tools[${i}].cache_control`);
+      if (cc.err) return { err: cc.err };
       defs.push({
         name: t.name,
         ...(typeof t.description === 'string' ? { description: t.description } : {}),
         parameters: t.input_schema,
+        ...(cc.val ? { cacheControl: cc.val } : {}),
       });
       continue;
     }

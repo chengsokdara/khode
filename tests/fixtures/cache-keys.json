@@ -1,6 +1,6 @@
 [
   {
-    "name": "plain text request → stable JSON: sorted keys, explicit nulls, no stream keys",
+    "name": "plain text request \u2192 stable JSON: sorted keys, explicit nulls, no stream keys",
     "request": {
       "messages": [
         {
@@ -19,7 +19,7 @@
     "expectedStableJson": "{\"extras\":{},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
   },
   {
-    "name": "property-order permutation → identical stable JSON (same cache key)",
+    "name": "property-order permutation \u2192 identical stable JSON (same cache key)",
     "request": {
       "extras": {
         "b": 2,
@@ -41,7 +41,7 @@
     "expectedStableJson": "{\"extras\":{\"a\":1,\"b\":2},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
   },
   {
-    "name": "stream/streamIncludeUsage excluded → same projection as the non-streaming case",
+    "name": "stream/streamIncludeUsage excluded \u2192 same projection as the non-streaming case",
     "request": {
       "messages": [
         {
@@ -169,5 +169,27 @@
     },
     "modelSlug": "gpt-5",
     "expectedStableJson": "{\"extras\":{},\"messages\":[{\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":null,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"reasoning\":{\"effort\":\"low\"},\"responseFormat\":{\"type\":\"json_object\"},\"v\":1}"
+  },
+  {
+    "name": "P1: cacheControl rides the projection only when present",
+    "request": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hello",
+          "cacheControl": {
+            "type": "ephemeral"
+          },
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {
+        "temperature": 0.7
+      },
+      "extras": {}
+    },
+    "modelSlug": "gpt-5",
+    "expectedStableJson": "{\"extras\":{},\"messages\":[{\"cacheControl\":{\"type\":\"ephemeral\"},\"content\":\"Hello\",\"extra\":{},\"images\":null,\"role\":\"user\",\"toolCallId\":null,\"toolCalls\":null}],\"model\":\"gpt-5\",\"options\":{\"maxTokens\":null,\"maxTokensField\":null,\"n\":null,\"parallelToolCalls\":null,\"stop\":null,\"temperature\":0.7,\"toolChoice\":null,\"tools\":null,\"topP\":null},\"v\":1}"
   }
 ]

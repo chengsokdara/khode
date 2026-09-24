@@ -49,6 +49,9 @@ export function cacheKeyInput(request: CanonicalChatRequest, modelSlug: string):
       toolCalls: m.toolCalls ?? null,
       toolCallId: m.toolCallId ?? null,
       extra: m.extra,
+      // P1: rides ONLY when present — an unconditional null field would
+      // invalidate every pre-P1 entry (same rule as reasoning/responseFormat).
+      ...(m.cacheControl ? { cacheControl: m.cacheControl } : {}),
     })),
     options: {
       temperature: request.options.temperature ?? null,

@@ -47,6 +47,8 @@ export interface CanonicalMessage {
    * with signature; dropped for openai/gemini histories — reasoning is never
    * required to continue a conversation). */
   reasoning?: CanonicalReasoningContent;
+  /** P1: anthropic prompt-cache marker folded from the message's content blocks (see CanonicalCacheControl). */
+  cacheControl?: CanonicalCacheControl;
   /** Per-message client fields Khateway does not interpret (e.g. `name`); kept for passthrough. */
   extra: Record<string, unknown>;
 }
@@ -59,6 +61,22 @@ export interface CanonicalReasoningContent {
   signature?: string;
   /** Anthropic redacted_thinking data — preserved verbatim, only re-emitted to anthropic. */
   redacted?: string;
+}
+
+/**
+ * P1: Anthropic prompt-caching marker, parsed from `cache_control` on
+ * anthropic content blocks / system blocks / tool definitions. Anthropic marks
+ * a cache breakpoint PER BLOCK while Khateway folds multi-part text into one
+ * string per message — so the flag folds to the message level (last marked
+ * block wins, the documented "mark the last block" convention). Re-emitted on
+ * the anthropic wire (text block, or the turn's last block when there is no
+ * text; tool_result blocks; tool defs; system blocks); openai/gemini adapters
+ * drop it (their caching is implicit/automatic, no client control).
+ */
+export interface CanonicalCacheControl {
+  type: 'ephemeral';
+  /** Anthropic cache TTL; absent = the 5-minute default. */
+  ttl?: '5m' | '1h';
 }
 
 /**
@@ -79,6 +97,8 @@ export interface CanonicalToolDef {
   description?: string;
   /** JSON Schema object describing the arguments (openai `parameters` / anthropic `input_schema`). */
   parameters?: unknown;
+  /** P1: anthropic prompt-cache marker on the tool definition (anthropic dialect only). */
+  cacheControl?: CanonicalCacheControl;
 }
 
 /** openai `tool_choice` / anthropic `tool_choice` / responses `tool_choice`, normalized. */

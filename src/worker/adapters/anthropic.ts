@@ -12,7 +12,7 @@
 // Response/SSE translation back into client dialects lives in dialects/*.
 import type { Env } from '../env';
 import { joinAdapterUrl } from '../env';
-import type { CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolChoice } from '../canonical';
+import type { CanonicalCacheControl, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolChoice } from '../canonical';
 import type { RoutingCandidate } from '../routing';
 import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
 import { EFFORT_BUDGETS } from '../dialects/options';
@@ -58,14 +58,22 @@ interface Turn {
   blocks: AnthropicBlock[];
 }
 
+/** Folded system text + whether the source block asked for prompt caching (P1). */
+interface SystemPart {
+  text: string;
+  cacheControl?: CanonicalCacheControl;
+}
+
 /** Canonical message → turn blocks (or system folds). Tool results become user turns. */
-function turnFor(m: CanonicalMessage, system: string[]): Turn | null {
+function turnFor(m: CanonicalMessage, system: SystemPart[]): Turn | null {
   if (m.role === 'system' || m.role === 'developer') {
-    if (m.content) system.push(m.content);
+    if (m.content) system.push({ text: m.content, ...(m.cacheControl ? { cacheControl: m.cacheControl } : {}) });
     return null;
   }
   if (m.role === 'tool') {
     const result: AnthropicBlock = { type: 'tool_result', tool_use_id: m.toolCallId };
+    // P1: a marked tool_result block is a valid cache breakpoint.
+    if (m.cacheControl) result.cache_control = m.cacheControl;
     const images = m.images ?? [];
     if (images.length) {
       const parts: AnthropicBlock[] = [];
@@ -86,7 +94,9 @@ function turnFor(m: CanonicalMessage, system: string[]): Turn | null {
   } else if (m.reasoning?.text) {
     blocks.push({ type: 'thinking', thinking: m.reasoning.text, ...(m.reasoning.signature ? { signature: m.reasoning.signature } : {}) });
   }
-  if (m.content) blocks.push({ type: 'text', text: m.content });
+  if (m.content) {
+    blocks.push({ type: 'text', text: m.content, ...(m.cacheControl ? { cache_control: m.cacheControl } : {}) });
+  }
   if (m.role === 'user') {
     for (const img of m.images ?? []) blocks.push(imageBlock(img));
   }
@@ -98,6 +108,11 @@ function turnFor(m: CanonicalMessage, system: string[]): Turn | null {
       input = {}; // defensive: parsers only admit JSON-encoded arguments
     }
     blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input });
+  }
+  // P1: a marked message with no text (images/tool calls only) still gets its
+  // breakpoint — it lands on the turn's last block, which the API allows.
+  if (m.cacheControl && !m.content && blocks.length > 0) {
+    blocks[blocks.length - 1].cache_control = m.cacheControl;
   }
   if (blocks.length === 0) return null; // empty assistant turns are dropped
   return { role: m.role === 'assistant' ? 'assistant' : 'user', blocks };
@@ -122,7 +137,7 @@ export async function buildAnthropicMessagesRequest(
   headers['anthropic-version'] = ANTHROPIC_VERSION;
   headers['content-type'] = 'application/json';
 
-  const system: string[] = [];
+  const system: SystemPart[] = [];
   const turns: Turn[] = [];
   for (const m of req.messages) {
     const turn = turnFor(m, system);
@@ -196,9 +211,15 @@ export async function buildAnthropicMessagesRequest(
       req.responseFormat.type === 'json_schema'
         ? `Respond with ONLY a JSON object (no prose, no code fences) conforming exactly to this JSON schema:\n${JSON.stringify(req.responseFormat.schema)}`
         : 'Respond with ONLY a valid JSON object (no prose, no code fences).';
-    system.push(directive);
+    system.push({ text: directive });
   }
-  if (system.length > 0) body.system = system.join('\n\n');
+  // P1: a marked system message switches the param to a block array so the
+  // cache breakpoint survives the fold (last marked system message wins).
+  if (system.length > 0) {
+    const joined = system.map((s) => s.text).join('\n\n');
+    const marker = system.slice().reverse().find((s) => s.cacheControl)?.cacheControl;
+    body.system = marker ? [{ type: 'text', text: joined, cache_control: marker }] : joined;
+  }
   body.messages = merged.map((t) => ({ role: t.role, content: t.blocks }));
   body.model = cand.model.upstreamModel;
   body.max_tokens = maxTokens;
@@ -219,6 +240,7 @@ export async function buildAnthropicMessagesRequest(
         name: t.name,
         ...(t.description ? { description: t.description } : {}),
         input_schema: t.parameters ?? { type: 'object' },
+        ...(t.cacheControl ? { cache_control: t.cacheControl } : {}),
       }));
       const parallelDisabled = o.parallelToolCalls === false;
       const choice = anthropicToolChoice(o.toolChoice ?? 'auto', parallelDisabled);

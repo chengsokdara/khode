@@ -6,8 +6,8 @@
 // anthropic messages/events (tool_calls → tool_use blocks included). The
 // reverse direction (anthropic → openai shapes) lives in dialects/openaiChat.ts.
 // Extended thinking remains rejected with an explicit pointer.
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolCall } from '../canonical';
-import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
+import type { CanonicalCacheControl, CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolCall } from '../canonical';
+import { boolOption, cacheControlOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
 import { translateSseStream } from './sse';
 
 // ------------------------------------------------------------- error envelope
@@ -193,6 +193,9 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
   const toolCalls: CanonicalToolCall[] = [];
   // M17: thinking/redacted_thinking blocks accumulate onto the turn's message.
   let pendingReasoning: CanonicalReasoningContent | undefined;
+  // P1: anthropic cache markers fold onto the turn's message (last marked
+  // block wins — the documented "mark the last block" convention).
+  let turnCache: CanonicalCacheControl | undefined;
 
   const pushTurn = (): void => {
     if (text || images.length || (msg.role === 'assistant' && toolCalls.length) || pendingReasoning) {
@@ -202,6 +205,7 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
         ...(images.length ? { images } : {}),
         ...(toolCalls.length ? { toolCalls } : {}),
         ...(pendingReasoning ? { reasoning: pendingReasoning } : {}),
+        ...(turnCache ? { cacheControl: turnCache } : {}),
         extra: {},
       });
     }
@@ -228,10 +232,16 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
         return { err: parseErr(`${pParam}.text must be a non-empty string`, param) };
       }
       text += (text ? '\n' : '') + block.text;
+      const cc = cacheControlOption(block.cache_control, `${pParam}.cache_control`);
+      if (cc.err) return { err: parseErr(cc.err, param) };
+      if (cc.val) turnCache = cc.val;
     } else if (block.type === 'image') {
       if (msg.role !== 'user') {
         return { err: parseErr(`${pParam}: image blocks are only supported in user messages`, param) };
       }
+      const cc = cacheControlOption(block.cache_control, `${pParam}.cache_control`);
+      if (cc.err) return { err: parseErr(cc.err, param) };
+      if (cc.val) turnCache = cc.val;
       const img = imageFromBlock(block, pParam);
       if (img.err) return { err: parseErr(img.err, param) };
       if (img.val) images.push(img.val);
@@ -261,11 +271,15 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
       }
       const folded = foldToolResultContent(block.content, pParam);
       if ('err' in folded) return { err: parseErr(folded.err, param) };
+      // P1: a tool_result block's cache marker rides its own tool message.
+      const cc = cacheControlOption(block.cache_control, `${pParam}.cache_control`);
+      if (cc.err) return { err: parseErr(cc.err, param) };
       out.push({
         role: 'tool',
         content: folded.val.text,
         toolCallId: block.tool_use_id,
         ...(folded.val.images.length ? { images: folded.val.images } : {}),
+        ...(cc.val ? { cacheControl: cc.val } : {}),
         ...(block.is_error === true ? { extra: { is_error: true } } : { extra: {} }),
       });
     } else if (block.type === 'document') {
@@ -378,6 +392,7 @@ export async function parseAnthropicMessagesRequest(reader: { json: () => Promis
   // Top-level system param → canonical leading system message.
   if (raw.system !== undefined && raw.system !== null) {
     let systemText = '';
+    let systemCache: CanonicalCacheControl | undefined;
     if (typeof raw.system === 'string') {
       systemText = raw.system;
     } else if (Array.isArray(raw.system) && raw.system.length > 0) {
@@ -388,6 +403,10 @@ export async function parseAnthropicMessagesRequest(reader: { json: () => Promis
         const block = rawBlock as Record<string, unknown>;
         if (block.type === 'text' && typeof block.text === 'string') {
           systemText += (systemText ? '\n' : '') + block.text;
+          // P1: the system block's cache marker folds onto the system message.
+          const cc = cacheControlOption(block.cache_control, `system[${j}].cache_control`);
+          if (cc.err) return parseErr(cc.err, 'system');
+          if (cc.val) systemCache = cc.val;
         } else {
           return parseErr(`system[${j}]: only text blocks are supported`, 'system');
         }
@@ -396,7 +415,7 @@ export async function parseAnthropicMessagesRequest(reader: { json: () => Promis
       return parseErr('system must be a string or a non-empty content-block array', 'system');
     }
     if (systemText) {
-      messages.unshift({ role: 'system', content: systemText, extra: {} });
+      messages.unshift({ role: 'system', content: systemText, ...(systemCache ? { cacheControl: systemCache } : {}), extra: {} });
     }
   }
 

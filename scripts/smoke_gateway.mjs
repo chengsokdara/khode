@@ -2254,6 +2254,71 @@ const mock = await startMockUpstream();
   check('M17 openai-face reasoning_content history dropped for gemini upstreams', !hasThought, JSON.stringify(gemContents).slice(0, 200));
 
   // ==================================================================
+  // P1 — cache_control passthrough: anthropic cache markers ride the
+  // request to anthropic upstreams and are dropped for openai ones.
+  // ==================================================================
+
+  // -- anthropic client → anthropic upstream: markers survive the round-trip --
+  const ccRes = await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-claude-think', max_tokens: 4096,
+    system: [
+      { type: 'text', text: 'SysA' },
+      { type: 'text', text: 'SysB', cache_control: { type: 'ephemeral', ttl: '1h' } },
+    ],
+    tools: [{ name: 'get_weather', description: 'w', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } }],
+    messages: [
+      { role: 'user', content: [
+        { type: 'text', text: 'Prefix' },
+        { type: 'text', text: 'Mark me', cache_control: { type: 'ephemeral' } },
+      ] },
+    ],
+  }));
+  check('P1 cache_control: anthropic client → 200', ccRes.status === 200, JSON.stringify(ccRes.body).slice(0, 120));
+  check(
+    'P1 marked system → upstream system block array with the cache marker',
+    JSON.stringify(lastReq.body?.system) === JSON.stringify([
+      { type: 'text', text: 'SysA\nSysB', cache_control: { type: 'ephemeral', ttl: '1h' } },
+    ]),
+    JSON.stringify(lastReq.body?.system),
+  );
+  check(
+    'P1 marked text blocks fold to one text block carrying the marker',
+    JSON.stringify(lastReq.body?.messages?.[0]?.content) === JSON.stringify([
+      { type: 'text', text: 'Prefix\nMark me', cache_control: { type: 'ephemeral' } },
+    ]),
+    JSON.stringify(lastReq.body?.messages?.[0]?.content),
+  );
+  check(
+    'P1 marked tool def keeps its marker upstream',
+    JSON.stringify(lastReq.body?.tools?.[0]?.cache_control) === '{"type":"ephemeral"}',
+    JSON.stringify(lastReq.body?.tools?.[0]),
+  );
+
+  // -- anthropic client → openai upstream: markers dropped, blocks translate --
+  const ccDrop = await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-chat', max_tokens: 4096,
+    system: [{ type: 'text', text: 'Sys', cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }] }],
+  }));
+  check('P1 cache_control: anthropic client → openai upstream 200', ccDrop.status === 200, JSON.stringify(ccDrop.body).slice(0, 120));
+  check(
+    'P1 openai upstream sees no cache_control anywhere (system rides as a message)',
+    lastReq.body?.messages?.[0]?.role === 'system' && !JSON.stringify(lastReq.body).includes('cache_control'),
+    JSON.stringify(lastReq.body).slice(0, 200),
+  );
+
+  // -- invalid marker → 400 before routing --
+  const ccBad = await fetchOrPost('/v1/messages', JSON.stringify({
+    model: 'mock-chat', max_tokens: 4096,
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '1w' } }] }],
+  }));
+  check(
+    'P1 cache_control invalid ttl → 400',
+    ccBad.status === 400 && /ttl/.test(ccBad.body?.error?.message ?? ''),
+    JSON.stringify(ccBad.body).slice(0, 160),
+  );
+
+  // ==================================================================
   // M18 — structured outputs / JSON mode: response_format/text.format on
   // every client face × every upstream adapter.
   // ==================================================================

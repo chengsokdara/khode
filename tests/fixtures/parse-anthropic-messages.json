@@ -547,7 +547,7 @@
     "expected": {
       "ok": false,
       "status": 400,
-      "message": "tools[0]: server-hosted tool type 'web_search_20250305' cannot be routed across dialects — only client-executed tools are supported",
+      "message": "tools[0]: server-hosted tool type 'web_search_20250305' cannot be routed across dialects \u2014 only client-executed tools are supported",
       "param": "tools",
       "code": null
     }
@@ -574,7 +574,7 @@
     }
   },
   {
-    "name": "M17: thinking param {enabled, budget_tokens} → canonical reasoning",
+    "name": "M17: thinking param {enabled, budget_tokens} \u2192 canonical reasoning",
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 4096,
@@ -616,7 +616,7 @@
     }
   },
   {
-    "name": "M17: thinking type disabled → no canonical reasoning",
+    "name": "M17: thinking type disabled \u2192 no canonical reasoning",
     "body": {
       "model": "claude-sonnet-4-5",
       "max_tokens": 4096,
@@ -651,6 +651,208 @@
         },
         "extras": {}
       }
+    }
+  },
+  {
+    "name": "P1: cache_control folds from system block, text block (ttl 1h), tool_result and tool def",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "system": [
+        {
+          "type": "text",
+          "text": "Big system prompt"
+        },
+        {
+          "type": "text",
+          "text": "Appendix",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ],
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get weather",
+          "input_schema": {
+            "type": "object"
+          },
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "First"
+            },
+            {
+              "type": "text",
+              "text": "Last",
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "tu_1",
+              "name": "get_weather",
+              "input": {
+                "city": "SF"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "tu_1",
+              "content": "72F",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "Big system prompt\nAppendix",
+            "cacheControl": {
+              "type": "ephemeral"
+            },
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "First\nLast",
+            "cacheControl": {
+              "type": "ephemeral",
+              "ttl": "1h"
+            },
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "tu_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"SF\"}"
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "tool",
+            "content": "72F",
+            "toolCallId": "tu_1",
+            "cacheControl": {
+              "type": "ephemeral"
+            },
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "options": {
+          "tools": [
+            {
+              "name": "get_weather",
+              "description": "Get weather",
+              "parameters": {
+                "type": "object"
+              },
+              "cacheControl": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ],
+          "toolChoice": null,
+          "maxTokens": 1024,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "P1: cache_control type must be 'ephemeral'",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi",
+              "cache_control": {
+                "type": "ttl"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0].cache_control.type must be 'ephemeral'",
+      "param": "messages[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "P1: cache_control ttl must be '5m' or '1h'",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi",
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "24h"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0].cache_control.ttl must be '5m' or '1h'",
+      "param": "messages[0]",
+      "code": null
     }
   }
 ]
