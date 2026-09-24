@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-24 (social sign-in DEPLOYED live; only the operator OAuth-client setup remains)
+Last updated: 2026-09-24 (P-pack 1–4 shipped + deployed; social sign-in live)
 
 ## How to use this file
 
@@ -11,6 +11,39 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **P-pack: cache_control passthrough + DO login buckets + fallback backoff +
+  spend-cap reservations ✅ complete (sessions 30, 2026-09-24)** — user picked
+  ALL FOUR queued polish items. Four commits, each with offline goldens + smoke
+  cells, full sweep green between items:
+  - **P1 cache_control passthrough** (`69c0d83`): canonical
+    `CanonicalCacheControl` + message/tool-def fields (block markers fold to
+    message level, last-wins); anthropic parser lifts them from system blocks /
+    content blocks / tool_result / tool defs (invalid type/ttl → 400);
+    anthropic adapter re-emits (marked system → block array, text-or-last
+    block, tool_result, tool defs); openai/gemini drop them; cache keys include
+    cacheControl only when present; anthropic `supported_parameters` + 'cache_control'.
+    Tests: +5 goldens, +7 gateway smoke cells (216→...).
+  - **P2 login buckets → DO** (`1032263`): `loginAllowed` moved to
+    ratelimit/client.ts — async, env-scoped, one DO `/check` per attempt
+    (`login:<bucket>:<ip>`), fail-open. All 9 call sites (admin, portal
+    login/signup, oauth start/callback, device code/token, client-api,
+    org-join) awaited. Per-isolate Map deleted.
+  - **P3 fallback backoff** (`8c9aea7`): new `backoff.ts` — a 429/5xx retries
+    the SAME upstream once after a budgeted wait (upstream Retry-After honored
+    ≤ 4 s cap, else exponential 250/500 ms; ≤ 8 s total/request; Retry-After
+    beyond cap → fall through at once; timeout/network never same-retry);
+    chain-exhausted 429 relays upstream `retry-after`; both chat + embeddings
+    loops. Fallback smoke expectations updated (retried chains report higher
+    attempts); +1 golden file (11 cases).
+  - **P4 spend-cap reservations** (`95dd4cd`): DO `/reserve` + `/settle`
+    (reservations table, 5-min TTL sweep); capped keys park a chars/4-input +
+    capped-output estimate (USD-per-1M pricing) post-routing; refuse 429 when
+    `D1 SUM + in-flight ≥ limit` (release-before-refuse); `writeRequestLog`
+    settles after the log row / final stream usage. Fail-open when DO down.
+    New gateway smoke: two concurrent capped-key requests → exactly one 429.
+  Verified per item: `npm run check` clean; npm test 326→**350**; smoke:gateway
+  216→**220**; smoke 33, m8 45, m9 75, m10 33, m11/m14/device/oauth ALL PASS.
+  DEPLOYED ✅ post-pack (see below).
 - **Social sign-in (Google + GitHub) on the portal ✅ complete (2026-09-24)** —
   user: khode's device sign-in should get a one-click browser step; a
   first-time user must not be forced to create an email/password account
@@ -852,6 +885,15 @@ UI ✅ complete**; the stated post-MVP order is exhausted — next work comes
 from the unscheduled polish queue or user direction.
 
 ## Recent changes
+
+- 2026-09-24 — **P-pack shipped (4 commits) + DEPLOYED live**. cache_control
+  passthrough, DO-backed login buckets, one-retry fallback backoff with
+  Retry-After honoring/relay, and DO spend-cap reservations. check clean;
+  350 offline tests; smoke:gateway 220; all suites green. Deployed to
+  https://khateway.chengsokdara.workers.dev (version cb4ae753) and verified:
+  /health ok; keyless /v1 → 401; oauth start → 302 error-redirect; device mint
+  works (test row deleted); ELEVEN bad admin logins → ten 401s then a 429 —
+  the P2 DO login bucket observable on production.
 
 - 2026-09-24 — **Social sign-in release DEPLOYED live** (version 0d9a6a75,
   https://khateway.chengsokdara.workers.dev). Remote D1 already carried

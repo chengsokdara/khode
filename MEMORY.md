@@ -1,6 +1,19 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-24 (sessions 28–29 + OAuth DEPLOYED live, version 0d9a6a75)
+Last updated: 2026-09-24 (P-pack — cache_control/DO-login/backoff/reservations — shipped + deployed)
+
+## Cross-session facts
+
+- **P-pack (2026-09-24, sessions 30)** — four queued polish items shipped in
+  one sequence (commits 69c0d83 / 1032263 / 8c9aea7 / 95dd4cd): anthropic
+  cache_control passthrough (block markers fold to MESSAGE level canonically —
+  last-wins; anthropic-only on the wire), login/signup buckets in the DO
+  (`loginAllowed` is async now and lives in ratelimit/client.ts), one budgeted
+  same-upstream retry on 429/5xx in both chain walks (upstream Retry-After
+  honored ≤ 4 s, relayed on chain exhaustion), and DO-reserved in-flight spend
+  for capped keys (reserve post-routing where pricing is known; settle at log
+  time; 5-min TTL for leaks). Fallback smoke attempt-counts moved to include
+  the retry; gateway smoke 220, offline tests 350.
 
 ## Project origin (the user's ask)
 

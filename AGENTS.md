@@ -118,7 +118,7 @@ src/worker/
 │                     joinUrl + joinAdapterUrl (per-adapter URL shape for shared bases)
 ├── crypto.ts       — AES-256-GCM secret encrypt/decrypt, HMAC sign/verify, sha256, safe-equal,
 │                     PBKDF2-SHA-256 password hash/verify (versioned format; M8)
-├── auth.ts         — admin session create/validate/revoke (DB-backed), adminAuth, bucketed login rate limit (per-isolate),
+├── auth.ts         — admin session create/validate/revoke (DB-backed), adminAuth,
 │                     client API key generate/verify (sha-256 lookup; M7),
 │                     user sessions + portalAuth middleware (M8; cookie khateway_user)
 ├── canonical.ts    — types-only canonical chat request (the dialects/adapters contract)
@@ -128,12 +128,20 @@ src/worker/
 │   │                      API key + webhook secret AES-256-GCM encrypted; M8)
 │   └── lemonsqueezy.ts  — X-Signature HMAC verify, webhook payload parse + credit math,
 │                          hosted-checkout builder (custom_price + custom.user_id; M8)
+├── backoff.ts      — P3 pure retry/backoff decision: retryDecision (ONE same-upstream retry
+│                      for 429/5xx, upstream Retry-After honored when it fits the 4 s cap,
+│                      exponential otherwise; 8 s total-wait budget) + parseRetryAfterSeconds
+│                      + sleep; golden-tested, shared by the chat + embeddings chain walks
 ├── ratelimit/
 │   ├── do.ts            — RateLimiterDO (M10): singleton cross-isolate counter, SQLite-backed
 │   │                      fixed 1-minute windows (`INSERT … ON CONFLICT … RETURNING`), plain ES
-│   │                      class + internal `POST /check` fetch protocol (no cloudflare:workers import)
+│   │                      class + internal `POST /check` fetch protocol (no cloudflare:workers
+│   │                      import); P2 adds `POST /reserve` + `POST /settle` for P4 in-flight
+│   │                      spend (reservations table, 5-min TTL sweep) and login buckets ride /check
 │   └── client.ts        — buildGatewayRateChecks (pure, golden-tested) + checkRateLimits
-│                          (one DO round-trip, fail-open → null on any error)
+│                          (one DO round-trip, fail-open → null on any error); P2 moved
+│                          loginAllowed here (env, bucket, ip, max → DO /check, fail-open);
+│                          P4 adds reserveSpend/settleSpend (fail-open / best-effort)
 ├── cache/
 │   ├── key.ts           — M11 pure half: stableStringify (key-sorted JSON) + cacheKeyInput +
 │   │                      buildCacheKey (sha-256 over canonical request + model slug) +
@@ -578,8 +586,7 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   dialect + integer `Retry-After` (max window reset; the message names the
   binding constraint = max count/limit) and are logged like any outcome.
   Fail-open everywhere: limiter error → request served; settings read error
-  → limits off until the 5 s cache expires. Login/signup buckets
-  (`loginAllowed`) remain per-isolate memory — deliberate, queued as polish.
+  → limits off until the 5 s cache expires. Login/signup buckets moved into the DO in P2 (cross-isolate now).
 - **Semantic cache (M11)**: opt-in per model (`models.cache_enabled`) OR per
   key (`api_keys.cache_enabled`) while the `cache_enabled` master setting is
   'on' (default off; `cache_ttl_seconds` 1–2592000, default 3600). Cache key =
@@ -684,11 +691,14 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   polls `GET /api/admin/logs?api_key_id=<key>` after each completion (log rows
   land in waitUntil after the stream ends). Gateway code is UNTOUCHED — a
   playground key is an ordinary enrolled key and satisfies enforcement.
-- **Rate limiting (login surfaces)**: `loginAllowed(bucket, ip)` — separate
-  per-isolate buckets `admin` / `portal-login` (10/min) and `portal-signup`
-  (20/min; only validated attempts consume it), so one surface's burst never
-  locks the other. Org-join (M9) is keyed per user id. This is NOT the M10
-  gateway rate limiting (shipped — see the Gateway rate limiting note above).
+- **Rate limiting (login surfaces)**: `loginAllowed(env, bucket, ip, max)` —
+  lives in `ratelimit/client.ts` (P2) and counts through the SAME RateLimiterDO
+  (`login:<bucket>:<ip>` scopes, fixed 1-minute windows) — cross-isolate, so
+  the limit is really per IP. Separate buckets `admin` / `portal-login` (10/min)
+  and `portal-signup` (20/min; only validated attempts consume it), plus
+  oauth-start/oauth-callback (20), device-code (10), device-token (60),
+  client-api (60) and org-join (per user id, 20). Fail-open on limiter errors.
+  This is NOT the M10 gateway rate limiting (see the Gateway note above).
 - **API keys**: provider keys are AES-256-GCM-encrypted (`v1.<iv>.<ct>`), never
   returned by the API (only `key_hint` = last 4). Client keys (M7) are stored
   as sha-256 hashes only.
@@ -698,10 +708,32 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   (canonical model in `canonical.ts`, routing in `routing.ts`);
   DB access via drizzle in `db/`; crypto only in `crypto.ts`. Do not scatter
   OpenAI/Anthropic parsing elsewhere.
-- **Fallback chains (M6)**: `runChatPipeline` walks `primary + models.fallbacks`
+- **Fallback chains (M6 + P3)**: `runChatPipeline` walks `primary + models.fallbacks`
   (`routing.ts` → `resolveModelChain`; entries may be `provider/slug` pins, dead
   entries skipped) and fails over on 429/5xx/timeout/network; client 4xx surface
-  immediately; `x-khateway-attempts` reports the 1-based chain position.
+  immediately; `x-khateway-attempts` counts tries across adapter + fallback + the
+  P3 same-upstream retry. P3: a 429/5xx retries the SAME upstream ONCE after a
+  budgeted wait (`backoff.ts` — upstream Retry-After honored when ≤ 4 s, else
+  exponential 250/500 ms; ≤ 8 s total per request; a Retry-After beyond the cap
+  falls through immediately; timeouts/network never same-retry). A chain-exhausted
+  429 relays the upstream `retry-after`. Both loops (chat + embeddings) share this.
+- **cache_control passthrough (P1)**: the anthropic client face parses
+  `cache_control` blocks (system blocks, content blocks, tool defs —
+  `cacheControlOption`); markers fold to the MESSAGE level canonically
+  (last block wins) because multi-part text is folded; the anthropic adapter
+  re-emits them (marked system → block array, text block or last block,
+  tool_result blocks, tool defs); openai/gemini adapters drop them. Cache keys
+  include `cacheControl` only when present (pre-P1 entries stay valid).
+  `cache_control` is on the anthropic `supported_parameters` list.
+- **Spend-cap reservation (P4)**: capped keys (`spend_limit_usd`) park an
+  ESTIMATED in-flight cost in the DO while a request runs —
+  `reserveSpendCap` (post-routing: the estimate needs the resolved model's
+  pricing — chars/4 input tokens + the effective output cap) reserves, refuses
+  429 `spend_limit_exceeded` when `accrued (D1 SUM) + in-flight ≥ limit`
+  (releasing its own reservation first), and `writeRequestLog` settles the
+  reservation once the log row (streams: the final usage) is in. Estimates use
+  USD-per-1M pricing like `costUsd`. Fail-open when the DO is down (soft cap as
+  before); leaked reservations expire via the DO's 5-minute TTL sweep.
 
 ## Build & run
 

@@ -110,13 +110,15 @@ workspace rules).
 
 ## Also queued (rough-edge polish, unscheduled)
 
-M10 leftovers deferred as out-of-done-when scope: signup captcha (needs a
-Turnstile-style service + account/keys — an external-dependency decision) and
-key-scoped spend alerts (needs a notification channel; no email sender on
-Workers). Also: upstream `Retry-After`/backoff inside the fallback loop;
-spend-cap reservation accounting (soft-cap overshoot); content-aware admin
+DONE 2026-09-24 (the P-pack, sessions 30): anthropic `cache_control`
+passthrough (P1), login/signup buckets through the DO (P2), upstream
+`Retry-After`/backoff inside the fallback loop (P3), spend-cap reservation
+accounting (P4) — see STATUS.md. `x-ratelimit-*` response headers shipped in
+M16.
+
+Still queued: signup captcha (needs a Turnstile-style service + account/keys —
+an external-dependency decision); key-scoped spend alerts (needs a
+notification channel; no email sender on Workers); content-aware admin
 test-connection (z.ai "200 with auth-error body" blind spot); optional
-auth-failure logging; anthropic `cache_control` passthrough; intra-message
-order + `n>1`/assistant-first support; success-path `x-ratelimit-*` response
-headers; login/signup buckets through the DO (cross-isolate) instead of
-per-isolate memory.
+auth-failure logging; intra-message order + `n>1`/assistant-first support;
+anthropic json_schema tool emulation (the M18 upgrade path).
