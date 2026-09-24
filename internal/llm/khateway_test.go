@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+// The default endpoint is the deployed gateway: khateway is first-class
+// native, so the binary must never ship pointed at a local dev server
+// (override with KHATEWAY_BASE_URL instead).
+func TestDefaultKhatewayEndpointIsDeployed(t *testing.T) {
+	if !strings.HasPrefix(DefaultKhatewayEndpoint, "https://") ||
+		!strings.HasSuffix(DefaultKhatewayEndpoint, "/v1") {
+		t.Errorf("DefaultKhatewayEndpoint = %q, want the deployed https://…/v1 URL", DefaultKhatewayEndpoint)
+	}
+}
+
 func TestKhatewayProtocol(t *testing.T) {
 	cases := []struct {
 		name         string

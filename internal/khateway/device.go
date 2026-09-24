@@ -19,8 +19,9 @@ import (
 )
 
 // DefaultBaseURL mirrors llm.DefaultKhatewayEndpoint (duplicated, not
-// imported, so this package stays a standalone HTTP client).
-const DefaultBaseURL = "http://localhost:8787/v1"
+// imported, so this package stays a standalone HTTP client): the
+// deployed gateway khode ships pointed at.
+const DefaultBaseURL = "https://khateway.chengsokdara.workers.dev/v1"
 
 // Poll bounds: khode polls at the interval the mint response names
 // (khateway says 5s); every HTTP call is individually bounded.

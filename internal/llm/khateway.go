@@ -10,9 +10,12 @@ import "strings"
 // origin, so khode always talks one of the two SDK clients — only the
 // endpoint spelling decides which, see KhatewayProtocol.
 
-// DefaultKhatewayEndpoint is the local dev gateway used when no base
-// URL is configured. OpenAI-style shape: /v1 + /chat/completions etc.
-const DefaultKhatewayEndpoint = "http://localhost:8787/v1"
+// DefaultKhatewayEndpoint is the deployed gateway khode ships pointed
+// at: khateway is first-class native, so a fresh install works with no
+// configuration — pick the provider, /login, go. OpenAI-style shape:
+// /v1 + /chat/completions etc. Point KHATEWAY_BASE_URL at a local dev
+// gateway to override.
+const DefaultKhatewayEndpoint = "https://khateway.chengsokdara.workers.dev/v1"
 
 // khatewayUnauthenticatedPlaceholder is a construction-time stand-in,
 // never a credential. Both SDKs need a non-empty credential to build

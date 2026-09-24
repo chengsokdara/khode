@@ -42,11 +42,13 @@ Everything is configurable from inside the TUI with `/settings` (alias
   OpenAI-compatible or Anthropic-protocol endpoint — Ollama, LM Studio,
   OpenRouter, proxies. New providers activate immediately and read
   `NAME_API_KEY`-style env vars if set. The built-in **khateway**
-  provider points at a self-hosted [Khateway](https://github.com/)
-  router: **sign in with `/login` on first run — keyless is gone**, the
-  gateway rejects every request without a valid client key. Its
+  provider ships pointed at the deployed gateway
+  (`khateway.chengsokdara.workers.dev`) — khateway is first-class
+  native: pick it, **`/login` on first run — keyless is gone**, and go;
+  the gateway rejects every request without a valid client key. Its
   endpoint shape picks the wire protocol automatically;
-  `KHATEWAY_API_KEY` still overrides.
+  `KHATEWAY_API_KEY` overrides the key, `KHATEWAY_BASE_URL` points it
+  at a self-hosted or local dev gateway instead.
 
 **Sign in to khateway with `/login`** (device flow): khode shows a short
 code, you approve it once at the gateway's `/app/device` page in a browser,

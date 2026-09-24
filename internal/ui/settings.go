@@ -1015,7 +1015,7 @@ func (s *settings) value(m *Model, row settingsRow) string {
 				u = llm.DefaultKhatewayEndpoint
 				note = "fixed · " + envName + " to override"
 			}
-			return clip(u, 40) + dimStyle.Render("  "+note)
+			return clip(u, 44) + dimStyle.Render("  "+note)
 		}
 		if u := m.cfg.BaseURL(m.cfg.Provider); u != "" {
 			return clip(u, 44)

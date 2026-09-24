@@ -57,7 +57,7 @@ func fakeGateway(t *testing.T, outcomes *atomic.Int32) *httptest.Server {
 
 func TestOrigin(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"", "http://localhost:8787"}, // default endpoint → bare origin
+		{"", "https://khateway.chengsokdara.workers.dev"}, // default endpoint → bare origin
 		{"http://localhost:8787/v1", "http://localhost:8787"},
 		{"http://gw.lan:8787/", "http://gw.lan:8787"},
 		{"https://khateway.example/v1/messages", "https://khateway.example"},

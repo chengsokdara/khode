@@ -10,6 +10,17 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Khateway endpoint baked in (2026-09-24):** `DefaultKhatewayEndpoint`
+(now `https://khateway.chengsokdara.workers.dev/v1`, confirmed from
+~/Apps/khateway's wrangler config + live probe: /health 200, keyless
+`/v1/models` → 401) replaced the `localhost:8787` dev default in both
+places it is mirrored — `llm.DefaultKhatewayEndpoint` and
+`internal/khateway.DefaultBaseURL` (the device-flow client, kept a
+standalone duplicate by design). khateway is first-class native: a fresh
+install needs zero configuration — pick the provider, `/login`, go —
+and `KHATEWAY_BASE_URL` still overrides for local dev. A guard test pins
+the default to the deployed https URL.
+
 **Keyless removed — sign-in or a real key (2026-09-24):** the deployed
 khateway now rejects every /v1 request without a valid client key (401
 invalid_api_key) and its keyless gate is gone, so khode dropped the whole
@@ -589,4 +600,5 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-23 | Scrollbar cutoff fix: plan lines wider than the body (list indent after wrap, chroma code blocks) wrapped onto gutter-less physical rows, cutting the bar — plan markdown now wraps with 6 cols of indent headroom, overflowing lines re-wrap ANSI-aware (`wrapOverflow`), and the body pad has a `MaxWidth` guard; regression test walks every window row for gutter presence | (this commit) |
 | 2026-09-24 | khateway device sign-in: `/login` runs the RFC 8628 flow (internal/khateway client + ui/devicelogin.go dialog — mint, show URL+code, poll, bank the personal key into auth.json, khateway active, model auto-pick); gateway now also bills keyless traffic to a funded guest-pool account (hard ceiling on anonymous usage). Wire tests + live probe | (this commit) |
 | 2026-09-24 | Keyless removed: khateway needs sign-in (`/login`) or a real key — `config.KeyOptional` deleted (pre-flight stops keyless khateway turns, pointing at /login + /settings), `khatewayAnonKey`/`khatewayAccessSecret`/`x-khateway-access` gone (construction-only `khatewayUnauthenticatedPlaceholder`, `KHATEWAY_API_KEY` still wins), walkthrough gains a khateway access step (browser sign-in vs paste; sign-in dialog dispatched above welcome/settings, esc returns to the choice), settings api-key row offers the same choice, build-release.sh bakes no secret | (this commit) |
+| 2026-09-24 | khateway default endpoint baked in: `DefaultKhatewayEndpoint` + `internal/khateway.DefaultBaseURL` now the deployed gateway (`https://khateway.chengsokdara.workers.dev/v1`; localhost:8787 was the dev default) — fresh installs need no config, `KHATEWAY_BASE_URL` overrides for local dev; guard test pins the https default | (this commit) |
 | 2026-09-24 | SUPERSEDED same day (keyless removed): khateway keyless-gate access secret — official builds bake `llm.khatewayAccessSecret` at compile time (`KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh`, ldflags) and send it as `x-khateway-access` on every khateway request (both SDK faces + `FetchModels`); repo builds send no header — a gated gateway answers 401 and they need `KHATEWAY_API_KEY`. Wire tests pin header on/off per build type | (this commit) |
