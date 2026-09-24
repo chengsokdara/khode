@@ -28,8 +28,10 @@ or paste a key for the ones that need it, and for gateway/custom
 endpoints pick a model from the freshly fetched list — then ends with
 suggestions for what to try first (`enter` to start chatting, `esc`
 skips). Skipping is only for the session: while nothing is configured
-the walkthrough reopens on every launch, and `/welcome` re-runs it any
-time. Keys are stored in `~/.khode/auth.json` (owner-only); setting
+the walkthrough reopens on every launch, `/welcome` re-runs it any
+time, and the chat shows a setup banner — pointing at `/welcome`,
+`/login`, or `/settings` — until a key and model resolve. Keys are
+stored in `~/.khode/auth.json` (owner-only); setting
 `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment also works
 and wins over the stored key. The status line tracks how full the
 model's context window is (`ctx NN%`, warning-colored near the

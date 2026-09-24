@@ -10,6 +10,18 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Setup banner in the chat frame (2026-09-24):** esc-skipping the
+walkthrough is still allowed — setup is never a wall — but it no longer
+lands in a silently dead chat. While the pre-flight would block a turn
+(no resolvable key, or a provider with no model), the chat frame renders
+a persistent one-line banner above the input: "khateway not set up ·
+/welcome to finish · /login signs in with your browser" (khateway), "no
+API key for X · /welcome to finish · /settings → api key" (others), or
+the no-model pointer once a key exists. It clears the moment setup
+resolves, is clipped to one physical row like the mode hint, and sits
+first in the transient band so the completion popup stays glued to the
+input.
+
 **Walkthrough: khateway first + /welcome re-run (2026-09-24):** the
 first-run walkthrough now treats khateway as the first choice — it leads
 the provider list (`khateway, anthropic, openai, <customs>, custom…`)
@@ -614,4 +626,5 @@ Backlog lives in `ROADMAP.md`.
 | 2026-09-24 | Keyless removed: khateway needs sign-in (`/login`) or a real key — `config.KeyOptional` deleted (pre-flight stops keyless khateway turns, pointing at /login + /settings), `khatewayAnonKey`/`khatewayAccessSecret`/`x-khateway-access` gone (construction-only `khatewayUnauthenticatedPlaceholder`, `KHATEWAY_API_KEY` still wins), walkthrough gains a khateway access step (browser sign-in vs paste; sign-in dialog dispatched above welcome/settings, esc returns to the choice), settings api-key row offers the same choice, build-release.sh bakes no secret | (this commit) |
 | 2026-09-24 | khateway default endpoint baked in: `DefaultKhatewayEndpoint` + `internal/khateway.DefaultBaseURL` now the deployed gateway (`https://khateway.chengsokdara.workers.dev/v1`; localhost:8787 was the dev default) — fresh installs need no config, `KHATEWAY_BASE_URL` overrides for local dev; guard test pins the https default | (this commit) |
 | 2026-09-24 | Walkthrough: khateway is the first choice (leads the provider list, cursor starts on it, "khode native" hint); esc-skip semantics documented (reopens every launch while nothing is configured) and `/welcome` added to re-run the walkthrough any time (completion popup + /help) | (this commit) |
+| 2026-09-24 | Setup banner: while the pre-flight would block a turn (no key, or no model) the chat frame shows a persistent hint above the input — /welcome, /login (khateway), or /settings pointers; clears on resolve; a skipped walkthrough is no longer silent | (this commit) |
 | 2026-09-24 | SUPERSEDED same day (keyless removed): khateway keyless-gate access secret — official builds bake `llm.khatewayAccessSecret` at compile time (`KHODE_ACCESS_SECRET=<secret> scripts/build-release.sh`, ldflags) and send it as `x-khateway-access` on every khateway request (both SDK faces + `FetchModels`); repo builds send no header — a gated gateway answers 401 and they need `KHATEWAY_API_KEY`. Wire tests pin header on/off per build type | (this commit) |

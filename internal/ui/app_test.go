@@ -409,6 +409,41 @@ func TestKeylessTurnStillBlockedForOtherProviders(t *testing.T) {
 	}
 }
 
+// A skipped walkthrough must not be silent: while a turn would be
+// blocked by the pre-flight — no key, or a provider with no model —
+// the chat frame carries a persistent setup banner pointing at
+// /welcome, /login, or /settings.
+func TestSetupBannerShowsWhileUnconfigured(t *testing.T) {
+	m := newTestModel(t) // provider "test", model set, no key anywhere
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	if hint := ansiStrip(m.setupHint()); !strings.Contains(hint, "/welcome") {
+		t.Errorf("setup hint = %q, want a /welcome pointer", hint)
+	}
+	if frame := ansiStrip(m.chatView()); !strings.Contains(frame, "no API key for test") {
+		t.Error("chat frame missing the setup banner")
+	}
+
+	// A resolvable key clears the banner.
+	m.auth.SetKey("test", "sk-test")
+	if hint := m.setupHint(); hint != "" {
+		t.Errorf("setup hint = %q, want none once a key resolves", hint)
+	}
+
+	// khateway names /login as the way out; with a key but no model the
+	// banner points at the model picker instead.
+	t.Setenv("KHATEWAY_API_KEY", "")
+	m.cfg.Provider = "khateway"
+	if hint := ansiStrip(m.setupHint()); !strings.Contains(hint, "/login") {
+		t.Errorf("khateway setup hint = %q, want /login", hint)
+	}
+	m.auth.SetKey("khateway", "khat-key")
+	if hint := ansiStrip(m.setupHint()); !strings.Contains(hint, "/settings") {
+		t.Errorf("no-model hint = %q, want the /settings pointer", hint)
+	}
+}
+
 // Sealed blocks render in the conversation viewport; a streaming block
 // renders with the live cursor until it seals.
 func TestFlushPrintsSealedBlocks(t *testing.T) {

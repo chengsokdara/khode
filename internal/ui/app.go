@@ -613,6 +613,30 @@ func (m Model) header() string {
 	return left + strings.Repeat(" ", gap) + right + "\n" + rule
 }
 
+// setupHint renders the chat frame's persistent setup banner: while a
+// turn would be stopped by the pre-flight — no resolvable key, or a
+// provider with no model — the frame says so and points at the way out
+// (/welcome, /login, /settings). Esc-skipping the walkthrough is
+// allowed, but it must never land in a silently dead chat.
+func (m *Model) setupHint() string {
+	var text string
+	switch {
+	case !m.hasCredentials():
+		if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
+			text = "khateway not set up · /welcome to finish · /login signs in with your browser"
+		} else {
+			text = fmt.Sprintf("no API key for %s · /welcome to finish · /settings → api key", m.cfg.Provider)
+		}
+	case m.cfg.Model() == "":
+		text = fmt.Sprintf("no model set for %s · /settings → model picks one (f fetches the list)", m.cfg.Provider)
+	default:
+		return ""
+	}
+	// One physical row: a wrapped hint would push the frame past the
+	// terminal height (same law as modeHint).
+	return warnStyle.Render(clip(text, m.width))
+}
+
 // chatView assembles the full screen, spanning the terminal's whole
 // height: the khode header pinned to the top rows, the command hints
 // under it, the conversation viewport filling the middle, and the
@@ -628,6 +652,9 @@ func (m Model) chatView() string {
 	help := m.helpLine()
 
 	var mid []string
+	if hint := m.setupHint(); hint != "" {
+		mid = append(mid, hint) // setup banner: first, persistent
+	}
 	if m.popup != nil {
 		mid = append(mid, m.popupView()) // floats just above the input
 	}
