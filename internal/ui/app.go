@@ -79,6 +79,15 @@ type Model struct {
 	textarea textarea.Model
 	spinner  spinner.Model
 
+	// inputHistory is the chat input's ↑/↓ recall buffer, seeded from
+	// the session transcript and banked on every submit. inputPos
+	// indexes it — == len means "not navigating". inputDraft holds the
+	// half-typed text from when ↑ interrupted it, restored by ↓ past
+	// the newest entry.
+	inputHistory []string
+	inputPos     int
+	inputDraft   string
+
 	// messages holds the chat blocks. Blocks up to the printed
 	// watermark have been handed to the terminal's real scrollback via
 	// tea.Println (flush) and are never redrawn; the live region renders
@@ -256,6 +265,7 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 			}
 		}
 	}
+	m.seedInputHistory(msgs)
 }
 
 // isFinalAnswer reports whether msgs[idx] is the closing assistant
@@ -554,6 +564,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.String() == "pgdown":
 		m.scroll = max(0, m.scroll-max(1, m.height-6))
 		return m, nil
+	// ↑/↓ recall prompts from the input history — but only when the
+	// cursor already sits on the input's first/last line, so a
+	// multi-line draft still moves the cursor between its lines.
+	// Overlays above (completion popup, mode picker) answer first.
+	case msg.String() == "up" && m.inputHistoryUp():
+		return m, textarea.Blink
+	case msg.String() == "down" && m.inputHistoryDown():
+		return m, textarea.Blink
 	}
 	// The wheel is captured and swallowed (see View); every other
 	// key reaches the textarea.
@@ -753,6 +771,12 @@ func (m Model) chatView() string {
 			addRegion(r)
 		}
 		y += lipgloss.Height(band.view)
+	}
+	// The input box: one full-width region per inner row, so a press
+	// places the textarea cursor where the click landed (input.go).
+	inputTop := m.height - 1 - (m.textarea.Height() + 2)
+	for r := 0; r < m.textarea.Height(); r++ {
+		addRegion(region{x: 1, y: inputTop + 1 + r, w: m.width - 2, kind: clickInput, idx: r})
 	}
 
 	parts := append(strings.Split(header, "\n"), hints)
@@ -1023,6 +1047,7 @@ func (m *Model) submit() tea.Cmd {
 	if input == "" {
 		return nil
 	}
+	m.rememberInput(input)
 	if strings.HasPrefix(input, "/") {
 		return m.command(input)
 	}
@@ -1361,15 +1386,16 @@ func (m *Model) block(i int, width int) string {
 		}
 		out = style.Width(width).Render(prefix + body)
 	case msg.role == llm.RoleUser:
-		// User input rides a green slab that hugs the text: wrapped to
-		// the chat width with a hanging indent under the ❯, never
-		// stretched across the terminal edge to edge.
+		// User input rides the green bar: khode's answer-bar grammar in
+		// the palette's user color, wrapped to the chat width with a
+		// hanging indent under the ❯. No filled band — backgrounds are
+		// where terminal color degradation bites.
 		wrapped := wordwrap.String(msg.raw, width-4)
 		wlines := strings.Split(wrapped, "\n")
 		for i, l := range wlines {
 			wlines[i] = clip(l, width-2)
 		}
-		out = userCard.Render(userMark.Render("❯ ") + strings.Join(wlines, "\n  "))
+		out = userBar.Width(width).Render(userMark.Render("❯ ") + strings.Join(wlines, "\n  "))
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
 			// Live text rides the same markdown pipeline, re-run per

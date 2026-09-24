@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -32,6 +33,7 @@ const (
 	clickHintCmd                    // a slash command named in the setup banner (idx): run it
 	clickMoreUp                     // a list window's "↑ N more" note: page the cursor up
 	clickMoreDown                   // a list window's "↓ N more" note: page the cursor down
+	clickInput                      // the chat input's text area (idx = visible row): place the cursor
 )
 
 // Setup-banner commands, as clickHintCmd's idx.
@@ -265,6 +267,12 @@ func (m Model) mouseClicked(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.handleKey(r.key)
 	case clickModeChip:
 		return m.handleKey(keyPress("shift+tab"))
+	case clickInput:
+		// Columns start after the box's one-column border and the
+		// prompt, which the textarea draws on every visual row; a
+		// negative column (border or prompt click) lands at col 0.
+		m.placeInputCursor(r.idx, msg.X-1-lipgloss.Width(m.textarea.Prompt))
+		return m, textarea.Blink
 	case clickHintCmd:
 		switch r.idx {
 		case hintWelcome:

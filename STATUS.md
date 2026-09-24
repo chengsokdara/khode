@@ -10,6 +10,23 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Chat input + user-message UX (2026-09-24):** user messages ride a
+green left rule — the same bar grammar as khode's answers, green where
+khode's are teal/cyan — and the background slab is gone entirely:
+filled bands are where terminal color degradation bit (the user saw
+black-on-green), so user/assistant/system now all render background-
+free. The chat input gained shell-style ↑/↓ prompt recall, gated to
+the input's first/last line (soft-wrap aware via `LineInfo`) so
+multi-line drafts keep moving the cursor between lines; typing is
+stashed as a draft and restored by ↓ past the newest entry, consecutive
+duplicates collapse, and the buffer reseeds from the transcript on
+`--resume`/session switch. Clicking anywhere in the input box now
+places the cursor: the box registers one region per visible row and
+`internal/ui/input.go` maps the pressed cell back to a logical
+line/column through `wrapRunes` — a column-for-column mirror of
+bubbles' textarea `wrap()` (the textarea has no mouse support of its
+own), `ScrollYOffset`-aware so a scrolled (>6-row) input still maps.
+
 **Every button clickable — mouse + keyboard parity (2026-09-24):** the
 TUI now answers left clicks everywhere its footers advertised keys: a
 render-time click-region registry (`internal/ui/click.go`, the

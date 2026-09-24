@@ -105,6 +105,9 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-24 | User messages render as a green left rule (`userBar`); `userCard`'s background slab deleted | filled backgrounds are where terminal color degradation bites — the user saw black-on-green; bars match the answer-bar grammar so all transcript roles read as one family |
+| 2026-09-24 | Input ↑/↓ history gated to the cursor being on the first/last (visual) line, draft stashed | multi-line drafts keep line-navigation semantics; shell convention; seeded from the transcript so `--resume` recalls what that session sent |
+| 2026-09-24 | Click-to-cursor ports bubbles' textarea `wrap()` column-for-column into `internal/ui/input.go` | the v2 textarea has no mouse support; clicks can only land where text renders, so the mirror must track `wrap()` across bubbles upgrades |
 | 2026-09-16 | Go + Bubble Tea stack (like Crush) | user preference; single binary; best-in-class TUI |
 | 2026-09-16 | Own `llm.Event`/`Provider` abstraction instead of SDK types | provider-agnostic agent loop; Anthropic + OpenAI without leaking SDKs |
 | 2026-09-16 | Channel-based streaming + `waitForEvents` cmd chain | idiomatic bubbletea; no `*tea.Program` coupling |
@@ -238,6 +241,18 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Gotchas & lessons learned
 
+- **bubbles v2 textarea facts that bit the click-mapping work**: it has
+  ZERO mouse support (`Update` handles only `PasteMsg`/`KeyPressMsg` —
+  cursor placement must be done app-side); the Prompt renders on EVERY
+  visual row, not just the first; `wrap()` output appends exactly one
+  phantom trailing space per logical line (only on its last segment) —
+  mapping code must clamp against it; `m.col` is a logical rune index,
+  so `MoveToEnd`+`CursorUp`+`SetCursorColumn` is the cursor-positioning
+  toolkit; the viewport's content/height are only refreshed inside
+  `Update()`, so a test that drives `SetValue`+`MoveToEnd` directly
+  never scrolls (`ScrollYOffset` stays 0) — pump a no-op `KeyPressMsg`
+  (e.g. F1) first; and `CursorUp/Down` move VISUAL rows (soft-wrap),
+  not logical lines — walk with `for ta.Line() > i { ta.CursorUp() }`.
 - **khateway 504 + khode retry stack-up**: a stalled upstream reaches the
   client as the gateway's own `upstream_timeout` 504 after khateway's 60s
   cap; khode's transient-retry policy treats 504 as retryable, so one turn
@@ -592,3 +607,4 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-24 | Walkthrough khateway-first + `/welcome` re-run (user: walkthrough must treat khateway as first choice; asked how to re-run it): providerChoices reorders khateway to the front with provIdx starting at 0, hint text says "khode native", `indexOf` helper deleted (cursor no longer seeks the configured provider — the ● marker still shows it); `/welcome` command + slashCommands row; walkthrough tests rewalked for the new order and `TestWelcomeCommandReopens` added | (this commit) |
 | 2026-09-24 | Setup banner (user agreed esc shouldn't land in a silently dead chat): `Model.setupHint` renders warn-styled, width-clipped text first in chatView's mid band whenever `hasCredentials` fails or `cfg.Model()` is empty — khateway names /login, others /welcome + /settings; `TestSetupBannerShowsWhileUnconfigured` walks all three states | (this commit) |
 | 2026-09-24 | Mouse + keyboard parity: `ui/click.go` region registry (stage → placeDialog flush; chatView bands shift their own), `handleKey` factored out of Update's KeyPressMsg case, footer chips/rows/forms/mode chips/banner commands/URL/more-notes wired across all overlays, welcome custom form gained a save row, chrome-budget row-count fix; tests: keyPress strings, listWindowAt staging, placeDialog geometry, end-to-end chip/row clicks through Update, 20-surface in-frame sweep; pty boot smoke clean | (this commit) |
+| 2026-09-24 | Chat input + user-message UX (user screenshot: black-on-green slab; asked for prompt history + click-to-cursor): `userBar` green left rule replaces `userCard` (backgrounds deleted from the transcript entirely; test pins no-`48;`-bg + green bar + hang indent); `internal/ui/input.go`: ↑/↓ prompt recall (first/last-line gate via `LineInfo`, draft stash, consecutive-dedupe, transcript seeding in `replayTranscript` so resume/session-switch reseed) and click-to-cursor (`wrapRunes` mirrors bubbles' `wrap()` column-for-column, `hitToCursor` maps view cell → logical line/rune col with row-end clamps, `placeInputCursor` drives `MoveToEnd`/`CursorUp`/`SetCursorColumn`, `ScrollYOffset`-aware); chatView registers one region per input row. Verified: full gate green, `TestDumpViews` frame eyeballed (green ┃ ❯ text, zero bg codes), 12 new tests incl. end-to-end click through `View`+`MouseClickMsg` and a scrolled-input click | (this commit) |

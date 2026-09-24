@@ -29,7 +29,6 @@ const (
 	hexDim     = "#5C6B73"
 	hexBorder  = "#24544E"
 	hexChipBg  = "#0F3532"
-	hexUserBg  = "#123524"
 	hexErr     = "#F87171"
 	hexWarn    = "#FBBF24"
 )
@@ -45,7 +44,6 @@ var (
 	colDim     = lipgloss.Color(hexDim)
 	colBorder  = lipgloss.Color(hexBorder)
 	colChipBg  = lipgloss.Color(hexChipBg)
-	colUserBg  = lipgloss.Color(hexUserBg)
 	colErr     = lipgloss.Color(hexErr)
 	colWarn    = lipgloss.Color(hexWarn)
 )
@@ -57,12 +55,12 @@ var (
 	// userMark is the ❯ prompt on user messages.
 	userMark = lipgloss.NewStyle().Bold(true).Foreground(colGreen)
 
-	// userCard bands user messages onto a dark-green slab that hugs
-	// the text. The light foreground is load-bearing: with no explicit
-	// color the text falls back to the terminal default, which drowns
-	// on a filled band. Width is set per render so the card wraps
-	// without painting the full terminal edge to edge.
-	userCard    = lipgloss.NewStyle().Background(colUserBg).Foreground(colText).Padding(0, 1)
+	// userBar marks user input with a left rule: the same bar grammar
+	// as the answer bars, green where khode's are teal/cyan. Deliberately
+	// background-free — filled bands are where terminal color degradation
+	// bites, and the black-on-green slab it replaced proved it. Width is
+	// set per render so the bar tracks the chat width.
+	userBar     = lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(colGreen).Foreground(colText).PaddingLeft(1)
 	cmdStyle    = lipgloss.NewStyle().Foreground(colGreenHi)
 	systemStyle = lipgloss.NewStyle().Foreground(colDim).Italic(true)
 	errorStyle  = lipgloss.NewStyle().Foreground(colErr).Bold(true)

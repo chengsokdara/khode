@@ -45,11 +45,13 @@ func TestRenderMarkdownAuroraTheme(t *testing.T) {
 	}
 }
 
-// User messages ride a dark-green slab that hugs the text (green = you
-// vs khode's cyan bars). The text carries an explicit light foreground —
-// the terminal default drowns on a filled band — wrapped lines hang
-// indent under the ❯, and the band never spans the full terminal width.
-func TestUserMessageRendersSlab(t *testing.T) {
+// User messages ride a green left rule — the same bar grammar as
+// khode's answers (green = you, teal/cyan = khode). Deliberately
+// background-free: filled bands are where terminal color degradation
+// bites (the black-on-green slab this replaced). Text keeps an explicit
+// light foreground, wrapped lines hang indent under the ❯, and the bar
+// never stretches past the chat width.
+func TestUserMessageRendersGreenBar(t *testing.T) {
 	m := newTestModel(t)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
@@ -58,31 +60,33 @@ func TestUserMessageRendersSlab(t *testing.T) {
 		raw:  "fix the mobile login bug\n\nthe token expires way too early right when the app goes to the background and the refresh flow drops the session on the floor",
 	})
 	out := m.block(0, 80)
-	// #123524 is the slab background: 18, 53, 36 in SGR terms.
-	if !strings.Contains(out, "48;2;18;53;36") {
-		t.Errorf("user message missing the slab background: %q", out)
+	if strings.Contains(out, "\x1b[48;") {
+		t.Errorf("user message paints a background: %q", out)
 	}
-	// #DCE9E5 is the light text color: explicit, since the terminal
-	// default is unreadable on the band.
+	// #4ADE80 is the green bar: 74, 222, 128 in SGR terms, over the ┃ glyph.
+	if !strings.Contains(out, "\x1b[38;2;74;222;128m┃") {
+		t.Errorf("user message missing the green bar: %q", out)
+	}
+	// #DCE9E5 is the light text color.
 	if !strings.Contains(out, "38;2;220;233;229") {
-		t.Errorf("slab text missing the light foreground: %q", out)
+		t.Errorf("user message text missing the light foreground: %q", out)
 	}
 	stripped := ansiStrip(out)
-	if !strings.Contains(stripped, "❯ fix the mobile login bug") {
-		t.Errorf("slab lost the prompt mark or text: %s", stripped)
+	if !strings.Contains(stripped, "┃ ❯ fix the mobile login bug") {
+		t.Errorf("bar lost the prompt mark or text: %s", stripped)
 	}
 	if got := len(strings.Split(stripped, "\n")); got != 4 {
-		t.Errorf("multi-line slab rendered %d lines, want 4 (blank line kept, long paragraph wrapped)", got)
+		t.Errorf("multi-line bar rendered %d lines, want 4 (blank line kept, long paragraph wrapped)", got)
 	}
-	// The band hugs the content: wrapped lines stay inside the wrap
-	// budget and hang indent under the ❯.
+	// The bar hugs the content: wrapped lines stay inside the chat width
+	// and hang indent under the ❯, behind the bar and its padding.
 	lines := strings.Split(stripped, "\n")
 	for _, i := range []int{2, 3} {
 		if widest := len([]rune(lines[i])); widest > 80 {
-			t.Errorf("slab stretched to %d columns, want content-width", widest)
+			t.Errorf("bar stretched to %d columns, want content-width", widest)
 		}
-		if !strings.HasPrefix(lines[i], "  ") {
-			t.Errorf("wrapped line does not hang indent: %q", lines[i])
+		if !strings.HasPrefix(lines[i], "┃   ") {
+			t.Errorf("wrapped line missing the bar + hanging indent: %q", lines[i])
 		}
 	}
 }
