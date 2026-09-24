@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-24 (social sign-in: Google + GitHub on the portal)
+Last updated: 2026-09-24 (social sign-in DEPLOYED live; only the operator OAuth-client setup remains)
 
 ## How to use this file
 
@@ -45,8 +45,19 @@ If something is claimed ✅ but not verified, it says so.
   m9 75, m10 33, m11, m14; browser-verified login page (buttons, divider,
   ?error= persists) + admin Social card (save flow flips configured +
   secret hint); real Google/GitHub round-trip = manual, steps in README.
-  NOT deployed (remote needs `wrangler d1 migrations apply khateway
-  --remote` + operator OAuth clients).
+  **DEPLOYED ✅ (2026-09-24, version 0d9a6a75)** — remote D1 already had
+  migrations 0011+0012 applied (`device_codes` + `oauth_identities` tables
+  verified); `npm run deploy` shipped the worker. Live checks all green:
+  /health ok; / + /app/login serve the new SPA (bundle contains the social
+  buttons); keyless /v1/models → 401 (strict keys intact);
+  /api/portal/oauth/google/start → 302
+  `/app/login?error=Google+sign-in+is+not+configured+on+this+instance.`
+  (failure-redirect contract live, never 401/JSON); POST /api/v1/device/code
+  mints a real code (device flow + table live; test row deleted after).
+  REMAINING (operator-only): create the real Google + GitHub OAuth clients
+  and paste them into the remote admin console (Settings → Social sign-in;
+  callbacks https://khateway.chengsokdara.workers.dev/api/portal/oauth/
+  {google|github}/callback), then walk the README manual round-trip once.
 - **Keyless removed — keys required, always ✅ complete (session 29,
   2026-09-24)** — user: with device sign-in shipped, keyless makes no sense.
   REMOVED together: the keyless-native default + `client_key_enforcement`
@@ -60,8 +71,10 @@ If something is claimed ✅ but not verified, it says so.
   portal/admin keys. Verified: check clean, 304 offline tests, smoke
   suites re-anchored to strict auth (gateway 209, m10 33, m8 45, m9 75,
   m11/m14/device/smoke green). Deployed + verified live: keyless /v1 → 401
-  remotely. khode-side removal is next (khode still sends `anonymous` and
-  the x-khateway-access header until its no-keyless pass lands).
+  remotely. khode-side removal ✅ also landed (khode 2026-09-24, verified:
+  `config.KeyOptional` deleted, `khatewayAnonKey`/`khatewayAccessSecret`/
+  `x-khateway-access` threading removed, device sign-in or a real key
+  required; build/vet/test green, committed).
 - **Device-flow onboarding + guest-pool debit ✅ complete (session 28,
   2026-09-24)** — user: khode exists to be used by OTHER people; the earlier
   "only people you gave builds to" framing was wrong. Shipped the two
@@ -839,6 +852,17 @@ UI ✅ complete**; the stated post-MVP order is exhausted — next work comes
 from the unscheduled polish queue or user direction.
 
 ## Recent changes
+
+- 2026-09-24 — **Social sign-in release DEPLOYED live** (version 0d9a6a75,
+  https://khateway.chengsokdara.workers.dev). Remote D1 already carried
+  migrations 0011+0012 (device_codes + oauth_identities verified present —
+  nothing pending); `npm run deploy` shipped the worker + SPA. Live
+  verification: /health ok; / + /app/login 200 with the new bundle
+  ("Continue with Google" string confirmed in the served JS); keyless
+  /v1/models 401; unconfigured OAuth start → 302 error-redirect (mount +
+  failure contract live); device /code mints (test row deleted). Operator
+  step remaining: real Google/GitHub OAuth clients into the remote admin
+  Settings → Social sign-in, then the manual README round-trip.
 
 - 2026-09-24 — **Social sign-in: Google + GitHub on the portal**. User:
   khode's device sign-in needs a one-click browser step; email/password

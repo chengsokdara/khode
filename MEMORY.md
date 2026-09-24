@@ -1,6 +1,6 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-24 (session 26)
+Last updated: 2026-09-24 (sessions 28–29 + OAuth DEPLOYED live, version 0d9a6a75)
 
 ## Project origin (the user's ask)
 
