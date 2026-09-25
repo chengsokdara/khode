@@ -10,6 +10,20 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Automatic new-session context gatherer (2026-09-25):** the first real
+prompt of a fresh session now runs a read-only context-gatherer subagent
+before the main turn. The UI drives the sweep directly (read/glob/grep
+registry, 15-round cap, no approver — nothing it does can ask), renders a
+live `◆ gathering context` block with the sweep's latest read plus a
+"gathering context" status line, and on completion converts that block into
+the same dim `◆ context brief` a resume shows, then starts the answer with
+the brief as the runner's preface. Failure never blocks the turn (a dim
+"continuing without it" note); esc during the gather stops the whole submit;
+the second and later prompts never re-gather (empty-transcript trigger).
+`/settings` gains a "gather context" toggle (config `gather_context`, on by
+default). Verified in the tmux harness: mid-gather block + status, brief
+block, and the injected transcript row all captured live.
+
 **Runner preface (2026-09-25):** `Runner.Preface` writes optional groundwork
 (a context-gatherer brief) into the transcript as its own user message
 wrapped in `<task-context>` tags, ahead of the user's message — session
@@ -778,6 +792,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | Automatic first-prompt context gatherer: read-only sweep before the first turn of a fresh session, live `◆ gathering context` block → durable context-brief block, failure-safe, esc stops; `/settings` toggle (`gather_context`) | (this commit) |
 | 2026-09-25 | `Runner.Preface` injects a `<task-context>` brief message ahead of the user turn; replay renders it as a dim collapsible context-brief block | (this commit) |
 | 2026-09-25 | Live subagent activity: task tool forwards child tool calls via `SubagentConfig.Progress`; the task call block upserts a dim `⎿ kind · activity · N calls` line, cleared at the report (ROADMAP Next #1); fakeai plays an explore scenario for the tmux harness | 7c72328 |
 | 2026-09-25 | Typed subagents: `task` gains `subagent_type` (general-purpose / explore / context-gatherer / plan) + `description`; read-only kinds run read/glob/grep only with per-kind report caps and system sections | 83ea1d0 |

@@ -35,12 +35,20 @@ python3 scripts/fakeai.py > "$DIR/fakeai.log" 2>&1 &
 sleep 0.5
 
 tmux -L khv kill-server 2>/dev/null || true
-tmux -L khv new-session -d -x 100 -y 32 -s main -c "$DIR/work" \
+tmux -L khv new-session -d -x 100 -y 60 -s main -c "$DIR/work" \
   "env HOME=$DIR/home FAKEAI_API_KEY=x $DIR/khode 2>>$DIR/khode.stderr"
 sleep 2
 
+# First prompt of a fresh session: the context gatherer runs first
+# (held ~1.5s so the block is readable), then the scripted write turn.
 tmux -L khv send-keys -t main "write then edit" Enter
-sleep 3.5
+sleep 1.0
+echo "=== mid-gather capture (gathering-context block expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "gathering context" || true
+sleep 2.0
+echo "=== after-gather capture (context-brief block expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "context brief|Summary:" || true
+sleep 5.0
 
 echo "=== plain capture (what the user reads) ==="
 tmux -L khv capture-pane -p -t main

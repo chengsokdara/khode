@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Scripted OpenAI-protocol server. Outer rounds replay write → edit →
-answer per run; round 4 calls task(subagent_type=explore) and the round
-after the subagent finishes closes the turn. A request whose body
-carries the subagent system section ("# Subagent") is the subagent
-itself: it first streams a grep call (held a second so the UI's live
-activity line is on screen), then the final report."""
+"""Scripted OpenAI-protocol server. Requests are routed by body:
+"# Context gatherer" (the UI's first-prompt sweep) gets a brief after a
+hold, "# Subagent" (a task subagent) gets a grep call then a report, and
+everything else is the outer conversation: rounds replay write → edit →
+answer, then a task(explore) call, then the closing answer. The holds
+keep the live "gathering context" / subagent activity lines readable in
+the captured frames."""
 import json
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -25,7 +26,7 @@ def sse(self, chunks):
     self.wfile.write(b"data: [DONE]\n\n")
 
 class H(BaseHTTPRequestHandler):
-    count = 0
+    outer = 0
     sub_reported = False
     def log_message(self, *a):
         pass
@@ -42,11 +43,23 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        H.count += 1
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
+
+        if b"# Context gatherer" in body:
+            # The first-prompt sweep: one round, brief only, held so the
+            # "gathering context" block is on screen in captures.
+            time.sleep(1.5)
+            sse(self, [
+                chunk({"content": "Summary: a small Go repo with one sample file (hello.txt)."}),
+                chunk({}, finish="stop"),
+                chunk({}, usage={"prompt_tokens": 800, "completion_tokens": 40}),
+            ])
+            return
+
         if b"# Subagent" in body:
+            # A task subagent: first a grep call, then the final report.
             if not H.sub_reported:
                 H.sub_reported = True
                 ga = json.dumps({"pattern": "package "})
@@ -64,7 +77,10 @@ class H(BaseHTTPRequestHandler):
                     chunk({}, finish="stop"),
                     chunk({}, usage={"prompt_tokens": 1100, "completion_tokens": 40}),
                 ])
-        elif H.count == 4:
+            return
+
+        H.outer += 1
+        if H.outer == 4:
             ta = json.dumps({"prompt": "survey this repository",
                              "subagent_type": "explore",
                              "description": "survey the repo"})
@@ -76,7 +92,7 @@ class H(BaseHTTPRequestHandler):
                 chunk({}, finish="tool_calls"),
                 chunk({}, usage={"prompt_tokens": 4200, "completion_tokens": 50}),
             ])
-        elif H.count == 2:
+        elif H.outer == 2:
             ea = json.dumps({"path": "hello.txt",
                              "old_string": "line 5: hello from the fake model",
                              "new_string": "line 5: EDITED by the fake model"})
@@ -89,13 +105,14 @@ class H(BaseHTTPRequestHandler):
                 chunk({}, finish="tool_calls"),
                 chunk({}, usage={"prompt_tokens": 3000, "completion_tokens": 80}),
             ])
-        elif H.count == 3:
+        elif H.outer == 3:
             sse(self, [
                 chunk({"content": "Edited and verified."}),
                 chunk({}, finish="stop"),
                 chunk({}, usage={"prompt_tokens": 3600, "completion_tokens": 20}),
             ])
-        elif H.count == 1:
+        elif H.outer == 1:
+            time.sleep(3.0)  # keep the fresh context brief readable
             full_args = json.dumps({"path": "hello.txt", "content": "\n".join(FILE_LINES) + "\n"})
             third = len(full_args) // 3
             args1, args2, args3 = full_args[:third], full_args[third:2*third], full_args[2*third:]

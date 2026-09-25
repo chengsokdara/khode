@@ -54,6 +54,9 @@ const (
 	// kindContext is a replayed <task-context> preface: the dim,
 	// collapsible context brief a gatherer wrote ahead of the turn.
 	kindContext
+	// kindGather is the in-flight first-prompt context gatherer; on
+	// completion it turns into a kindContext block (or is removed).
+	kindGather
 )
 
 // uiMessage is a message shown in the chat pane. Only messages with
@@ -164,6 +167,17 @@ type Model struct {
 	taskProgress chan agent.SubagentProgress
 	activeTask   int
 	activeTaskID string
+
+	// gather holds the first-prompt context-gatherer phase: on a fresh
+	// session the UI runs a read-only subagent before the first real
+	// turn and injects its brief as the main runner's Preface. While
+	// gathering, streamEventMsg routes to the gather handler; the block
+	// it renders becomes the durable context-brief block (or a note)
+	// when the phase ends.
+	gathering   bool
+	gatherIdx   int              // the in-flight gather block, -1 when none
+	gatherText  *strings.Builder // the brief as it streams in
+	gatherInput string           // the user prompt the brief is for
 
 	// todoNow is the agent's current todo item with done/total counts,
 	// mirrored from the todo tool so the status line can show live
@@ -1025,6 +1039,11 @@ func (m *Model) pump() tea.Cmd {
 }
 
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
+	if m.gathering {
+		// The first-prompt context gatherer rides the same stream
+		// channel; route to its handler until it hands off to the turn.
+		return m.handleGatherEvent(ev)
+	}
 	if _, retry := ev.(llm.RetryEvent); !retry {
 		m.retryNote = "" // the stream moved on; the note only explains waiting
 	}
@@ -1376,6 +1395,11 @@ func (m *Model) submit() tea.Cmd {
 	}
 
 	m.messages = append(m.messages, uiMessage{role: llm.RoleUser, raw: input, history: true})
+	if m.shouldGather() {
+		// First real turn of a fresh session: sweep context first, then
+		// answer with the brief riding the turn's preface.
+		return tea.Batch(m.flush(), m.startGather(input))
+	}
 	return tea.Batch(m.flush(), m.startTurn(input))
 }
 
@@ -1383,6 +1407,12 @@ func (m *Model) submit() tea.Cmd {
 // writes and streams events back through the same channel the provider
 // pump consumed in earlier phases; permission questions ride the bridge.
 func (m *Model) startTurn(input string) tea.Cmd {
+	return m.startTurnWith(input, "")
+}
+
+// startTurnWith is startTurn with an optional context preface (the
+// gatherer's brief) written into the transcript ahead of the user turn.
+func (m *Model) startTurnWith(input, preface string) tea.Cmd {
 	// Drop questions left over from an earlier turn so a stale dialog
 	// can never open for the wrong call.
 	for {
@@ -1407,6 +1437,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 		Mode:      func() perm.Mode { return m.mode() },
 		Approver:  m.approvals,
 		Hooks:     hooks.New(m.cfg.Hooks, m.workdir),
+		Preface:   preface,
 	}
 	debug.Printf("start turn: %s/%s session=%s", m.provider.Name(), m.cfg.Model(), m.session.Name())
 	ch := runner.Run(ctx, input)
@@ -1419,6 +1450,143 @@ func (m *Model) startTurn(input string) tea.Cmd {
 	m.partial.Reset()
 	m.partialThink.Reset()
 	return tea.Batch(m.pump(), m.spinner.Tick)
+}
+
+// gatherMaxRounds bounds the context gatherer's tool loop: it should
+// sweep quickly, not settle in.
+const gatherMaxRounds = 15
+
+// shouldGather reports whether the automatic context gatherer runs for
+// this prompt: the first real turn of a fresh session (empty
+// transcript), when the config toggle is on.
+func (m *Model) shouldGather() bool {
+	return m.cfg.GatherOn() && len(m.session.Messages()) == 0
+}
+
+// startGather runs the read-only context gatherer ahead of the first
+// real turn: its events ride the same stream channel (handleStreamEvent
+// routes by m.gathering) and its live block shows the sweep's activity.
+func (m *Model) startGather(input string) tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	sub := &agent.Runner{
+		Provider:  m.provider,
+		Session:   agent.NewMemorySession(),
+		Tools:     agent.GathererRegistry(m.workdir),
+		Model:     m.cfg.Model(),
+		MaxTokens: m.cfg.MaxTokens,
+		System:    agent.GathererSystemPrompt(m.workdir),
+		MaxRounds: gatherMaxRounds,
+		Mode:      func() perm.Mode { return m.mode() },
+		// No approver: the gatherer is read-only, so nothing it does can
+		// ask, and a mid-run mode switch only ever loosens reads.
+		Hooks: hooks.New(m.cfg.Hooks, m.workdir),
+	}
+	prompt := "Build the context brief for the request below — it is the " +
+		"first task of a fresh session. End with only the brief.\n\n<request>\n" +
+		input + "\n</request>"
+	ch := sub.Run(ctx, prompt)
+
+	m.cancel = cancel
+	m.events = ch
+	m.streaming = true
+	m.gathering = true
+	m.lastErr = ""
+	m.turnStart = time.Now()
+	m.gatherText = new(strings.Builder)
+	m.gatherInput = input
+	m.gatherIdx = len(m.messages)
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kindGather, streaming: true})
+	return tea.Batch(m.pump(), m.spinner.Tick)
+}
+
+// handleGatherEvent consumes the gatherer's stream while m.gathering.
+func (m *Model) handleGatherEvent(ev llm.Event) tea.Cmd {
+	if _, retry := ev.(llm.RetryEvent); !retry {
+		m.retryNote = "" // the stream moved on; the note only explains waiting
+	}
+	switch e := ev.(type) {
+	case llm.TextDeltaEvent:
+		m.gatherText.WriteString(e.Text)
+		m.touchGatherBlock(func(blk *uiMessage) { blk.raw = m.gatherText.String() })
+		return m.pump()
+
+	case llm.ToolCallEvent:
+		m.touchGatherBlock(func(blk *uiMessage) {
+			blk.subLine = gatherActivity(e.Name, e.Input)
+		})
+		return m.pump()
+
+	case llm.ErrorEvent:
+		if errors.Is(e.Err, context.Canceled) {
+			// esc during the gather stops the whole submit; the user
+			// resubmits to go straight to the answer.
+			return m.finishGather(false)
+		}
+		// A failed gather never blocks the turn: note it and answer
+		// without a brief.
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: "context gather failed — continuing without it"})
+		return m.finishGather(false)
+
+	case llm.DoneEvent:
+		return m.finishGather(true)
+	}
+	return m.pump()
+}
+
+// touchGatherBlock mutates the in-flight gather block and drops its
+// render cache.
+func (m *Model) touchGatherBlock(f func(*uiMessage)) {
+	if m.gatherIdx < 0 || m.gatherIdx >= len(m.messages) {
+		return
+	}
+	blk := m.messages[m.gatherIdx]
+	f(&blk)
+	blk.rendered = ""
+	m.messages[m.gatherIdx] = blk
+}
+
+// finishGather ends the gather phase: proceed=true starts the main turn
+// (with the brief as Preface when one was gathered), proceed=false stops
+// without a turn — the esc path. The live gather block becomes the same
+// dim context-brief block a resume would render, so live and replay
+// agree.
+func (m *Model) finishGather(proceed bool) tea.Cmd {
+	m.gathering = false
+	m.gatherIdx = -1
+
+	// Harvest the streamed brief, then convert or drop the gather block.
+	brief := ""
+	if m.gatherText != nil {
+		brief = strings.TrimSpace(m.gatherText.String())
+	}
+	m.gatherText = nil
+
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].kind != kindGather {
+			continue
+		}
+		blk := m.messages[i]
+		blk.streaming = false
+		blk.subLine = ""
+		if brief != "" {
+			blk.kind = kindContext
+			blk.raw = "<task-context>\n" + brief + "\n</task-context>"
+			blk.rendered = ""
+			m.messages[i] = blk
+		} else {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+		}
+		break
+	}
+
+	input := m.gatherInput
+	m.gatherInput = ""
+	if !proceed {
+		// esc stopped the whole submit: wind the stream down, no turn.
+		return m.finishStream()
+	}
+	return tea.Batch(m.flush(), m.startTurnWith(input, brief))
 }
 
 // mode returns the active permission mode, normalizing unknown config
@@ -1619,7 +1787,11 @@ func (m *Model) statusLine() string {
 	switch {
 	case m.streaming:
 		elapsed := time.Since(m.turnStart).Truncate(time.Second)
-		state = m.spinner.View() + statusStyle.Render("working") +
+		label := "working"
+		if m.gathering {
+			label = "gathering context"
+		}
+		state = m.spinner.View() + statusStyle.Render(label) +
 			dimStyle.Render(" · "+elapsed.String())
 		if m.todoNow != "" {
 			state += statusStyle.Render(" · ❯ " + clip(m.todoNow, max(12, m.width/4)))
@@ -1699,6 +1871,8 @@ func (m *Model) block(i int, width int) string {
 		out = todoPanelBlock(msg.raw, width)
 	case msg.kind == kindContext:
 		out = contextBlock(msg.raw, width, msg.expanded)
+	case msg.kind == kindGather:
+		out = gatherBlock(msg, width)
 	case msg.kind == kindThinking:
 		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
 	case msg.kind == kindToolResult:
@@ -1960,6 +2134,44 @@ func expandable(msg uiMessage) bool {
 
 // contextPreviewLines caps a collapsed context brief.
 const contextPreviewLines = 4
+
+// gatherBlock renders the in-flight first-prompt context gatherer: a
+// cyan-headed live block whose subLine carries the sweep's latest read.
+func gatherBlock(msg uiMessage, width int) string {
+	out := toolStyle.Render("◆ gathering context")
+	if msg.subLine != "" {
+		room := width - 24
+		if room < 12 {
+			room = 12
+		}
+		out += dimStyle.Render(" · " + clip(msg.subLine, room))
+	}
+	return out
+}
+
+// gatherActivity renders a gatherer tool call as one dim activity line
+// ("read internal/agent/loop.go") for the live block.
+func gatherActivity(name string, input json.RawMessage) string {
+	var a struct {
+		Command string `json:"command"`
+		Path    string `json:"path"`
+		Pattern string `json:"pattern"`
+	}
+	if json.Unmarshal(input, &a) != nil {
+		return name
+	}
+	switch name {
+	case "bash":
+		return "bash " + oneLine(a.Command)
+	case "glob":
+		return "glob " + oneLine(a.Pattern)
+	case "grep":
+		return "grep " + oneLine(a.Pattern)
+	case "read":
+		return "read " + oneLine(a.Path)
+	}
+	return name
+}
 
 // contextBriefLines counts the brief's body lines (the <task-context>
 // wrapper tags stripped).

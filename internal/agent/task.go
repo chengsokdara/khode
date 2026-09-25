@@ -144,19 +144,7 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 // to subagent work too), adds the reporting contract, and appends the
 // kind's own section.
 func (t *TaskTool) subagentSystem(spec kindSpec) string {
-	base := SystemPrompt(t.cfg.Workdir) + `
-
-# Subagent
-
-You are running as a subagent spawned by the main agent for one task. You
-have your own tools and a fresh context; nobody sees your intermediate
-work. Work only on the given task, then end with a final message that is
-a complete, self-contained report of what you found or changed — it is
-the only part of your run the parent agent receives.`
-	if spec.Section != "" {
-		base += "\n\n" + spec.Section
-	}
-	return base
+	return subagentSystemPrompt(t.cfg.Workdir, spec)
 }
 
 // progressLine flattens a child tool call into one short activity line

@@ -122,3 +122,34 @@ func registryFor(kind SubagentKind, workdir string) *tools.Registry {
 	}
 	return tools.Default(workdir)
 }
+
+// GathererRegistry returns the read-only toolset the context-gatherer
+// runs with, for callers that drive a gatherer runner directly (the
+// UI's first-prompt gather).
+func GathererRegistry(workdir string) *tools.Registry {
+	return registryFor(SubagentGather, workdir)
+}
+
+// GathererSystemPrompt is the system prompt for a context-gatherer run:
+// the project context plus the brief contract.
+func GathererSystemPrompt(workdir string) string {
+	return subagentSystemPrompt(workdir, subagentKinds[SubagentGather])
+}
+
+// subagentSystemPrompt assembles a subagent's system prompt: project
+// context, the shared reporting contract, and the kind's section.
+func subagentSystemPrompt(workdir string, spec kindSpec) string {
+	base := SystemPrompt(workdir) + `
+
+# Subagent
+
+You are running as a subagent spawned by the main agent for one task. You
+have your own tools and a fresh context; nobody sees your intermediate
+work. Work only on the given task, then end with a final message that is
+a complete, self-contained report of what you found or changed — it is
+the only part of your run the parent agent receives.`
+	if spec.Section != "" {
+		base += "\n\n" + spec.Section
+	}
+	return base
+}

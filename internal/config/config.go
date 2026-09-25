@@ -106,10 +106,22 @@ type Config struct {
 	MCPServers map[string]MCPServer `json:"mcp_servers,omitempty"`
 	// Hooks run shell commands on agent lifecycle events.
 	Hooks Hooks `json:"hooks,omitempty"`
+	// GatherContext turns the automatic first-prompt context gatherer
+	// off (false) or explicitly on (true); nil means enabled. The
+	// gatherer is read-only, so this only trades one model call for a
+	// better-grounded first turn.
+	GatherContext *bool `json:"gather_context,omitempty"`
 
 	// override is the session-scoped --model flag value; never persisted.
 	override string
 }
+
+// GatherOn reports whether the automatic first-prompt context gatherer
+// is enabled; absent from the file means enabled.
+func (c *Config) GatherOn() bool { return c.GatherContext == nil || *c.GatherContext }
+
+// SetGatherContext persists the gatherer toggle.
+func (c *Config) SetGatherContext(on bool) { c.GatherContext = &on }
 
 // Dir returns khode's state directory (~/.khode).
 func Dir() string {
@@ -228,6 +240,7 @@ type rawConfig struct {
 	ModelChoices    map[string][]string       `json:"model_choices"`
 	MCPServers      map[string]MCPServer      `json:"mcp_servers"`
 	Hooks           Hooks                     `json:"hooks"`
+	GatherContext   *bool                     `json:"gather_context"`
 	Model           string                    `json:"model"` // legacy single-model schema
 }
 
@@ -249,6 +262,9 @@ func (r rawConfig) apply() *Config {
 	}
 	// Unknown modes degrade to the safe default instead of erroring.
 	cfg.PermissionMode = string(perm.Parse(r.PermissionMode))
+	if r.GatherContext != nil {
+		cfg.GatherContext = r.GatherContext
+	}
 	if len(r.CustomProviders) > 0 {
 		cfg.CustomProviders = r.CustomProviders
 		// Snap the active name to the stored key's casing so it lines

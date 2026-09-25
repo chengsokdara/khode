@@ -75,7 +75,8 @@ Backlog (no committed order):
 4. OpenAI tool-call unit parity for MCP edge cases as they surface.
 5. Khode /terminal-setup: write the Terminal.app/iTerm2 shift+enter
    mapping khode's alt+enter fallback already picks up.
-6. Subagents, continued: automatic new-session context gatherer and
-   `Runner.Preface` (in flight this cycle); then parallel read-only
-   fan-out, user-defined agents (`~/.khode/agents/*.md`), a
-   code-reviewer kind, and an `/agents` overview command.
+6. Subagents, continued: ~~automatic new-session context gatherer and
+   `Runner.Preface`~~ (done — gather → brief → preface turn); then
+   `subagent_model` (in flight), parallel read-only fan-out, user-defined
+   agents (`~/.khode/agents/*.md`), a code-reviewer kind, and an
+   `/agents` overview command.

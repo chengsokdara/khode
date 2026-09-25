@@ -35,6 +35,7 @@ const (
 	rowModel
 	rowMaxTokens
 	rowMode
+	rowGatherContext
 	rowMCP
 	rowHooks
 	rowSentinel // keep last
@@ -183,6 +184,13 @@ func (m *Model) activateRow() tea.Cmd {
 		s.listCur = 0
 	case rowMode:
 		m.cycleSetting(1)
+	case rowGatherContext:
+		m.cfg.SetGatherContext(!m.cfg.GatherOn())
+		state := "off"
+		if m.cfg.GatherOn() {
+			state = "on"
+		}
+		m.saveSettings("gather context → " + state)
 	case rowAPIKey:
 		if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
 			// khateway needs a credential: offer browser sign-in next
@@ -998,6 +1006,8 @@ func rowLabel(row settingsRow) string {
 		return "mcp servers"
 	case rowHooks:
 		return "hooks"
+	case rowGatherContext:
+		return "gather context"
 	}
 	return ""
 }
@@ -1036,6 +1046,11 @@ func (s *settings) value(m *Model, row settingsRow) string {
 		return strconv.Itoa(m.cfg.MaxTokens)
 	case rowMode:
 		return string(m.mode()) + dimStyle.Render("  "+modeDescription(m.mode()))
+	case rowGatherContext:
+		if m.cfg.GatherOn() {
+			return "on" + dimStyle.Render("  gathers a context brief on the first prompt of a new session · enter to toggle")
+		}
+		return "off" + dimStyle.Render("  · enter to toggle")
 	case rowMCP:
 		if n := len(m.cfg.MCPServers); n > 0 {
 			return fmt.Sprintf("%d · %s", n, strings.Join(sortedServerNames(m.cfg.MCPServers), ", "))

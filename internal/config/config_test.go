@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestModelPrecedence(t *testing.T) {
 	// Every known provider must have a built-in default model.
@@ -76,5 +79,45 @@ func TestLegacyMigration(t *testing.T) {
 	}.apply()
 	if got := cfg.Model(); got != "gpt-5-mini" {
 		t.Errorf("models entry ignored: got %q, want gpt-5-mini", got)
+	}
+}
+
+func TestGatherContextToggle(t *testing.T) {
+	// Absent from the file means enabled; an explicit false survives a
+	// save/load round trip, as does an explicit true.
+	cfg := rawConfig{}.apply()
+	if !cfg.GatherOn() {
+		t.Error("gather should default on")
+	}
+
+	off := false
+	cfg = rawConfig{GatherContext: &off}.apply()
+	if cfg.GatherOn() {
+		t.Error("explicit gather_context=false ignored")
+	}
+
+	cfg.SetGatherContext(true)
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw rawConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got := raw.apply(); !got.GatherOn() {
+		t.Error("explicit true did not round trip")
+	}
+
+	cfg.SetGatherContext(false)
+	data, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got := raw.apply(); got.GatherOn() {
+		t.Error("explicit false did not round trip")
 	}
 }
