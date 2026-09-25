@@ -1,6 +1,6 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-25 (usage dashboard filters — /admin/usage filter bar — shipped, local only)
+Last updated: 2026-09-25 (usage dashboard filters — /admin/usage filter bar — shipped + deployed)
 
 ## Cross-session facts
 
@@ -19,7 +19,8 @@ Last updated: 2026-09-25 (usage dashboard filters — /admin/usage filter bar �
   compare like-for-like; keep that property when adding new filters.
   DEPLOYED 2026-09-24 (version b9618f46) and
   live-verified — the remote dashboard is already aggregating real
-  khode/portal traffic. The 2026-09-25 filter update is local-only.
+  khode/portal traffic. The 2026-09-25 filter update is DEPLOYED too
+  (version 4fcc67c6, filters live-verified).
 - **P-pack (2026-09-24, sessions 30)** — four queued polish items shipped in
   one sequence (commits 69c0d83 / 1032263 / 8c9aea7 / 95dd4cd): anthropic
   cache_control passthrough (block markers fold to MESSAGE level canonically —

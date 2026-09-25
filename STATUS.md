@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-25 (usage dashboard filters shipped — local only; dashboard itself deployed)
+Last updated: 2026-09-25 (usage dashboard filters shipped + DEPLOYED; dashboard + P-pack + social sign-in live)
 
 ## How to use this file
 
@@ -27,7 +27,10 @@ If something is claimed ✅ but not verified, it says so.
   (model filter narrows by_model to one entry, bogus dialect → 0 requests,
   key filter narrows by_key to that key) — ALL PASS; browser pass: endpoint
   filter narrowed stats 24→9 with charts redrawing, stacked no-match combo
-  showed the empty state, Reset restored everything. NOT deployed yet.
+  showed the empty state, Reset restored everything.
+  **DEPLOYED ✅ (version 4fcc67c6)** — live checks green: /health ok; served
+  bundle == local filter-bar build; `?dialect=zzz-bogus` → 0 requests while
+  unfiltered returns real remote traffic (94 requests / 7 d, 4 models).
 - **Admin usage dashboard ✅ complete (2026-09-24)** — user: "There should be a
   proper usage dashboard in the admin; it should have graph, chart, bars, etc."
   Approved plan: new `/admin/usage` page, hand-rolled SVG charts (no new deps),
@@ -947,7 +950,7 @@ from the unscheduled polish queue or user direction.
   the prev-window (like-for-like deltas); Usage.tsx gains a filter bar
   (Key/Model/Provider/Endpoint + Reset) and a no-match empty state; smoke.mjs
   +filter narrowing checks. check clean, 350 offline tests, smoke green,
-  browser-verified. Local only — deploy pending.
+  browser-verified. DEPLOYED (version 4fcc67c6), filters live-verified.
 
 - 2026-09-24 — **Admin usage dashboard**. `GET /api/admin/usage` (bucketed
   series + totals + breakdowns over request_logs, all in D1), new
