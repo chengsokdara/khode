@@ -10,6 +10,21 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Band rendering fixed (2026-09-25):** the user's screenshot showed the
+Grok bands broken two ways, both from SGR stream details: (1) lipgloss
+emits SHORT resets (`\x1b[m`) while chroma writes long ones — the reset
+re-injection only handled the long form, so the gutter's reset killed
+the band and every line rendered first-token-on-black, rest-on-green;
+`bandLine` now strips ALL reset forms (regexp `\x1b\[0*m`) and paints
+the band once per row — every token sets its own foreground, so resets
+are unnecessary mid-line. (2) A diff run ending in a blank line lost
+its syntax colors entirely: chroma folds the trailing newline away, the
+formatter's output comes back one row short of the run, and
+highlightLines' row-count guard fell back to plain — it now pads the
+missing blank row back. Band tints darkened to quiet stripes
+(#1B4626 additions, #4E2229 removals) after the saturated pass read as
+a wall of green on 37-line writes.
+
 **Colorful Grok diffs (2026-09-25):** two fixes to make the write diff
 actually read like Grok's. The token palette is now VSCode Dark+ — blue
 variables (#9CDCFE), purple control flow (#C586C0), orange strings
@@ -730,6 +745,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | Band rendering fixed: short-form lipgloss resets stripped so the band covers whole rows (was first-token black), trailing-blank runs keep colors (chroma folds trailing newline), bands darkened to quiet stripes | (this commit) |
 | 2026-09-25 | Colorful Grok diffs: VSCode Dark+ token palette (was monochrome — identifiers fell to terminal default) + bands re-injected after every SGR reset so they cover the full row, not just the gutter; brighter band tints | (this commit) |
 | 2026-09-25 | Grok-style write diffs: line-number gutter from `@@` headers (old numbers on removals, new on additions), full-width dark green/red background bands instead of +/- markers, headers dropped, flush-left body | d5b6819 |
 | 2026-09-25 | VSCode-style syntax highlighting in edit/write diffs (aurora chroma palette, lexer by file extension, run-based) + expandable truncated tool results and diffs (ctrl+o, click regions, red non-bold error bodies) | ec82868 |

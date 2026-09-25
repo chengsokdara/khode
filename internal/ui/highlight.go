@@ -9,6 +9,7 @@ package ui
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -79,6 +80,12 @@ func highlightLines(code, path string) []string {
 	}
 	out := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
 	if len(out) != len(lines) {
+		// Chroma folds a trailing newline away, so a run ending in a
+		// blank line comes back one row short — pad it back before
+		// giving up on the highlighting.
+		if len(out) == len(lines)-1 && strings.HasSuffix(code, "\n") {
+			return append(out, "")
+		}
 		return lines
 	}
 	return out
@@ -197,20 +204,24 @@ func diffMarker(line string) byte {
 	return ' '
 }
 
+// resetRe matches every SGR reset form the parts of a diff row emit —
+// lipgloss writes the short \x1b[m, chroma the long \x1b[0m.
+var resetRe = regexp.MustCompile(`\x1b\[0*m`)
+
 // bandLine wraps a styled line in a full-width background band — the
-// dark green/red rows behind diff lines. The line is assembled from
-// parts that each reset their own SGR (the lipgloss gutter, chroma's
-// per-line reset), so the background is re-injected after every reset
-// along the row — one injection at the start would only paint the
-// gutter. The row is padded out to the full width inside the band.
+// dark green/red rows behind diff lines. The row's parts each reset
+// their own SGR (the lipgloss gutter in short form, chroma's tokens in
+// long form), and any of those resets wipes the band, so every reset is
+// stripped instead: each token already sets its own foreground, and a
+// single reset closes the row. The row is padded out to the full width
+// inside the band.
 func bandLine(line string, bgHex string, width int) string {
 	c, err := parseHex(bgHex)
 	if err != nil {
 		return line
 	}
 	bg := fmt.Sprintf("\x1b[48;2;%d;%d;%dm", int(c[0]), int(c[1]), int(c[2]))
-	line = strings.TrimSuffix(line, "\x1b[0m")
-	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+bg)
+	line = resetRe.ReplaceAllString(line, "")
 	if pad := width - lipgloss.Width(line); pad > 0 {
 		line += strings.Repeat(" ", pad)
 	}

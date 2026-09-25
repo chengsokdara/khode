@@ -32,10 +32,10 @@ const (
 	hexErr     = "#F87171"
 	hexWarn    = "#FBBF24"
 	// Diff band backgrounds — the full-width tints behind added and
-	// removed lines (Grok-style, saturated enough to read as color
-	// stripes while syntax colors stay legible on top).
-	hexDiffAddBg = "#1A5A2D"
-	hexDiffDelBg = "#5F232D"
+	// removed lines (Grok-style: present but muted, so a new file's
+	// wall of additions reads as quiet stripes, not wallpaper).
+	hexDiffAddBg = "#1B4626"
+	hexDiffDelBg = "#4E2229"
 )
 
 var (

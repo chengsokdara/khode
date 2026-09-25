@@ -834,12 +834,12 @@ func TestEditResultRendersDiff(t *testing.T) {
 			if strings.Contains(out, "@@") {
 				t.Errorf("diff block shows a hunk header: %q", out)
 			}
-			// both lines carry their background bands, re-injected
-			// after every SGR reset on the row (the gutter and each
-			// syntax token reset) so the band covers the whole line
-			for _, band := range []string{"\x1b[48;2;95;35;45m", "\x1b[48;2;26;90;45m"} {
-				if strings.Count(raw, band) < 2 {
-					t.Errorf("diff block band %q does not cover the row: %q", band, ansiStrip(raw))
+			// both lines carry their background band exactly once: all
+			// mid-row resets are stripped, so the band covers the whole
+			// line — gutter, code, and padding — under one SGR
+			for _, band := range []string{"\x1b[48;2;78;34;41m", "\x1b[48;2;27;70;38m"} {
+				if n := strings.Count(raw, band); n != 1 {
+					t.Errorf("diff block band %q painted %d times, want 1: %q", band, n, ansiStrip(raw))
 				}
 			}
 		case kindToolResult:
@@ -910,7 +910,7 @@ func TestEditReplayRendersDiff(t *testing.T) {
 		}
 		sawDiff = true
 		raw := m.block(i, 80)
-		for _, want := range []string{"⎿  Wrote new.txt", "hi", "\x1b[48;2;26;90;45m"} {
+		for _, want := range []string{"⎿  Wrote new.txt", "hi", "\x1b[48;2;27;70;38m"} {
 			if !strings.Contains(raw, want) {
 				t.Errorf("replayed diff block = %q, missing %q", ansiStrip(raw), want)
 			}
@@ -1041,7 +1041,7 @@ func TestDiffHighlightsCode(t *testing.T) {
 		"\x1b[38;2;156;220;254m", // variable blue (#9CDCFE) — router
 		"\x1b[38;2;206;145;120m", // string orange (#CE9178) — 'express'
 		"\x1b[38;2;106;153;85m",  // comment green (#6A9955)
-		"\x1b[48;2;26;90;45m",    // the additions band
+		"\x1b[48;2;27;70;38m",    // the additions band
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("highlighted diff missing %q: %q", want, ansiStrip(out))
@@ -1051,6 +1051,22 @@ func TestDiffHighlightsCode(t *testing.T) {
 	plain := diffBlock("Wrote data.blob (1 line)", "@@ -0,0 +1,1 @@\n+const x = 1;\n", "data.blob", 100, false)
 	if strings.Contains(plain, "\x1b[38;2;197;134;192m") {
 		t.Errorf("lexerless file unexpectedly highlighted: %q", ansiStrip(plain))
+	}
+}
+
+// A diff run that ends in a blank line must not lose its highlighting:
+// chroma folds the trailing newline away, and the row count falls one
+// short of the run — it is padded back instead of falling back to plain.
+func TestHighlightTrailingBlankLine(t *testing.T) {
+	out := highlightLines("const todos = await Todo.find();\n", "routes/todos.js")
+	if len(out) != 2 {
+		t.Fatalf("highlighted %d rows, want 2", len(out))
+	}
+	if !strings.Contains(out[0], "\x1b[38;2;197;134;192m") {
+		t.Errorf("run ending in a blank line lost its colors: %q", out[0])
+	}
+	if out[1] != "" {
+		t.Errorf("padded row = %q, want empty", out[1])
 	}
 }
 
