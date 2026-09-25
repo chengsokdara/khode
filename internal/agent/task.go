@@ -17,8 +17,9 @@ import (
 // session, so one focused subtask gets its own context window. The
 // parent agent sees only the subagent's final report.
 
-// maxTaskResult caps a subagent report so a verbose child cannot flood
-// the parent's context window.
+// maxTaskResult caps the default (general-purpose) subagent report so a
+// verbose child cannot flood the parent's context window; other kinds
+// cap lower via their kindSpec.ReportCap.
 const maxTaskResult = 16 << 10
 
 // SubagentConfig wires the task tool to the app's live state. The
@@ -48,17 +49,21 @@ func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
 	return "Spawn a subagent with a fresh context window for one self-contained " +
-		"subtask — a broad search, a deep dive, or a long investigation whose " +
-		"intermediate output you do not need. The subagent has the same tools " +
-		"and permissions as you but no memory of this conversation, so its " +
-		"prompt must be complete and standalone. Its final message is returned " +
-		"as the result; the rest of its work is discarded."
+		"subtask. Kinds: general-purpose (default) has your full toolset for " +
+		"open-ended work; explore is a fast read-only search answering where " +
+		"things live; context-gatherer returns a read-only brief on how the " +
+		"code supports a task; plan designs a read-only implementation " +
+		"approach. The subagent has no memory of this conversation, so the " +
+		"prompt must be complete and standalone. Only its final message is " +
+		"returned; the rest of its work is discarded."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
   "type": "object",
   "properties": {
+    "subagent_type": {"type": "string", "enum": ["general-purpose", "explore", "context-gatherer", "plan"], "default": "general-purpose", "description": "explore: locate where something lives; context-gatherer: build a brief on how the code supports a task; plan: design an implementation approach; general-purpose: everything else, including any mutating work"},
+    "description": {"type": "string", "description": "Short 3-5 word label describing the subtask, shown while it runs"},
     "prompt": {"type": "string", "description": "Complete, standalone instructions: the goal, the relevant paths and facts, and what the final report should contain"}
   },
   "required": ["prompt"]
@@ -68,7 +73,9 @@ func (t *TaskTool) Schema() json.RawMessage {
 // Exec runs the subagent synchronously and returns its final message.
 func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
-		Prompt string `json:"prompt"`
+		Prompt       string `json:"prompt"`
+		SubagentType string `json:"subagent_type"`
+		Description  string `json:"description"` // display-only; the UI renders it
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -76,14 +83,15 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 	if strings.TrimSpace(a.Prompt) == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
+	kind, spec := normalizeKind(a.SubagentType)
 
 	sub := &Runner{
 		Provider:  t.cfg.Provider,
 		Session:   NewMemorySession(),
-		Tools:     tools.Default(t.cfg.Workdir), // no task: subagents do not recurse
+		Tools:     registryFor(kind, t.cfg.Workdir),
 		Model:     t.cfg.Model(),
 		MaxTokens: t.cfg.MaxTokens(),
-		System:    t.subagentSystem(),
+		System:    t.subagentSystem(spec),
 		Mode:      t.cfg.Mode, // live: subagents follow mid-turn switches too
 		Approver:  t.cfg.Approver,
 	}
@@ -107,13 +115,14 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 	if out == "" {
 		return "(the subagent finished without a report)", nil
 	}
-	return clipTaskResult(out), nil
+	return clipTaskResult(out, spec.ReportCap), nil
 }
 
 // subagentSystem keeps the project context (AGENTS.md guidance applies
-// to subagent work too) and adds the reporting contract.
-func (t *TaskTool) subagentSystem() string {
-	return SystemPrompt(t.cfg.Workdir) + `
+// to subagent work too), adds the reporting contract, and appends the
+// kind's own section.
+func (t *TaskTool) subagentSystem(spec kindSpec) string {
+	base := SystemPrompt(t.cfg.Workdir) + `
 
 # Subagent
 
@@ -122,16 +131,20 @@ have your own tools and a fresh context; nobody sees your intermediate
 work. Work only on the given task, then end with a final message that is
 a complete, self-contained report of what you found or changed — it is
 the only part of your run the parent agent receives.`
+	if spec.Section != "" {
+		base += "\n\n" + spec.Section
+	}
+	return base
 }
 
-// clipTaskResult caps a report, reserving room for the marker so the
-// output never exceeds the cap.
-func clipTaskResult(s string) string {
+// clipTaskResult caps a report for its kind, reserving room for the
+// marker so the output never exceeds the cap.
+func clipTaskResult(s string, cap int) string {
 	const marker = "\n\n(…truncated)"
-	if len(s) <= maxTaskResult {
+	if len(s) <= cap {
 		return s
 	}
-	return s[:maxTaskResult-len(marker)] + marker
+	return s[:cap-len(marker)] + marker
 }
 
 // interface guard: the task tool satisfies the tool contract.

@@ -10,6 +10,18 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Typed subagents (2026-09-25):** the `task` tool gained `subagent_type` and
+`description` parameters and a kind catalog (`internal/agent/subagent.go`):
+`general-purpose` keeps the current full-toolset behavior, while `explore`,
+`context-gatherer`, and `plan` are read-only profiles (read/glob/grep only —
+every call is RiskRead, so plan mode works and no approval dialog can fire)
+with per-kind system-prompt sections and report caps (16 KB general, 8 KB
+explore/gatherer, 12 KB plan). The user asked for subagent features with a
+special new-session context gatherer, polished like mainstream TUIs (Claude
+Code's general-purpose/Explore/Plan parity); the gatherer's automatic
+first-prompt run, live subagent activity in the TUI, and `subagent_model`
+land in the following commits.
+
 **Band rendering fixed (2026-09-25):** the user's screenshot showed the
 Grok bands broken two ways, both from SGR stream details: (1) lipgloss
 emits SHORT resets (`\x1b[m`) while chroma writes long ones — the reset
@@ -745,6 +757,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | Typed subagents: `task` gains `subagent_type` (general-purpose / explore / context-gatherer / plan) + `description`; read-only kinds run read/glob/grep only with per-kind report caps and system sections | (this commit) |
 | 2026-09-25 | `WORKFLOW.md`: the build-and-verify loop written down — plan → implement+tests → live-TTY self-verify (`scripts/tmux-selftest.sh`) → gate → docs; tmux harness usage, fake-model extension, SGR-test lessons, gotchas | (this commit) |
 | 2026-09-25 | Self-test harness: `scripts/tmux-selftest.sh` + `scripts/fakeai.py` — khode driven against a scripted fake model in an isolated tmux TTY, frames captured plain + with SGRs; diff features verified live (expand/collapse, both bands, gutter numbers) | (this commit) |
 | 2026-09-25 | Band rendering fixed: short-form lipgloss resets stripped so the band covers whole rows (was first-token black), trailing-blank runs keep colors (chroma folds trailing newline), bands darkened to quiet stripes | (this commit) |
