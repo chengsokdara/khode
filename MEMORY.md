@@ -563,12 +563,25 @@ If you are starting a session, or recovering after an interrupt:
   for shift+tab; `String()` then matches the real key names the handlers
   switch on ("enter", "esc", "space", "shift+tab"…). Pinned by
   `TestKeyPressStrings` — a drift here silently unhooks every chip.
+- **`go test` can write the developer's real `~/.khode/`**: `config.Dir()`
+  resolves `$HOME` at call time, so ANY test that reaches a persisting
+  path (`setMode`/`cycleMode`, `/model`, walkthrough or settings commits,
+  `cfg.Save()`) without `t.Setenv("HOME", t.TempDir())` overwrites the
+  live config — this shipped a real clobber (2026-09-25): `ui`'s
+  `newTestModel` fixture (provider "test", "test-model", mode from the
+  test) replaced a working khateway config while every test stayed green
+  (persist-then-`config.Load` tests read back their own write). Rule:
+  every test Model goes through a constructor that isolates HOME —
+  `isolateHome(t)` in `internal/ui` — and config/auth-touching tests in
+  any package do the same. Never assert persistence by reloading the
+  real path without isolation.
 
 ## Session log (append one entry per session)
 
 | Date | Session summary | Commits |
 |---|---|---|
-| 2026-09-25 | Live todo checklist (user asked for plan→todo→check-off like popular TUIs, picked the transcript panel): `DefaultSystemPrompt` teaches the workflow, plan approval result hands off to the todo list; ui `kindTodo` panel upserts in place at the live edge via the existing streaming-block mutation pattern, todo call lines suppressed, empty list clears, `full`/`fullResultBody` deleted; status line shows current task + done/total while streaming (reset on turn start/end/session switch); replay parses todo call inputs by id with `parseTodoRender` fallback for sanitized inputs; 6 new/updated ui tests + plan-approval + prompt tests | (this commit) |
+| 2026-09-25 | Fixed test-suite clobbering of the developer's real `~/.khode/config.json` (user: rebuilt khode and it came up "no api key / test-model"): `newTestModel` didn't isolate HOME, so any persisting-path test (`click_test` mode-picker apply, modepicker cycling, perm `/mode plan`) wrote the "test"/"test-model" fixture over the live config while tests stayed green (persist tests reload their own write). `isolateHome(t)` (HOME → temp dir + provider key envs cleared) now runs inside `newTestModel`; full suite verified by canary diff to leave `~/.khode` untouched; user's config restored to khateway defaults (clobbered copy kept at `~/.khode/config.json.clobbered-by-tests.bak`; khateway auth key was never touched) | (this commit) |
+| 2026-09-25 | Live todo checklist (user asked for plan→todo→check-off like popular TUIs, picked the transcript panel): `DefaultSystemPrompt` teaches the workflow, plan approval result hands off to the todo list; ui `kindTodo` panel upserts in place at the live edge via the existing streaming-block mutation pattern, todo call lines suppressed, empty list clears, `full`/`fullResultBody` deleted; status line shows current task + done/total while streaming (reset on turn start/end/session switch); replay parses todo call inputs by id with `parseTodoRender` fallback for sanitized inputs; 6 new/updated ui tests + plan-approval + prompt tests | e4d8dd9 |
 | 2026-09-16 | Scaffolded repo; Phase 1 done (TUI + Anthropic streaming + sessions + docs) | baa7520 |
 | 2026-09-16 | Phase 2 step 1: OpenAI provider via openai-go v1.12, `--provider` flag, fake-SSE provider test, docs | 7ae2922 |
 | 2026-09-16 | Phase 2 step 2: `config.Provider` + per-provider `models` map with legacy migration, flags → overrides, config unit tests, docs | 3de9993 |

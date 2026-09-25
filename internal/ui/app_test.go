@@ -24,9 +24,23 @@ func (nameOnlyProvider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Eve
 	return nil, nil
 }
 
+// isolateHome points khode's state dir (~/.khode) at a fresh temp dir
+// for the test's duration and clears provider key envs, so persisting
+// flows (mode switches, /model, walkthrough commits) can never reach
+// the developer's real state — a full test run once overwrote a live
+// ~/.khode/config.json with this package's "test" fixture.
+func isolateHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("KHATEWAY_API_KEY", "")
+}
+
 // newTestModel builds a Model over a temp session with default tools.
 func newTestModel(t *testing.T) Model {
 	t.Helper()
+	isolateHome(t)
 	cfg := &config.Config{Provider: "test", MaxTokens: 100}
 	cfg.SetModel("test-model")
 	sess, err := agent.NewSession(t.TempDir())

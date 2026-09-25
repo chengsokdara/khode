@@ -10,6 +10,15 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Test isolation fix (2026-09-25):** `go test ./internal/ui` could
+overwrite the developer's real `~/.khode/config.json` — `newTestModel`
+didn't pin HOME, so tests that reach persisting paths (mode picker
+apply, `/mode plan`, shift+tab cycling) wrote their "test"/"test-model"
+fixture over the live config, and the persist assertions passed because
+they reloaded their own write. `isolateHome(t)` now runs inside
+`newTestModel` (HOME → temp dir, provider key envs cleared), verified
+by a canary diff across a full suite run.
+
 **Live todo checklist (2026-09-25):** the todo tool now actually drives
 multi-step work, Claude Code style. The base system prompt teaches the
 workflow (multi-step work keeps a todo list, exactly one item
@@ -633,7 +642,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | Live todo checklist: system prompt + plan-approval handoff drive the todo tool; TUI renders one in-place checklist panel (todo call lines suppressed, empty list clears, id-paired replay) and the status line tracks the current task | (this commit) |
+| 2026-09-25 | Test isolation: `isolateHome` in `newTestModel` stops `go test ./internal/ui` from writing the real `~/.khode/config.json` (a fixture clobber shipped in the mode-persist tests); canary-verified | (this commit) |
+| 2026-09-25 | Live todo checklist: system prompt + plan-approval handoff drive the todo tool; TUI renders one in-place checklist panel (todo call lines suppressed, empty list clears, id-paired replay) and the status line tracks the current task | e4d8dd9 |
 | 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs | baa7520 |
 | 2026-09-16 | OpenAI provider (`openai-go` v1.12) + `--provider` flag + fake-SSE provider test | 7ae2922 |
 | 2026-09-16 | Provider selection in config: `provider` + per-provider `models` map, legacy migration, flags → overrides | 3de9993 |
