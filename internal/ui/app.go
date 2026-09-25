@@ -1813,21 +1813,18 @@ func oneLine(s string) string {
 // edit/write call.
 const diffPreviewLines = 20
 
-// diffBlock renders a write-class result as a git-style change: the ⎿
-// summary line, then the syntax-highlighted diff hung under it, capped
-// at diffPreviewLines lines unless expanded.
+// diffBlock renders a write-class result as a Grok-style change: the ⎿
+// summary line, then the banded, line-numbered diff flush left under
+// it, capped at diffPreviewLines lines unless expanded.
 func diffBlock(summary, diff, path string, width int, expanded bool) string {
-	lines := renderDiffLines(diff, path, width-3)
+	lines := renderDiffLines(diff, path, width)
 	if !expanded && len(lines) > diffPreviewLines {
 		lines = append(lines[:diffPreviewLines],
 			dimStyle.Render(fmt.Sprintf("… %d more diff lines · ctrl+o to expand",
 				len(lines)-diffPreviewLines)))
 	}
-	for i := range lines {
-		lines[i] = "   " + lines[i]
-	}
 	if expanded {
-		lines = append(lines, "   "+dimStyle.Render("· ctrl+o to collapse"))
+		lines = append(lines, dimStyle.Render("· ctrl+o to collapse"))
 	}
 	return resultStyle.Render("⎿  "+summary) + "\n" + strings.Join(lines, "\n")
 }

@@ -10,6 +10,22 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Grok-style write diffs (2026-09-25):** the edit/write diff block
+dropped its git conventions for the Grok treatment: a dim line-number
+gutter (width of the largest number the diff shows, per-hunk numbers
+parsed from the `@@` headers — removed lines show old numbers, added
+the new), full-width background bands behind changes (dark green
+`#17301F` additions, dark red `#3B1D21` removals, padded edge to edge
+with the band so rows read as stripes), no `+`/`-` markers and no `@@`
+header rows, and the aurora syntax colors riding on top (chroma resets
+once per line, so `bandLine` strips that reset and injects the
+background SGR — a lipgloss background would be killed mid-line by the
+embedded resets). The diff body sits flush left under the ⎿ summary;
+the expansion cap now counts pure content lines. Bands are darker than
+the foreground palette on purpose so syntax colors stay legible; the
+approval dialog's simpler +/- colorizer is unchanged (it has no file
+path to pick a lexer with).
+
 **VSCode-style diff highlighting + expandable output (2026-09-25):** the
 diff under edit/write results now syntax-highlights the code instead of
 painting every line flat green/red — chroma (already glamour's lexer)
@@ -701,7 +717,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | VSCode-style syntax highlighting in edit/write diffs (aurora chroma palette, lexer by file extension, run-based) + expandable truncated tool results and diffs (ctrl+o, click regions, red non-bold error bodies) | (this commit) |
+| 2026-09-25 | Grok-style write diffs: line-number gutter from `@@` headers (old numbers on removals, new on additions), full-width dark green/red background bands instead of +/- markers, headers dropped, flush-left body | (this commit) |
+| 2026-09-25 | VSCode-style syntax highlighting in edit/write diffs (aurora chroma palette, lexer by file extension, run-based) + expandable truncated tool results and diffs (ctrl+o, click regions, red non-bold error bodies) | ec82868 |
 | 2026-09-25 | Tool call lines readable (bash command, paths, patterns — JSON only for shapeless tools) + stray-bar fix: unfinished mid-stream markdown constructs rendered bar-only rows; trailing bar-only rows dropped, whitespace-only blocks never seal, deltas target the open streaming block past appended activity | 90f32fb |
 | 2026-09-25 | Git-style diffs for edit/write in the chat (`tools.ChangeDiff` from input alone, `kindDiff` block with colorized capped diff, path-only call lines, replay support) + fix: streaming blocks rendered twice per frame (duplicate thinking lines, stacked bars) | 7f40bf8 |
 | 2026-09-25 | Test isolation: `isolateHome` in `newTestModel` stops `go test ./internal/ui` from writing the real `~/.khode/config.json` (a fixture clobber shipped in the mode-persist tests); canary-verified | (this commit) |

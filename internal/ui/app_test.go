@@ -799,8 +799,9 @@ func TestStreamingBlocksRenderOnce(t *testing.T) {
 	}
 }
 
-// An edit result renders as its git-style change: the call line names
-// the file only, the diff block pairs the summary with -/+ lines.
+// An edit result renders as its Grok-style change: the call line names
+// the file only, the diff block pairs the summary with banded,
+// line-numbered code — no @@ headers, no +/- markers.
 func TestEditResultRendersDiff(t *testing.T) {
 	evs := []llm.Event{
 		llm.ToolCallEvent{ToolCall: llm.ToolCall{
@@ -824,9 +825,19 @@ func TestEditResultRendersDiff(t *testing.T) {
 			}
 		case kindDiff:
 			sawDiff = true
-			for _, want := range []string{"⎿  Edited main.go", "-x := 1", "+x := 2"} {
+			raw := m.block(i, 80)
+			for _, want := range []string{"⎿  Edited main.go", "x := 1", "x := 2"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("diff block = %q, missing %q", out, want)
+				}
+			}
+			if strings.Contains(out, "@@") {
+				t.Errorf("diff block shows a hunk header: %q", out)
+			}
+			// both lines carry their background bands
+			for _, band := range []string{"\x1b[48;2;59;29;33m", "\x1b[48;2;23;48;31m"} {
+				if !strings.Contains(raw, band) {
+					t.Errorf("diff block missing band %q: %q", band, ansiStrip(raw))
 				}
 			}
 		case kindToolResult:
@@ -896,10 +907,10 @@ func TestEditReplayRendersDiff(t *testing.T) {
 			continue
 		}
 		sawDiff = true
-		out := ansiStrip(m.block(i, 80))
-		for _, want := range []string{"⎿  Wrote new.txt", "+hi"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("replayed diff block = %q, missing %q", out, want)
+		raw := m.block(i, 80)
+		for _, want := range []string{"⎿  Wrote new.txt", "hi", "\x1b[48;2;23;48;31m"} {
+			if !strings.Contains(raw, want) {
+				t.Errorf("replayed diff block = %q, missing %q", ansiStrip(raw), want)
 			}
 		}
 	}
@@ -1027,7 +1038,7 @@ func TestDiffHighlightsCode(t *testing.T) {
 		"\x1b[38;2;94;234;212m", // keyword cyan (#5EEAD4) — const/router
 		"\x1b[38;2;251;191;36m", // string amber (#FBBF24) — 'express'
 		"\x1b[38;2;92;107;115m", // comment dim (#5C6B73)
-		addStyle.Render("+"),    // the green marker
+		"\x1b[48;2;23;48;31m",   // the additions band
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("highlighted diff missing %q: %q", want, ansiStrip(out))
@@ -1091,9 +1102,9 @@ func TestCtrlOExpandsDiff(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 
-	// The @@ header counts toward the cap: 20 drawn lines (header +
-	// 19 content), 11 hidden.
-	if out := ansiStrip(m.block(0, 100)); !strings.Contains(out, "… 11 more diff lines · ctrl+o to expand") {
+	// Hunk headers are parsed away, so the cap counts pure content
+	// lines: 20 drawn, 10 hidden.
+	if out := ansiStrip(m.block(0, 100)); !strings.Contains(out, "… 10 more diff lines · ctrl+o to expand") {
 		t.Errorf("collapsed diff = %q", out)
 	}
 	next, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
@@ -1125,5 +1136,27 @@ func TestClickTogglesExpand(t *testing.T) {
 	m = clickAt(t, m, func(r region) bool { return r.kind == clickExpand })
 	if m.messages[0].expanded {
 		t.Error("click did not collapse the expanded result")
+	}
+}
+
+// The line-number gutter tracks each side of the diff: removed lines
+// show their old number, added lines the new one, and every hunk resets
+// from its header (the Grok treatment).
+func TestDiffGutterNumbers(t *testing.T) {
+	diff := "@@ -12,2 +12,3 @@\n ctx\n-del old\n+add new\n+add new2\n" +
+		"@@ -40,1 +41,1 @@\n+second hunk\n"
+	rendered := renderDiffLines(diff, "a.ts", 100)
+	lines := make([]string, len(rendered))
+	for i, l := range rendered {
+		lines[i] = ansiStrip(l)
+	}
+	want := []string{"12 ctx", "13 del old", "13 add new", "14 add new2", "41 second hunk"}
+	if len(lines) != len(want) {
+		t.Fatalf("rendered %d lines, want %d: %q", len(lines), len(want), lines)
+	}
+	for i, w := range want {
+		if !strings.HasPrefix(lines[i], w) {
+			t.Errorf("line %d = %q, want prefix %q", i, lines[i], w)
+		}
 	}
 }
