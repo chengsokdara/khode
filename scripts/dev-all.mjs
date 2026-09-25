@@ -13,7 +13,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const CHILDREN = [
-  { tag: 'worker', cmd: 'npx', args: ['wrangler', 'dev', '--port', '8787'], color: '\x1b[36m' }, // cyan
+  // --test-scheduled exposes /__scheduled for firing the free-models sync cron
+  // locally: curl "http://localhost:8787/__scheduled?cron=17+3+*+*+*"
+  { tag: 'worker', cmd: 'npx', args: ['wrangler', 'dev', '--port', '8787', '--test-scheduled'], color: '\x1b[36m' }, // cyan
   { tag: 'ui', cmd: 'npx', args: ['vite'], color: '\x1b[35m' }, // magenta
 ];
 const RESET = '\x1b[0m';

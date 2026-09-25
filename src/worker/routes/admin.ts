@@ -7,7 +7,7 @@ import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
 import type { Adapter, Env } from '../env';
 import { DEFAULT_BASES, joinAdapterUrl, joinUrl } from '../env';
 import { KNOWN_ADAPTERS } from '../../shared/adapters';
-import { parseAdapters } from '../routing';
+import { parseAdapters, SLUG_RE } from '../routing';
 import { getDb } from '../db';
 import { apiKeys, balanceEntries, models, orgMembers, orgs, providers, requestLogs, sessions, userSessions, users } from '../db/schema';
 import {
@@ -44,13 +44,15 @@ import {
   timingSafeStrEqual,
 } from '../auth';
 import { loginAllowed } from '../ratelimit/client';
+import { listUpstreamModels, type ProviderRow, type UpstreamModel } from '../discovery';
+import { runModelsSync } from '../models-sync';
+import { getModelsSyncLastRun } from '../db/settings';
 
 type AdminEnv = { Bindings: Env };
 
 export const adminApp = new Hono<AdminEnv>();
 
 const KNOWN_CAPS = ['streaming', 'tools', 'vision', 'reasoning', 'json'] as const;
-const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/;
 
 const apiErr = (error: string) => ({ error });
 
@@ -153,7 +155,6 @@ function normalizeAdapters(v: unknown): { err?: string; val?: Adapter[] } {
   return { val: [...seen] };
 }
 
-type ProviderRow = typeof providers.$inferSelect;
 type ProviderInsert = typeof providers.$inferInsert;
 type ModelInsert = typeof models.$inferInsert;
 
@@ -167,6 +168,7 @@ function providerDto(
     defaultHeaders?: string | null;
     timeoutMs?: number | null;
     enabled?: boolean;
+    autoSync?: boolean | null;
   },
   modelCount = 0,
 ) {
@@ -182,6 +184,7 @@ function providerDto(
     default_headers: parseJsonObject(r.defaultHeaders),
     timeout_ms: r.timeoutMs,
     enabled: Boolean(r.enabled),
+    auto_sync: Boolean(r.autoSync ?? false),
     model_count: modelCount,
   };
 }
@@ -727,6 +730,7 @@ adminApp.get('/providers', async (c) => {
       defaultHeaders: providers.defaultHeaders,
       timeoutMs: providers.timeoutMs,
       enabled: providers.enabled,
+      autoSync: providers.autoSync,
       createdAt: providers.createdAt,
       modelCount: count(models.id),
     })
@@ -746,6 +750,7 @@ adminApp.get('/providers', async (c) => {
           defaultHeaders: r.defaultHeaders,
           timeoutMs: r.timeoutMs,
           enabled: r.enabled,
+          autoSync: r.autoSync,
         },
         r.modelCount,
       ),
@@ -815,6 +820,7 @@ adminApp.post('/providers', async (c) => {
     defaultHeaders: headers ? JSON.stringify(headers) : null,
     timeoutMs,
     enabled: body.enabled !== false,
+    autoSync: body.auto_sync === true,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -864,6 +870,10 @@ adminApp.patch('/providers/:id', async (c) => {
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') return c.json(apiErr('enabled must be a boolean'), 400);
     patch.enabled = body.enabled;
+  }
+  if (body.auto_sync !== undefined) {
+    if (typeof body.auto_sync !== 'boolean') return c.json(apiErr('auto_sync must be a boolean'), 400);
+    patch.autoSync = body.auto_sync;
   }
   if (body.api_key !== undefined) {
     if (body.api_key === null || body.api_key === '') {
@@ -978,114 +988,21 @@ adminApp.post('/providers/:id/test', async (c) => {
 });
 
 // ------------------------------------------------- upstream model discovery
+// The probing/normalizing logic lives in ../discovery.ts (shared with the
+// free-models sync); the routes below are its two admin faces.
 
-/** One upstream model as offered for import into the Khateway catalog. */
-interface UpstreamModel {
-  id: string;
-  displayName: string | null;
-  contextWindow: number | null;
-  maxOutputTokens: number | null;
-}
-const UPSTREAM_MODELS_MAX = 500;
-
-/**
- * Probes the upstream /models listing (openai-compatible: GET /models;
- * anthropic: GET /v1/models) with the provider's effective base URL,
- * credentials and default headers, and normalizes the result into
- * UpstreamModel entries. Model discovery is best-effort: entries with
- * unusable ids are skipped, everything else passes through as offered.
- * A provider without a stored base URL rides the adapter default —
- * discovery probes there too (same fallback the connection test uses).
- */
-async function listUpstreamModels(env: Env, p: ProviderRow): Promise<{ ok: true; models: UpstreamModel[] } | { ok: false; error: string; status: number | null }> {
-  let key: string | null = null;
-  try {
-    key = await decryptSecret(env, p.apiKeyEnc);
-  } catch (e) {
-    return { ok: false, status: null, error: `Stored API key unreadable: ${e instanceof Error ? e.message : 'decrypt failed'}` };
-  }
-
-  const adapters = parseAdapters(p.adapters);
-  const adapter: Adapter = adapters[0] ?? 'openai';
-  const isAnthropic = adapter === 'anthropic';
-  const isGemini = adapter === 'gemini';
-  const base = (p.baseUrl ?? DEFAULT_BASES[adapter]).replace(/\/+$/, '');
-  const url = joinAdapterUrl(base, adapter, isAnthropic ? '/v1/models' : '/models');
-  const headers: Record<string, string> = {
-    ...(parseJsonObject(p.defaultHeaders) ?? {}),
-    ...(isAnthropic
-      ? { 'x-api-key': key ?? '', 'anthropic-version': '2023-06-01' }
-      : isGemini
-        ? { 'x-goog-api-key': key ?? '' }
-        : key
-          ? { Authorization: `Bearer ${key}` }
-          : {}),
+/** snake_case wire shape of a discovered model (pricing rides along when the
+ * upstream listing exposed it — OpenRouter-style — so the picker can flag
+ * free entries and the import can land real prices). */
+function upstreamModelWire(m: UpstreamModel) {
+  return {
+    id: m.id,
+    display_name: m.displayName,
+    context_window: m.contextWindow,
+    max_output_tokens: m.maxOutputTokens,
+    pricing_input: m.pricingInput,
+    pricing_output: m.pricingOutput,
   };
-
-  try {
-    const res = await fetch(url, {
-      headers,
-      signal: AbortSignal.timeout(Math.min(15_000, Math.max(1_500, p.timeoutMs ?? 8_000))),
-    });
-    if (!res.ok) {
-      const errBody = (await res.text().catch(() => '')).slice(0, 240);
-      return { ok: false, status: res.status, error: errBody || `HTTP ${res.status}` };
-    }
-    if (isGemini) {
-      // Gemini listing: {models:[{name:'models/gemini-2.5-flash', displayName,
-      // inputTokenLimit, outputTokenLimit, supportedGenerationMethods}]} — ids
-      // are the stripped names; non-generateContent entries (embeddings, tts…)
-      // are skipped since the gateway only routes chat generation.
-      const body = (await res.json().catch(() => null)) as { models?: unknown } | null;
-      if (!body || !Array.isArray(body.models)) {
-        return { ok: false, status: res.status, error: 'Upstream returned an unexpected /models response (no models array).' };
-      }
-      const models: UpstreamModel[] = [];
-      const seen = new Set<string>();
-      for (const raw of body.models) {
-        if (!raw || typeof raw !== 'object') continue;
-        const m = raw as Record<string, unknown>;
-        const id = typeof m.name === 'string' ? m.name.trim().replace(/^models\//, '') : '';
-        if (!id || seen.has(id)) continue;
-        const methods = Array.isArray(m.supportedGenerationMethods) ? (m.supportedGenerationMethods as unknown[]) : null;
-        if (methods && !methods.includes('generateContent')) continue;
-        seen.add(id);
-        const ctx = typeof m.inputTokenLimit === 'number' ? m.inputTokenLimit : null;
-        const out = typeof m.outputTokenLimit === 'number' ? m.outputTokenLimit : null;
-        const name = typeof m.displayName === 'string' && m.displayName.trim() ? m.displayName.trim() : null;
-        models.push({ id, displayName: name, contextWindow: ctx, maxOutputTokens: out });
-        if (models.length >= UPSTREAM_MODELS_MAX) break;
-      }
-      return { ok: true, models };
-    }
-    const body = (await res.json().catch(() => null)) as { data?: unknown } | null;
-    if (!body || !Array.isArray(body.data)) {
-      return { ok: false, status: res.status, error: 'Upstream returned an unexpected /models response (no data array).' };
-    }
-    const models: UpstreamModel[] = [];
-    const seen = new Set<string>();
-    for (const raw of body.data) {
-      if (!raw || typeof raw !== 'object') continue;
-      const m = raw as Record<string, unknown>;
-      const id = typeof m.id === 'string' ? m.id.trim() : '';
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      const ctx = typeof m.context_window === 'number' ? m.context_window : typeof m.context_length === 'number' ? m.context_length : null;
-      // OpenRouter-style listings nest the output cap in top_provider.max_completion_tokens.
-      const tp = (m.top_provider ?? null) as Record<string, unknown> | null;
-      const out =
-        typeof m.max_output_tokens === 'number' ? m.max_output_tokens
-        : tp && typeof tp.max_completion_tokens === 'number' ? tp.max_completion_tokens
-        : null;
-      const name = typeof m.display_name === 'string' && m.display_name.trim() ? m.display_name.trim() : null;
-      models.push({ id, displayName: name, contextWindow: ctx, maxOutputTokens: out });
-      if (models.length >= UPSTREAM_MODELS_MAX) break;
-    }
-    return { ok: true, models };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'network error';
-    return { ok: false, status: null, error: /abort|timeout/i.test(msg) ? 'Timed out fetching models' : msg };
-  }
 }
 
 /**
@@ -1098,14 +1015,7 @@ adminApp.post('/providers/:id/fetch-models', async (c) => {
   if (!p) return c.json(apiErr('Provider not found'), 404);
   const res = await listUpstreamModels(c.env, p);
   if (!res.ok) return c.json({ error: res.error, status: res.status }, 502);
-  return c.json({
-    models: res.models.map((m) => ({
-      id: m.id,
-      display_name: m.displayName,
-      context_window: m.contextWindow,
-      max_output_tokens: m.maxOutputTokens,
-    })),
-  });
+  return c.json({ models: res.models.map(upstreamModelWire) });
 });
 
 /**
@@ -1149,6 +1059,7 @@ adminApp.post('/providers/fetch-models', async (c) => {
     defaultHeaders: headers.val ? JSON.stringify(headers.val) : null,
     timeoutMs: typeof body.timeout_ms === 'number' && Number.isFinite(body.timeout_ms) ? Math.min(120_000, Math.max(1_000, Math.round(body.timeout_ms))) : null,
     enabled: true,
+    autoSync: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -1168,14 +1079,7 @@ adminApp.post('/providers/fetch-models', async (c) => {
 
   const res = await listUpstreamModels(c.env, synthetic);
   if (!res.ok) return c.json({ error: res.error, status: res.status }, 502);
-  return c.json({
-    models: res.models.map((m) => ({
-      id: m.id,
-      display_name: m.displayName,
-      context_window: m.contextWindow,
-      max_output_tokens: m.maxOutputTokens,
-    })),
-  });
+  return c.json({ models: res.models.map(upstreamModelWire) });
 });
 
 /** One row to create: an upstream id plus optional discovery metadata. */
@@ -1184,12 +1088,21 @@ interface ImportEntry {
   displayName: string | null;
   contextWindow: number | null;
   maxOutputTokens: number | null;
+  pricingInput: number | null;
+  pricingOutput: number | null;
 }
 
 /** undefined/null → null; otherwise a non-negative integer or 'invalid'. */
 function optionalNonNegativeInt(v: unknown): number | null | 'invalid' {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return 'invalid';
+  return v;
+}
+
+/** undefined/null → null; otherwise a finite 0–10000 USD-per-1M price or 'invalid' (buildModelPatch bounds). */
+function optionalPrice(v: unknown): number | null | 'invalid' {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 10_000) return 'invalid';
   return v;
 }
 
@@ -1209,7 +1122,7 @@ adminApp.post('/providers/:id/import-models', async (c) => {
   const body = await readJson(c);
   if (!body) return c.json(apiErr('Invalid JSON body'), 400);
 
-  const entryErr = 'Send model_ids (string array) or models (array of { id, display_name?, context_window?, max_output_tokens? })';
+  const entryErr = 'Send model_ids (string array) or models (array of { id, display_name?, context_window?, max_output_tokens?, pricing_input?, pricing_output? })';
   if (body.model_ids !== undefined && body.models !== undefined) {
     return c.json(apiErr('Send either model_ids or models, not both'), 400);
   }
@@ -1228,11 +1141,18 @@ adminApp.post('/providers/:id/import-models', async (c) => {
       if (ctx === 'invalid' || out === 'invalid') {
         return c.json(apiErr('context_window / max_output_tokens must be integers ≥ 0'), 400);
       }
+      const pin = optionalPrice(m.pricing_input);
+      const pout = optionalPrice(m.pricing_output);
+      if (pin === 'invalid' || pout === 'invalid') {
+        return c.json(apiErr('pricing_input / pricing_output must be null or 0–10000 (USD per 1M tokens)'), 400);
+      }
       entries.push({
         id: m.id.trim(),
         displayName: typeof m.display_name === 'string' && m.display_name.trim() ? m.display_name.trim().slice(0, 200) : null,
         contextWindow: ctx,
         maxOutputTokens: out,
+        pricingInput: pin,
+        pricingOutput: pout,
       });
     }
   } else {
@@ -1241,7 +1161,14 @@ adminApp.post('/providers/:id/import-models', async (c) => {
       : [];
     if (ids.length === 0) return c.json(apiErr(entryErr), 400);
     if (ids.length > 100) return c.json(apiErr('Import at most 100 models at a time'), 400);
-    entries = [...new Set(ids.map((x) => x.trim()))].map((id) => ({ id, displayName: null, contextWindow: null, maxOutputTokens: null }));
+    entries = [...new Set(ids.map((x) => x.trim()))].map((id) => ({
+      id,
+      displayName: null,
+      contextWindow: null,
+      maxOutputTokens: null,
+      pricingInput: null,
+      pricingOutput: null,
+    }));
   }
   // First occurrence wins on duplicate ids within one import.
   const seenId = new Set<string>();
@@ -1267,6 +1194,8 @@ adminApp.post('/providers/:id/import-models', async (c) => {
       displayName: entry.displayName,
       contextWindow: entry.contextWindow,
       maxOutputTokens: entry.maxOutputTokens,
+      pricingInput: entry.pricingInput,
+      pricingOutput: entry.pricingOutput,
       enabled: true,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1278,6 +1207,18 @@ adminApp.post('/providers/:id/import-models', async (c) => {
 });
 
 // ------------------------------------------------------------------ models
+
+// Free-models sync (models-sync.ts): the Models page's "Sync now" button runs
+// the same routine the daily cron runs; GET returns the persisted last-run
+// summary (null when the sync has never run).
+adminApp.post('/models/sync', async (c) => {
+  const summary = await runModelsSync(c.env, 'admin');
+  return c.json(summary);
+});
+
+adminApp.get('/models/sync', async (c) => {
+  return c.json({ last_run: await getModelsSyncLastRun(c.env) });
+});
 
 adminApp.get('/models', async (c) => {
   const providerId = c.req.query('provider_id');

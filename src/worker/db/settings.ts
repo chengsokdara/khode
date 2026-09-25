@@ -183,7 +183,7 @@ export async function setCacheSettings(env: Env, patch: Partial<CacheSettings>):
 
 /**
  * Reads the public-signup flag. Absent row → 'on' (this is a public platform:
- * accounts are the point of M8); admins can close it. NOT cached — portal
+ * accounts are the point of M8); administrators can close it. NOT cached — portal
  * signups are rare and must not fail open on a DB hiccup (a failed read here
  * means 'off': signup is a low-traffic path, fail closed).
  */
@@ -194,6 +194,25 @@ export async function getPublicSignup(env: Env): Promise<PublicSignup> {
 
 export async function setPublicSignup(env: Env, value: PublicSignup): Promise<void> {
   await writeSetting(env, PUBLIC_SIGNUP_KEY, value);
+}
+
+/** Free-models sync (models-sync.ts): JSON summary of the last run, written by
+ * the daily cron and the admin "Sync now" button, read by the Models page.
+ * NOT cached — one write per run, one read per page load. */
+export const MODELS_SYNC_LAST_RUN_KEY = 'models_sync_last_run';
+
+export async function getModelsSyncLastRun(env: Env): Promise<unknown> {
+  const raw = await readSetting(env, MODELS_SYNC_LAST_RUN_KEY);
+  if (raw == null) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+export async function setModelsSyncLastRun(env: Env, summary: unknown): Promise<void> {
+  await writeSetting(env, MODELS_SYNC_LAST_RUN_KEY, JSON.stringify(summary));
 }
 
 /** Test hook: clears the in-memory cache (tests share the module across cases). */

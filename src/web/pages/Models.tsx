@@ -1,12 +1,13 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Boxes, CheckSquare, Download, Pencil, Plus, Square, Trash2 } from 'lucide-react';
+import { Boxes, CheckSquare, Download, Pencil, Plus, RefreshCw, Square, Trash2 } from 'lucide-react';
 import {
   ADAPTER_LABELS,
   api,
   CAPABILITIES,
   type ImportResult,
   type ModelRow,
+  type ModelsSyncSummary,
   type Provider,
   type UpstreamModel,
 } from '../api';
@@ -411,6 +412,7 @@ function ModelModal({
                       <span className="ml-auto flex items-center gap-1.5">
                         {already ? <Badge>already added</Badge> : null}
                         {!selectable && !already ? <Badge tone="warn">unsupported name</Badge> : null}
+                        {m.pricing_input === 0 && m.pricing_output === 0 ? <Badge tone="ok">free</Badge> : null}
                         {m.context_window != null ? (
                           <span className="font-mono text-[11px] text-zinc-600">{Math.round(m.context_window / 1000)}k ctx</span>
                         ) : null}
@@ -428,7 +430,8 @@ function ModelModal({
                   {allVisibleSelected ? 'Deselect shown' : 'Select all shown'}
                 </Button>
                 <span className="text-[11px] text-zinc-600">
-                  Context limits + display names are filled in — set pricing per model after import.
+                  Context limits, display names and free-tier pricing ($0) are filled in — set other pricing per
+                  model after import.
                 </span>
               </div>
             </Field>
@@ -598,15 +601,35 @@ export function Models() {
   // Unfiltered slug set for the import picker's "already added" markers
   // (slug uniqueness is global across providers).
   const allQ = useQuery({ queryKey: ['models', ''], queryFn: () => api.models() });
+  // Last free-models sync summary (daily cron writes it; the Sync-now button too).
+  const syncQ = useQuery({ queryKey: ['models-sync-last'], queryFn: api.lastModelsSync });
 
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<ModelRow | null>(null);
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ModelRow | null>(null);
 
+  const sync = useMutation({
+    mutationFn: () => api.syncModels(),
+    onSuccess: (s: ModelsSyncSummary) => {
+      qc.invalidateQueries({ queryKey: ['models'] });
+      qc.invalidateQueries({ queryKey: ['providers'] });
+      qc.invalidateQueries({ queryKey: ['overview'] });
+      qc.invalidateQueries({ queryKey: ['models-sync-last'] });
+      const t = s.totals;
+      toast(
+        s.providers_synced === 0
+          ? 'No providers have auto-sync enabled (toggle it on a provider first)'
+          : `Synced ${s.providers_synced} provider(s): +${t.created} new · ${t.updated} refreshed · ${t.disabled} disabled · ${t.enabled} re-enabled`,
+      );
+    },
+    onError: (e) => toast(e instanceof Error ? e.message : 'Sync failed', 'err'),
+  });
+
   const providers = pq.data ?? [];
   const models = mq.data ?? [];
   const existingSlugs = useMemo(() => new Set((allQ.data ?? []).map((m) => m.slug)), [allQ.data]);
+  const anyAutoSync = providers.some((p) => p.auto_sync);
 
   const toggle = useMutation({
     mutationFn: (m: ModelRow) => api.updateModel(m.id, { enabled: !m.enabled }),
@@ -638,6 +661,12 @@ export function Models() {
   }, [models, search]);
 
   const noProviders = providers.length === 0;
+  const lastRun = syncQ.data?.last_run ?? null;
+  const lastRunText = lastRun
+    ? `Last free-models sync ${new Date(lastRun.ran_at).toLocaleString()} (${lastRun.triggered_by === 'cron' ? 'daily cron' : 'manual'}): ` +
+      `+${lastRun.totals.created} new · ${lastRun.totals.updated} refreshed · ${lastRun.totals.disabled} disabled · ${lastRun.totals.enabled} re-enabled` +
+      (lastRun.providers_failed ? ` · ${lastRun.providers_failed} provider(s) failed` : '')
+    : null;
 
   return (
     <div>
@@ -645,16 +674,33 @@ export function Models() {
         title="Models"
         subtitle="Platform slugs clients route through — each maps to a provider's upstream model."
         action={
-          <Button
-            onClick={() => setAdding(true)}
-            disabled={noProviders}
-            title={noProviders ? 'Add a provider first' : undefined}
-          >
-            <Plus className="h-4 w-4" />
-            Add model
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={() => sync.mutate()}
+              disabled={sync.isPending}
+              title={
+                anyAutoSync
+                  ? 'Import + refresh verified-free models from auto-sync providers (the daily cron does this too)'
+                  : 'Enable "Auto-sync free models" on a provider first (Providers page)'
+              }
+            >
+              {sync.isPending ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
+              Sync free models
+            </Button>
+            <Button
+              onClick={() => setAdding(true)}
+              disabled={noProviders}
+              title={noProviders ? 'Add a provider first' : undefined}
+            >
+              <Plus className="h-4 w-4" />
+              Add model
+            </Button>
+          </>
         }
       />
+
+      {lastRunText ? <p className="-mt-2 mb-4 text-[11px] text-zinc-500">{lastRunText}</p> : null}
 
       {pq.isLoading || mq.isLoading ? (
         <div className="flex justify-center py-20">

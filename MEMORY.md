@@ -1,9 +1,34 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-25 (usage dashboard filters — /admin/usage filter bar — shipped + deployed)
+Last updated: 2026-09-25 (free-models auto-sync — daily cron + per-provider opt-in — complete locally, not deployed)
 
 ## Cross-session facts
 
+- **Free-models auto-sync (2026-09-25)** — keeps the catalog fresh with FREE
+  upstream models; the module is `src/worker/models-sync.ts` + the cron entry
+  in index.ts (`export default { fetch: app.fetch, scheduled }` — the repo's
+  FIRST scheduled handler) + `triggers.crons: ["17 3 * * *"]` in
+  wrangler.jsonc. Opt-in per provider (`providers.auto_sync`, Providers
+  modal switch); Gemini-adapter listings count as free-tier by user choice
+  (their per-request cost logs read $0.00 even on paid-tier usage — accepted).
+  Free rule: pricing present → BOTH per-1M prices exactly 0; else `:free` id
+  suffix; gemini → always. Discovery pricing capture lives in
+  `src/worker/discovery.ts` (`perTokenToPerMillion`; OpenRouter per-token
+  strings ×1e6). Sync-created rows: `models.sync_source='free_sync'`,
+  pricing 0/0 (genuine zeros — null means UNKNOWN in cost math, never write
+  null for free), enabled managed by the sync (dropout → disable, reappear →
+  re-enable; deleting a sync-owned row just gets it recreated next run while
+  upstream still lists it — turn the provider toggle off to freeze). Manual
+  rows are NEVER touched; slug conflicts are skips. **OpenRouter ids
+  (`vendor/model:free`) can't be slugs** (`/` and `:` banned) —
+  `syncSlugForId` collapses banned runs to `-` (raw id rides
+  `upstream_model`). Local cron testing: dev scripts pass
+  `--test-scheduled` and `/__scheduled` is in run_worker_first — WITHOUT the
+  run_worker_first entry the assets SPA fallback swallows the route (silent
+  200 index.html; found by smoke). Last-run summary persists in settings
+  `models_sync_last_run` (GET/POST /api/admin/models/sync). NOT deployed —
+  migration 0013 needs `wrangler d1 migrations apply khateway --remote`.
+  Counts: offline 371, smoke_gateway 231.
 - **Usage dashboard (2026-09-24)** — the admin usage dashboard lives at
   `/admin/usage` backed by `GET /api/admin/usage?days=N` (clamp 1–90, default
   7; days=1 hourly, else daily buckets; bucket-aligned window, current partial

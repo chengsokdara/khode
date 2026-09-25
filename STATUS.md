@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-25 (usage dashboard filters shipped + DEPLOYED; dashboard + P-pack + social sign-in live)
+Last updated: 2026-09-25 (free-models auto-sync — daily cron + admin Sync now — complete locally, not yet deployed)
 
 ## How to use this file
 
@@ -11,6 +11,57 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **Free-models auto-sync ✅ complete (2026-09-25, local only — NOT deployed;
+  run `wrangler d1 migrations apply khateway --remote` for 0013 before the
+  next deploy)** — user: "update the models list on a regular basis … only
+  import or update model that is free." Approved decisions: daily period,
+  per-provider opt-in, auto-disable dropouts (sync-owned rows only), Gemini
+  listings count as free-tier. Shipped:
+  - **Schema (migration 0013)**: `providers.auto_sync` (boolean, default
+    false) + `models.sync_source` (text; `'free_sync'` marks sync-owned rows).
+  - **`src/worker/discovery.ts`** (new): `listUpstreamModelsForAdapter` +
+    first-adapter `listUpstreamModels` lifted VERBATIM from admin.ts (admin
+    faces unchanged) + NEW pricing capture — OpenRouter-style
+    `pricing.prompt`/`pricing.completion` per-token strings → USD per 1M
+    (`perTokenToPerMillion`; "0" → 0 = free, null = listing had no pricing).
+    Both fetch-models routes + import-models now carry/land
+    `pricing_input`/`pricing_output` (additive; import validation reuses the
+    buildModelPatch bounds).
+  - **`src/worker/models-sync.ts`** (new): pure halves golden-tested —
+    `isFreeUpstreamModel` (gemini adapter → free; pricing present → free iff
+    BOTH exactly 0; else `:free` id suffix — verified data beats naming),
+    `selectSyncEntries` (per-adapter merge, dedupe on DERIVED slug),
+    `syncSlugForId` (OpenRouter ids `vendor/model:free` contain `/` + `:` —
+    both banned by the slug alphabet — so runs of banned chars collapse to
+    `-`; the RAW id rides `upstream_model`), `planSyncUpserts` (creates
+    priced 0/0 + sync-owned; metadata refreshes non-null-only; dropout
+    disable + reappear re-enable for sync-owned rows ONLY; cross-provider +
+    manual slugs skipped, never touched). `runModelsSync`: probes every
+    declared adapter of every enabled auto_sync provider (per-provider
+    try/catch, cap 200/provider, creates folded back for later providers'
+    conflict checks), persists the JSON summary to settings
+    `models_sync_last_run`.
+  - **Wiring**: `export default { fetch: app.fetch, scheduled }` in index.ts
+    (first cron handler in the repo); wrangler.jsonc `triggers.crons =
+    ["17 3 * * *"]` (daily 03:17 UTC) + `/__scheduled` added to
+    run_worker_first (otherwise the assets SPA fallback swallows the
+    wrangler --test-scheduled route — found by smoke). Admin:
+    `POST /api/admin/models/sync` (Sync-now button) + `GET …/models/sync`
+    (last-run summary); providers CRUD accepts/echoes `auto_sync`.
+  - **UI**: Providers modal "Auto-sync free models" switch + table badge;
+    Models page "Sync free models" button + last-run line; fetch picker
+    shows a `free` badge for 0/0 entries and the picker footnote mentions
+    $0 pricing landing on import.
+  - Verified: `npm run check` clean; **371**/371 offline tests (21 new:
+    tests/fixtures/models-sync.json + tests/worker/models-sync.test.ts);
+    **smoke_gateway 231 checks** (22 new — free-only import with derived
+    slugs + manual-slug guard, pricing zeros, no-dup rerun, dropout disable,
+    reappear re-enable, `/__scheduled?cron=17+3+*+*+*` → triggered_by=cron,
+    GET last-run, auto_sync=false leaves the set); all other smokes green
+    (smoke 45, m8 45, m9 75, m10 33, m11, m14, device, oauth ALL PASS).
+  - Deploy note: the cron starts firing on its own after deploy (03:17 UTC
+    daily); no auto_sync provider exists until toggled in the Providers UI,
+    so early deploys are no-ops.
 - **Usage dashboard filters ✅ complete (2026-09-25, local only)** — user:
   "the admin usage page should have proper filters that make sense." Approved
   scope: the core four (Key · Model · Provider · Endpoint — user/org + status

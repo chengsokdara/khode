@@ -113,7 +113,9 @@ src/shared/
 ├── adapters.ts     — Adapter type + KNOWN_ADAPTERS (dep-free, worker+web import)
 ├── vendor-urls.ts  — well-known vendor base-URL presets for the provider form
 src/worker/
-├── index.ts        — Hono entry: mounts /api/admin + /v1 + /api/portal + /api/v1 + /webhooks, /health, notFound/onError
+├── index.ts        — Hono entry: mounts /api/admin + /v1 + /api/portal + /api/v1 + /webhooks, /health,
+│                     notFound/onError; default export is the fetch/scheduled PAIR — the scheduled
+│                     handler fires the daily free-models sync (wrangler triggers.crons, 03:17 UTC)
 ├── env.ts          — Env bindings type, KNOWN_ADAPTERS, DEFAULT_BASES per adapter,
 │                     joinUrl + joinAdapterUrl (per-adapter URL shape for shared bases)
 ├── crypto.ts       — AES-256-GCM secret encrypt/decrypt, HMAC sign/verify, sha256, safe-equal,
@@ -122,7 +124,19 @@ src/worker/
 │                     client API key generate/verify (sha-256 lookup; M7),
 │                     user sessions + portalAuth middleware (M8; cookie khateway_user)
 ├── canonical.ts    — types-only canonical chat request (the dialects/adapters contract)
-├── routing.ts      — `model` slug / `provider/slug` pin → (model, provider) candidate (+pricing, fallback chain)
+├── routing.ts      — `model` slug / `provider/slug` pin → (model, provider) candidate (+pricing, fallback chain);
+│                     exports SLUG_RE (the one platform slug alphabet, shared by CRUD/import/sync)
+├── discovery.ts    — upstream model discovery lifted out of routes/admin.ts: listUpstreamModelsForAdapter
+│                     (per-adapter /models probe + normalization; openai/anthropic/gemini shapes) +
+│                     first-adapter listUpstreamModels wrapper + perTokenToPerMillion (OpenRouter
+│                     per-token price strings → USD per 1M; "0" → 0 = free, null = no pricing listed)
+├── models-sync.ts  — free-models auto-sync: pure halves (isFreeUpstreamModel — verified 0/0 pricing,
+│                     else `:free` suffix, gemini listings are free-tier; syncSlugForId — OpenRouter
+│                     ids `vendor/model:free` derive slugs with banned chars collapsed to '-', raw id
+│                     rides upstream_model; selectSyncEntries; planSyncUpserts — creates priced 0/0 +
+│                     sync-owned, metadata refreshes, dropout disable / reappear re-enable, manual +
+│                     cross-provider slugs skipped) + runModelsSync executor (per-provider try/catch,
+│                     200/provider cap, summary persisted to settings models_sync_last_run)
 ├── billing/
 │   ├── config.ts        — MoR billing config rows in `settings` (LS store/variant ids plain,
 │   │                      API key + webhook secret AES-256-GCM encrypted; M8)
@@ -150,7 +164,8 @@ src/worker/
 │                          insert + expired-row sweep + 200-with-error-body guard + 512 KB cap),
 │                          flushCache, cacheStats (entries/bytes + 24 h hits/token savings)
 ├── db/
-│   ├── schema.ts   — drizzle: providers, models(+rate_limit_rpm,+cache_enabled), api_keys(+user_id,
+│   ├── schema.ts   — drizzle: providers(+auto_sync free-models opt-in), models(+rate_limit_rpm,
+│   │                 +cache_enabled,+sync_source 'free_sync' rows owned by the sync), api_keys(+user_id,
 │   │                 +org_id,+rate_limit_rpm,+cache_enabled,+playground_session M14), device_codes
 │   │                 (session 28: hashed device_code, unique XXXX-XXXX user_code,
 │   │                 pending→approved|denied→consumed, user_id/key_id), oauth_identities
@@ -166,9 +181,10 @@ src/worker/
 │   │                match → link; else create (public_signup permitting) / refuse) —
 │   │                offline-tested; + applyOAuthSignInDecision executor (create refuses on
 │   │                email conflict instead of linking) + identity/email lookups
-│   └── settings.ts — deployment flags (client_key_enforcement, public_signup,
-│                      rate_limit_enabled/key_rpm/ip_rpm — M10) in one 5 s cached snapshot,
-│                      fail-open on read errors
+│   └── settings.ts — deployment flags (public_signup, rate_limit_enabled/key_rpm/ip_rpm — M10,
+│                      cache_enabled/ttl — M11) in one 5 s cached snapshot, fail-open on read errors;
+│                      models_sync_last_run (JSON last free-sync summary) rides the same table
+│                      uncached (one write per run)
 ├── oauth/
 │   ├── config.ts    — social sign-in credentials in `settings` (billing/config.ts pattern):
 │   │                 oauth_google_client_id / oauth_google_client_secret_enc /
@@ -228,7 +244,10 @@ src/worker/
     │                 client ids echoed in full, secrets set/clear only), logs list/clear
     │                 (M7; DTO carries user/org attribution),
     │                 upstream model discovery + bulk import (fetch-models ×2, import-models —
-    │                 ids-only or discovery-enriched bodies; default-base fallback)
+    │                 ids-only or discovery-enriched bodies incl. pricing_input/pricing_output
+    │                 when the listing exposed them; default-base fallback; probing lives in
+    │                 discovery.ts), free-models sync faces (POST/GET /models/sync — run-now +
+    │                 last-run summary; providers CRUD accepts/echoes auto_sync)
     ├── gateway.ts  — /v1 pipeline: client-key auth middleware (STRICT since session 29 —
     │                 every request needs a valid enabled key, 401 otherwise) + spend cap +
     │                 allowed-models (M7) + prepaid-balance gate + usage debit (M8 personal /
@@ -328,7 +347,9 @@ src/web/
                       invite code, keys, usage, billing)
 
 scripts/dev-all.mjs        — `npm run dev`: one-terminal hot-reload runner (wrangler dev
-                            + vite, tagged output, clean Ctrl-C shutdown, no deps)
+                            --test-scheduled + vite, tagged output, clean Ctrl-C shutdown, no deps;
+                            fire the cron locally with
+                            curl "http://localhost:8787/__scheduled?cron=17+3+*+*+*")
 scripts/smoke.mjs          — end-to-end admin API test against wrangler dev :8787
 scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream speaking BOTH dialects
                             + a native gemini face (self-cleaning fixtures; asserts the cross-dialect
@@ -338,9 +359,11 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             incl. attribution headers, /api/v1) + the M17 thinking
                             matrix (claude-think + gem-think mock faces) + the M18 structured-
                             outputs cells + fetch-models reading OpenRouter's
-                            top_provider.max_completion_tokens — 209 checks as of 2026-09-24
-                            (session 29 removed the keyless matrix: no-auth/anonymous/unknown/
-                            disabled keys all 401 now)
+                            top_provider.max_completion_tokens + the free-models sync flow
+                            (mutable mock listing: free-only import with derived slugs, pricing
+                            zeros, no-dup rerun, dropout disable, reappear re-enable, manual-slug
+                            guard, /__scheduled → triggered_by=cron, auto_sync toggle-off)
+                            — 231 checks as of 2026-09-25
 scripts/smoke_m8.mjs       — accounts/balance/webhook e2e vs wrangler dev :8787 (signup → credit →
                             debit math → 429 → signed LS webhook → idempotency; 42 checks + 2 M16 /api/v1 checks = 45)
 scripts/smoke_m9.mjs       — orgs/teams e2e vs wrangler dev :8787 (2 orgs coexist, join codes,
@@ -381,7 +404,8 @@ drizzle/            — generated SQL migrations (applied with wrangler d1 migra
                       0009_m15_log_indexes adds request_logs_api_key_idx;
                       0010_m16_attribution adds request_logs.http_referer + x_title;
                       0011_device_codes adds the device-flow table (session 28);
-                      0012_oauth_signin adds oauth_identities + makes users.password_hash nullable)
+                      0012_oauth_signin adds oauth_identities + makes users.password_hash nullable;
+                      0013_free_sync adds providers.auto_sync + models.sync_source)
 
 tests/              — offline golden-fixture suite (vitest; no server needed)
 ├── fixtures/       — arrays of {name, …input, expected} cases per wire-format area
@@ -390,7 +414,8 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
 │                     upstream-error mapping, usage/cost, SSE framing, vendor URL presets,
 │                     LS webhook parsing/credit math, M10 rate-check buckets,
 │                     M11 cache-key projections + eligibility gates,
-│                     M13 embeddings-adapter + embeddings-openai [parse + normalize])
+│                     M13 embeddings-adapter + embeddings-openai [parse + normalize],
+│                     free-models sync: filter/merge/planner goldens)
 └── worker/         — thin runners + helpers (fixture loader, SSE wire serializer/parser,
                         timestamp freezer, RoutingCandidate builder; runtime key encryption)
                         + password.test.ts, billing.test.ts (inline/fixture hybrid),
@@ -407,10 +432,16 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
 
 - **One deployable**: the Worker serves the built SPA from `web-dist/` (asset
   binding) and handles API paths. `run_worker_first` covers `/v1`, `/v1/*`,
-  `/api`, `/api/*`, `/webhooks`, `/webhooks/*`, `/health` — everything else is
-  static assets with SPA fallback: public landing page at `/`, admin console
-  pages at `/admin…`, user portal at `/app…` (management APIs live under
-  `/api/admin/*` + `/api/portal/*` so page prefixes stay pure). Old root-level
+  `/api`, `/api/*`, `/webhooks`, `/webhooks/*`, `/health`, `/__scheduled` —
+  everything else is static assets with SPA fallback: public landing page at
+  `/`, admin console pages at `/admin…`, user portal at `/app…` (management
+  APIs live under `/api/admin/*` + `/api/portal/*` so page prefixes stay
+  pure). `/__scheduled` is listed ONLY so `wrangler dev --test-scheduled`
+  (all dev scripts pass it) can fire the cron locally — without the entry
+  the assets SPA fallback swallows the route with a silent 200 index.html
+  (production answers 404 there, which is harmless). The entry module
+  exports the `{fetch, scheduled}` pair; the scheduled handler runs the
+  free-models sync. Old root-level
   admin bookmarks (`/overview`, `/providers`, `/login`, …) client-redirect to
   their `/admin` homes (LEGACY_ROUTES map in App.tsx).
 - **Admin auth**: `POST /api/admin/login` compares `ADMIN_PASSWORD` (constant-time),
@@ -424,21 +455,52 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   anthropic `/v1/models`, gemini `/v1beta/models` — strips the `models/`
   prefix, maps inputTokenLimit/outputTokenLimit, skips non-generateContent
   entries; the openai-shaped branch falls back to OpenRouter's
-  `top_provider.max_completion_tokens` for max_output_tokens) into
-  `{models:[{id,display_name,context_window,max_output_tokens}]}`
-  (cap 500, deduped by id). A provider with NO stored base_url probes the
+  `top_provider.max_completion_tokens` for max_output_tokens, and captures
+  `pricing.prompt`/`pricing.completion` per-token strings as
+  pricing_input/pricing_output in USD per 1M) into
+  `{models:[{id,display_name,context_window,max_output_tokens,pricing_input?,pricing_output?}]}`
+  (cap 500, deduped by id). The probing/normalization lives in
+  `src/worker/discovery.ts` (shared with the sync — no route→route imports).
+  A provider with NO stored base_url probes the
   adapter default (`DEFAULT_BASES[adapter]` — same fallback as
   test-connection). `POST /api/admin/providers/:id/import-models` creates one
-  model per id (slug = upstream id, upstream_model = id), dedupes input,
+  model per id (slug = upstream id, upstream_model = id, pricing lands when
+  the enriched body carries it), dedupes input,
   skips existing slugs + ids outside the slug alphabet (reported in `skipped`),
   max 100 per call. Body is legacy `{model_ids: string[]}` (bare rows) OR
-  `{models: [{id, display_name?, context_window?, max_output_tokens?}]}` —
+  `{models: [{id, display_name?, context_window?, max_output_tokens?, pricing_input?, pricing_output?}]}` —
   the discovery-enriched shape; metadata lands on the created rows (both keys
   → 400, bad enrichment → 400). UI: the MODELS page "Add models" modal —
   segmented tabs "Fetch from provider" (default: provider select → fetch →
-  filterable picker with already-added/unsupported-name badges → footer
+  filterable picker with already-added/unsupported-name/free badges → footer
   Import) and "Custom model" (the manual register form, for providers without
   /models); the Providers modal has no discovery UI.
+- **Free-models auto-sync (2026-09-25)**: `src/worker/models-sync.ts` keeps
+  the catalog fresh with FREE upstream models — daily cron
+  (`triggers.crons ["17 3 * * *"]` → the `scheduled` handler in index.ts) and
+  the admin "Sync free models" button (`POST /api/admin/models/sync`;
+  `GET` returns the persisted last-run summary from settings
+  `models_sync_last_run`). Opt-in per provider (`providers.auto_sync`,
+  Providers modal switch; only ENABLED providers sync — a disabled provider
+  freezes its sync state). FREE detection (verified data beats naming):
+  pricing present → free iff BOTH per-1M prices are exactly 0 (OpenRouter
+  `pricing.prompt/completion` "0"); no pricing → free iff the id ends
+  `:free`; gemini-adapter listings count as free-tier by explicit user
+  choice (their per-request cost logs read $0.00 even for paid-tier usage —
+  accepted trade-off; plain OpenAI/Anthropic listings expose no pricing and
+  yield nothing). OpenRouter-shaped ids (`vendor/model:free`) are NOT valid
+  slugs (`/` + `:` banned) — `syncSlugForId` collapses banned runs to `-`
+  (`meta-llama/llama-3.3-70b:free` → slug `meta-llama-llama-3.3-70b-free`)
+  while the RAW id rides `upstream_model`, so the gateway sends upstream
+  exactly what it listed. Sync-created rows carry `sync_source='free_sync'`
+  with pricing 0/0 (genuine zeros — null means UNKNOWN in cost math); the
+  sync owns ONLY its own rows: metadata refreshes (display name / ctx / out,
+  non-null upstream values only), dropout → enabled=false, reappear →
+  enabled=true. Manually created rows and cross-provider slug conflicts are
+  skipped, never modified; nothing is ever deleted. Deleting a sync-owned
+  row gets it recreated next run while upstream still lists it — to freeze
+  one, turn the provider's auto_sync off first. Per-provider try/catch (one
+  failure never stops the rest), cap 200 models/provider/run.
 - **Multi-adapter providers**: `providers.adapters` is a JSON array of upstream
   dialects (`["openai"]`, `["anthropic"]`, or both for dual-dialect endpoints
   like OpenRouter/LiteLLM/AI Gateway — ONE provider row, one shared base URL).

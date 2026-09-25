@@ -56,7 +56,7 @@ const j = async (path, opts = {}) => {
   return { status: res.status, headers: res.headers, body };
 };
 
-const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)'];
+const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)', 'Free Sync Mock (smoke)'];
 const SLUGS = [
   'mock-chat', 'mock-chat-429', 'mock-chat-401', 'mock-chat-500', 'mock-chat-500t', 'mock-claude', 'mock-claude-429',
   'mock-tools', 'mock-claude-tools',
@@ -66,6 +66,7 @@ const SLUGS = [
   'mock-gemini', 'mock-gemini-tools', 'mock-gemini-400', 'mock-gemini-429',
   'mock-emb', 'mock-emb-fb', 'mock-emb-anthropic', 'mock-gem-emb',
   'mock-claude-think', 'mock-gem-think', 'mock-enriched',
+  'sync-taken-free',
 ];
 const KEY_NAMES = ['Smoke Key (smoke)', 'Restricted (smoke)', 'Capped (smoke)'];
 
@@ -94,6 +95,18 @@ async function cleanup() {
 const lastReq = { path: '', headers: {}, body: {} };
 let lastGemThinking = null; // M17: last generationConfig.thinkingConfig seen by the gemini face
 let flakyHits = 0; // P3: first flaky-429 hit answers 429, the retry succeeds
+// The openai-shaped /models listing served to every openai-adapter provider on
+// this origin. Mutable so the free-models sync section can shrink/restore the
+// upstream free pool between runs (starts as the historical fixed list).
+const openaiListing = {
+  object: 'list',
+  data: [
+    { id: 'mock', object: 'model' },
+    { id: 'mock-chat', object: 'model', context_window: 128000, top_provider: { max_completion_tokens: 16384 } },
+    { id: 'mock-chat-stream', object: 'model', display_name: 'Mock Chat (stream)' },
+    { id: 'bad/slug+id', object: 'model' }, // exercise slug filtering on import
+  ],
+};
 
 function startMockUpstream() {
   const server = http.createServer((req, res) => {
@@ -127,17 +140,7 @@ function startMockUpstream() {
       }
       if (url.endsWith('/models') && (req.method === 'GET' || !lastReq.body || Object.keys(lastReq.body).length === 0)) {
         res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(
-          JSON.stringify({
-            object: 'list',
-            data: [
-              { id: 'mock', object: 'model' },
-              { id: 'mock-chat', object: 'model', context_window: 128000, top_provider: { max_completion_tokens: 16384 } },
-              { id: 'mock-chat-stream', object: 'model', display_name: 'Mock Chat (stream)' },
-              { id: 'bad/slug+id', object: 'model' }, // exercise slug filtering on import
-            ],
-          }),
-        );
+        return res.end(JSON.stringify(openaiListing));
       }
       if (url.endsWith('/v1/messages')) {
         // ---- anthropic Messages dialect mock ----
@@ -2514,6 +2517,109 @@ const mock = await startMockUpstream();
     creditsAdminKey.status === 404 && creditsAdminKey.body?.error?.code === 'no_balance',
     JSON.stringify(creditsAdminKey.body),
   );
+
+  // -- free-models sync (models-sync.ts) -------------------------------------
+  // A dedicated auto-sync provider against the mutable mock listing: import
+  // verified-free models, rerun no-dup, dropout disable, reappear re-enable,
+  // the manual-model guard, the /__scheduled cron surface and toggle-off.
+  openaiListing.data = [
+    { id: 'sync-free-a', object: 'model', context_window: 64000, pricing: { prompt: '0', completion: '0' } },
+    { id: 'sync-paid-b', object: 'model', pricing: { prompt: '0.000005', completion: '0.00004' } },
+    { id: 'sync-free-c:free', object: 'model' },
+    { id: 'sync-plain-d', object: 'model' },
+    { id: 'sync-taken-free', object: 'model', pricing: { prompt: '0', completion: '0' } },
+  ];
+  const provSync = await j('/api/admin/providers', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Free Sync Mock (smoke)', adapter: 'openai', base_url: `http://127.0.0.1:${mock.port}/v1`, auto_sync: true }),
+  });
+  check('sync provider create echoes auto_sync=true', provSync.status === 201 && provSync.body?.auto_sync === true, JSON.stringify(provSync.body));
+
+  // Manual model squatting on a slug the sync would otherwise claim.
+  await j('/api/admin/models', { method: 'POST', body: JSON.stringify({ provider_id: prov.body.id, slug: 'sync-taken-free' }) });
+
+  const sync1 = await j('/api/admin/models/sync', { method: 'POST' });
+  const sr1 = (sync1.body?.results ?? []).find((r) => r.provider_id === provSync.body?.id);
+  check(
+    'models sync #1: imports verified free only (zeros + :free), skips paid/plain/manual slugs',
+    sync1.status === 200 &&
+      sr1?.ok === true &&
+      JSON.stringify(sr1.created) === JSON.stringify(['sync-free-a', 'sync-free-c-free']) &&
+      (sr1.skipped ?? []).some((s) => s.id === 'sync-taken-free' && s.reason.includes('another provider')),
+    JSON.stringify(sr1),
+  );
+  const syncRows1 = await j('/api/admin/models?provider_id=' + provSync.body.id);
+  const rowA = (syncRows1.body ?? []).find((m) => m.slug === 'sync-free-a');
+  const rowC = (syncRows1.body ?? []).find((m) => m.slug === 'sync-free-c-free');
+  check(
+    'sync rows land pricing 0/0 + metadata + enabled; paid/plain never created',
+    rowA?.pricing_input === 0 &&
+      rowA?.pricing_output === 0 &&
+      rowA?.enabled === true &&
+      rowA?.context_window === 64000 &&
+      rowC?.pricing_input === 0 &&
+      rowC?.enabled === true &&
+      !(syncRows1.body ?? []).some((m) => ['sync-paid-b', 'sync-plain-d'].includes(m.slug)),
+    JSON.stringify(syncRows1.body?.map((m) => [m.slug, m.pricing_input, m.pricing_output, m.enabled])),
+  );
+  const takenRow = ((await j('/api/admin/models')).body ?? []).find((m) => m.slug === 'sync-taken-free');
+  check('manually managed slug is left untouched (pricing still unset)', takenRow?.pricing_input == null && takenRow?.enabled === true, JSON.stringify(takenRow));
+
+  const sync2 = await j('/api/admin/models/sync', { method: 'POST' });
+  check('models sync #2 rerun: no duplicates', sync2.body?.totals?.created === 0, JSON.stringify(sync2.body?.totals));
+
+  // Dropout: shrink the free pool to just sync-free-a (+ the squatted slug).
+  openaiListing.data = openaiListing.data.filter((m) => m.id === 'sync-free-a' || m.id === 'sync-taken-free');
+  const sync3 = await j('/api/admin/models/sync', { method: 'POST' });
+  const sr3 = (sync3.body?.results ?? []).find((r) => r.provider_id === provSync.body?.id);
+  check('models sync #3: dropout auto-disabled', JSON.stringify(sr3?.disabled) === JSON.stringify(['sync-free-c-free']), JSON.stringify(sr3));
+  const rowC3 = ((await j('/api/admin/models?provider_id=' + provSync.body.id)).body ?? []).find((m) => m.slug === 'sync-free-c-free');
+  check('dropout row is disabled but kept', rowC3?.enabled === false, JSON.stringify(rowC3));
+
+  // Reappear: restore the free entry.
+  openaiListing.data.push({ id: 'sync-free-c:free', object: 'model' });
+  const sync4 = await j('/api/admin/models/sync', { method: 'POST' });
+  const sr4 = (sync4.body?.results ?? []).find((r) => r.provider_id === provSync.body?.id);
+  check('models sync #4: reappeared model re-enabled', JSON.stringify(sr4?.enabled) === JSON.stringify(['sync-free-c-free']), JSON.stringify(sr4));
+
+  // Cron surface: /__scheduled (wrangler dev --test-scheduled). The scheduled
+  // handler rides ctx.waitUntil — poll the persisted summary until it flips.
+  const sched = await fetch(base + '/__scheduled?cron=17+3+*+*+*');
+  if (sched.status !== 200) {
+    check('cron __scheduled endpoint present (npm run dev passes --test-scheduled)', false, `GET /__scheduled → ${sched.status}`);
+  } else {
+    let cronSummary = null;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const last = await j('/api/admin/models/sync');
+      if (last.body?.last_run?.triggered_by === 'cron') {
+        cronSummary = last.body.last_run;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    check('cron __scheduled triggers the sync (triggered_by=cron)', cronSummary != null, JSON.stringify(cronSummary?.totals));
+  }
+
+  const lastRun = await j('/api/admin/models/sync');
+  check('GET models/sync returns the persisted summary', lastRun.status === 200 && lastRun.body?.last_run?.ran_at > 0, JSON.stringify(lastRun.body?.last_run?.totals));
+
+  // Toggle off: the provider leaves the sync set entirely.
+  const syncOff = await j(`/api/admin/providers/${provSync.body.id}`, { method: 'PATCH', body: JSON.stringify({ auto_sync: false }) });
+  const sync5 = await j('/api/admin/models/sync', { method: 'POST' });
+  check(
+    'auto_sync=false removes the provider from the sync set',
+    syncOff.body?.auto_sync === false && sync5.body?.providers_synced === 0 && sync5.body?.totals?.created === 0,
+    JSON.stringify(sync5.body?.totals),
+  );
+
+  // Restore the historical listing for any later readers.
+  openaiListing.data = [
+    { id: 'mock', object: 'model' },
+    { id: 'mock-chat', object: 'model', context_window: 128000, top_provider: { max_completion_tokens: 16384 } },
+    { id: 'mock-chat-stream', object: 'model', display_name: 'Mock Chat (stream)' },
+    { id: 'bad/slug+id', object: 'model' },
+  ];
 
   // -- unknown /v1 endpoint -------------------------------------------------
   const unknownEndpoint = await fetchOrPost('/v1/zzz', null);

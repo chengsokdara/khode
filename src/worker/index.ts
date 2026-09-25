@@ -14,6 +14,7 @@ import { webhookApp } from './routes/webhooks';
 import { clientApiApp } from './routes/clientapi';
 import { deviceApp } from './routes/device';
 import { RateLimiterDO } from './ratelimit/do';
+import { runModelsSync } from './models-sync';
 
 // Durable Object classes MUST be exported from the entry module (wrangler
 // wires the RATE_LIMITER binding to this export).
@@ -49,4 +50,13 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500);
 });
 
-export default app;
+// Cron trigger (wrangler.jsonc triggers.crons): the daily 03:17 UTC free-models
+// sync. The Worker exports a fetch/scheduled pair instead of the bare Hono app
+// so the runtime can invoke both entry points.
+export default {
+  fetch: app.fetch,
+  scheduled: (event: ScheduledController, env: Env, ctx: ExecutionContext) => {
+    console.log('[khateway] scheduled', event.cron);
+    ctx.waitUntil(runModelsSync(env, 'cron'));
+  },
+};

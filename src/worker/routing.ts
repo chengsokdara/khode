@@ -21,6 +21,12 @@ export function parseAdapters(json: string | null): Adapter[] {
   }
 }
 
+/** Platform model-slug alphabet (also the importable upstream-id filter):
+ * 1–120 chars of letters, digits, dots, dashes, underscores, first char
+ * alphanumeric. Shared by models CRUD (admin), imports and the free-models
+ * sync so the three never drift. */
+export const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/;
+
 /** Defensive parse + de-dup, preserving the provider's preference order. */
 function providerAdapterList(raw: string): Adapter[] {
   const seen = new Set<Adapter>();

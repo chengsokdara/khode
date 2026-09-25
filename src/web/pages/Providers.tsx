@@ -35,6 +35,7 @@ type FormState = {
   default_headers: string;
   timeout_ms: string;
   enabled: boolean;
+  auto_sync: boolean;
 };
 
 const ALL_ADAPTERS: Adapter[] = ['openai', 'anthropic', 'gemini'];
@@ -62,6 +63,7 @@ function formPayload(form: FormState): Record<string, unknown> {
     default_headers: headers,
     timeout_ms: Number(form.timeout_ms) || 60000,
     enabled: form.enabled,
+    auto_sync: form.auto_sync,
   };
   if (form.api_key.trim()) payload.api_key = form.api_key.trim();
   return payload;
@@ -81,6 +83,7 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
           default_headers: initial.default_headers ? JSON.stringify(initial.default_headers, null, 2) : '',
           timeout_ms: String(initial.timeout_ms ?? 60000),
           enabled: initial.enabled,
+          auto_sync: initial.auto_sync ?? false,
         }
       : {
           name: '',
@@ -90,6 +93,7 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
           default_headers: '',
           timeout_ms: '60000',
           enabled: true,
+          auto_sync: false,
         },
   );
 
@@ -266,6 +270,19 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
           </div>
         </div>
 
+        <div className="flex items-start gap-2">
+          <div className="pt-1">
+            <Switch checked={form.auto_sync} onChange={(v) => setField('auto_sync', v)} />
+          </div>
+          <div>
+            <div className="text-[13px] text-zinc-200">Auto-sync free models</div>
+            <p className="text-xs text-zinc-500">
+              Daily (03:17 UTC): import verified-free models from this provider's /models listing, refresh their
+              metadata, and auto-disable ones that drop off the free list. Never touches manually added models.
+            </p>
+          </div>
+        </div>
+
         {error ? <p className="text-xs text-red-400">{error}</p> : null}
       </form>
     </Modal>
@@ -390,6 +407,7 @@ export function Providers() {
                           <Badge key={a} title={ADAPTER_LABELS[a]}>{ADAPTER_LABELS[a]}</Badge>
                         ))}
                         {!p.enabled ? <Badge tone="warn">disabled</Badge> : null}
+                        {p.auto_sync ? <Badge tone="ok">auto-sync</Badge> : null}
                       </div>
                       <div className="mt-0.5 font-mono text-[11px] text-zinc-500">
                         {p.base_url ?? `${ADAPTER_DEFAULTS[p.adapter]} (default)`}

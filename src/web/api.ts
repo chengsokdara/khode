@@ -35,6 +35,9 @@ export interface Provider {
   default_headers: Record<string, string> | null;
   timeout_ms: number | null;
   enabled: boolean;
+  /** Free-models auto-sync opt-in: the daily cron keeps this provider's
+   * verified-free upstream models imported and fresh. */
+  auto_sync: boolean;
   model_count: number;
 }
 
@@ -70,17 +73,43 @@ export interface TestResult {
   error?: string;
 }
 
-/** One upstream model offered by the provider's /models listing. */
+/** One upstream model offered by the provider's /models listing. Pricing rides
+ * along when the listing exposes it (OpenRouter-style) — 0/0 marks free. */
 export interface UpstreamModel {
   id: string;
   display_name: string | null;
   context_window: number | null;
   max_output_tokens: number | null;
+  pricing_input: number | null;
+  pricing_output: number | null;
 }
 
 export interface ImportResult {
   created: string[];
   skipped: { id: string; reason: string }[];
+}
+
+/** Free-models sync results (POST /api/admin/models/sync + persisted summary). */
+export interface ModelsSyncProviderResult {
+  provider_id: string;
+  provider_name: string;
+  ok: boolean;
+  error: string | null;
+  adapter_errors: string[];
+  created: string[];
+  updated: string[];
+  disabled: string[];
+  enabled: string[];
+  skipped: { id: string; reason: string }[];
+}
+
+export interface ModelsSyncSummary {
+  ran_at: number;
+  triggered_by: 'cron' | 'admin';
+  providers_synced: number;
+  providers_failed: number;
+  totals: { created: number; updated: number; disabled: number; enabled: number; skipped: number };
+  results: ModelsSyncProviderResult[];
 }
 
 export interface Overview {
@@ -329,9 +358,16 @@ export const api = {
           display_name: m.display_name,
           context_window: m.context_window,
           max_output_tokens: m.max_output_tokens,
+          pricing_input: m.pricing_input,
+          pricing_output: m.pricing_output,
         })),
       }),
     }),
+
+  /** Free-models sync: runs the same routine the daily cron runs. */
+  syncModels: () => req<ModelsSyncSummary>('/api/admin/models/sync', { method: 'POST' }),
+  /** Last-run summary of the free-models sync (null when never run). */
+  lastModelsSync: () => req<{ last_run: ModelsSyncSummary | null }>('/api/admin/models/sync'),
 
   models: (providerId?: string) =>
     req<ModelRow[]>(`/api/admin/models${providerId ? `?provider_id=${encodeURIComponent(providerId)}` : ''}`),

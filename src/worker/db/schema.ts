@@ -17,6 +17,11 @@ export const providers = sqliteTable('providers', {
   // Declared LAST to match the live column order (added by migration 0002) —
   // drizzle-kit emits a table recreate when the declaration order drifts.
   adapters: text('adapters').notNull().default('["openai"]'),
+  // Free-models auto-sync opt-in: when true the daily cron (and the admin
+  // "Sync now" button) probes this provider's /models listing and keeps the
+  // sync-owned free models fresh. Declared LAST so the generated migration
+  // stays a plain ALTER TABLE ADD COLUMN.
+  autoSync: integer('auto_sync', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const models = sqliteTable(
@@ -48,6 +53,10 @@ export const models = sqliteTable(
     // text-only requests are cached + replayed (gateway dedupe). Declared LAST
     // so generated migrations stay plain ALTER TABLE ADD COLUMNs.
     cacheEnabled: integer('cache_enabled', { mode: 'boolean' }).notNull().default(false),
+    // Rows created by the free-models sync carry 'free_sync'. Only sync-owned
+    // rows are auto-disabled/re-enabled by later syncs when they drop out of /
+    // rejoin the upstream free list — admin-created rows are never touched.
+    syncSource: text('sync_source'),
   },
   (t) => [
     uniqueIndex('models_slug_unique').on(t.slug),

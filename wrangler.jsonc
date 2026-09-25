@@ -17,7 +17,8 @@
       "/api/*",
       "/webhooks",
       "/webhooks/*",
-      "/health"
+      "/health",
+      "/__scheduled"
     ]
   },
   // M10 rate limiting: every /v1 request increments fixed-window counters in
@@ -37,5 +38,11 @@
       "migrations_dir": "drizzle"
     }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Daily free-models sync (src/worker/models-sync.ts): probes every enabled
+  // provider with auto_sync on, imports/refreshes verified-free models. 03:17
+  // UTC — off-peak, odd minute to avoid the top-of-hour cron crowd. Local
+  // testing: `wrangler dev --test-scheduled` then curl
+  // "http://localhost:8787/__scheduled?cron=17+3+*+*+*".
+  "triggers": { "crons": ["17 3 * * *"] }
 }
