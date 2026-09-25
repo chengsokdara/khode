@@ -41,12 +41,20 @@ type Runner struct {
 	// Hooks runs the user's lifecycle hooks around tool calls; nil
 	// disables them.
 	Hooks *hooks.Runner
+	// Preface is optional groundwork (e.g. a context-gatherer brief)
+	// written into the transcript as its own user message before
+	// userText, wrapped in <task-context> tags. Empty means none. It is
+	// session truth like any message: replayed to the provider and
+	// summarized by compaction like the rest of the history.
+	Preface string
 
 	// lastInput is the most recent provider-reported input-token count,
 	// the exact signal behind the compaction trigger; 0 until the turn's
 	// first UsageEvent (estimates fill in before that).
 	lastInput int
 }
+
+const taskContextOpen = "<task-context>"
 
 // Run appends the user turn and drives the loop, forwarding stream events
 // on the returned channel. The channel carries zero or more
@@ -58,6 +66,13 @@ func (r *Runner) Run(ctx context.Context, userText string) <-chan llm.Event {
 	go func() {
 		defer close(out)
 
+		if strings.TrimSpace(r.Preface) != "" {
+			if err := r.Session.Append(llm.Message{Role: llm.RoleUser,
+				Content: taskContextOpen + "\n" + strings.TrimSpace(r.Preface) + "\n</task-context>"}); err != nil {
+				out <- llm.ErrorEvent{Err: fmt.Errorf("appending preface: %w", err)}
+				return
+			}
+		}
 		if err := r.Session.Append(llm.Message{Role: llm.RoleUser, Content: userText}); err != nil {
 			out <- llm.ErrorEvent{Err: fmt.Errorf("appending user message: %w", err)}
 			return

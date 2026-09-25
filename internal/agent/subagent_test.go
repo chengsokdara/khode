@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -221,5 +222,46 @@ func TestProgressLineFlattensArgs(t *testing.T) {
 		if got := progressLine(c.name, json.RawMessage(c.input)); got != c.want {
 			t.Errorf("progressLine(%s) = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestRunnerPrefaceAppendsContextBeforeUserTurn(t *testing.T) {
+	// A non-empty Preface lands as its own user message wrapped in
+	// <task-context>, ahead of the user's message.
+	p := &fakeProvider{responses: [][]llm.Event{
+		{llm.TextDeltaEvent{Text: "ok"}},
+	}}
+	r, sess := newTestRunner(t, p, nil)
+	r.Preface = "## Summary\nthe code lives in cmd/khode."
+	drain(t, r.Run(context.Background(), "do the thing"))
+
+	msgs := sess.Messages()
+	if len(msgs) != 3 {
+		t.Fatalf("session has %d messages, want 3", len(msgs))
+	}
+	if msgs[0].Role != llm.RoleUser || !strings.HasPrefix(msgs[0].Content, "<task-context>") {
+		t.Fatalf("preface message = %+v", msgs[0])
+	}
+	if !strings.HasSuffix(msgs[0].Content, "</task-context>") {
+		t.Fatalf("preface not wrapped: %q", msgs[0].Content)
+	}
+	if msgs[1].Role != llm.RoleUser || msgs[1].Content != "do the thing" {
+		t.Fatalf("user message = %+v", msgs[1])
+	}
+	if msgs[2].Role != llm.RoleAssistant {
+		t.Fatalf("assistant message = %+v", msgs[2])
+	}
+}
+
+func TestRunnerNoPrefaceKeepsSingleUserTurn(t *testing.T) {
+	p := &fakeProvider{responses: [][]llm.Event{
+		{llm.TextDeltaEvent{Text: "ok"}},
+	}}
+	r, sess := newTestRunner(t, p, nil)
+	drain(t, r.Run(context.Background(), "just this"))
+
+	msgs := sess.Messages()
+	if len(msgs) != 2 || msgs[0].Content != "just this" {
+		t.Fatalf("unexpected transcript: %+v", msgs)
 	}
 }

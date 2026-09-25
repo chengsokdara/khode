@@ -51,6 +51,9 @@ const (
 	kindToolResult
 	kindTodo // the agent's live task checklist panel
 	kindDiff // an edit/write call's change, rendered git-style
+	// kindContext is a replayed <task-context> preface: the dim,
+	// collapsible context brief a gatherer wrote ahead of the turn.
+	kindContext
 )
 
 // uiMessage is a message shown in the chat pane. Only messages with
@@ -338,6 +341,15 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 				})
 			}
 		default:
+			if strings.HasPrefix(msg.Content, "<task-context>") {
+				// A gatherer's context brief, written ahead of the user
+				// turn: renders as a dim collapsed block instead of a
+				// user bubble.
+				m.messages = append(m.messages, uiMessage{
+					role: msg.Role, kind: kindContext, raw: msg.Content, history: true,
+				})
+				continue
+			}
 			if msg.Role == llm.RoleAssistant && msg.Thinking != "" {
 				m.messages = append(m.messages, uiMessage{role: msg.Role, kind: kindThinking, raw: msg.Thinking, history: true})
 			}
@@ -1685,6 +1697,8 @@ func (m *Model) block(i int, width int) string {
 		out = diffBlock(msg.raw, msg.diff, msg.path, width, msg.expanded)
 	case msg.kind == kindTodo:
 		out = todoPanelBlock(msg.raw, width)
+	case msg.kind == kindContext:
+		out = contextBlock(msg.raw, width, msg.expanded)
 	case msg.kind == kindThinking:
 		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
 	case msg.kind == kindToolResult:
@@ -1938,8 +1952,46 @@ func expandable(msg uiMessage) bool {
 		return strings.Count(strings.TrimRight(msg.raw, "\n"), "\n")+1 > toolResultPreviewLines
 	case kindDiff:
 		return strings.Count(strings.TrimRight(msg.diff, "\n"), "\n")+1 > diffPreviewLines
+	case kindContext:
+		return contextBriefLines(msg.raw) > contextPreviewLines
 	}
 	return false
+}
+
+// contextPreviewLines caps a collapsed context brief.
+const contextPreviewLines = 4
+
+// contextBriefLines counts the brief's body lines (the <task-context>
+// wrapper tags stripped).
+func contextBriefLines(raw string) int {
+	body := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(raw), "<task-context>"), "</task-context>")
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return 0
+	}
+	return strings.Count(body, "\n") + 1
+}
+
+// contextBlock renders a replayed gatherer brief: dim, headed by its
+// origin, capped at contextPreviewLines until expanded.
+func contextBlock(raw string, width int, expanded bool) string {
+	body := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(raw), "<task-context>"), "</task-context>")
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	head := dimStyle.Render("◆ context brief · gathered for this task")
+	if len(lines) == 1 && strings.TrimSpace(lines[0]) == "" {
+		lines = nil
+	}
+	if !expanded && len(lines) > contextPreviewLines {
+		lines = append(lines[:contextPreviewLines],
+			dimStyle.Render(fmt.Sprintf("… %d more lines · ctrl+o to expand", len(lines)-contextPreviewLines)))
+	} else if expanded && len(lines) > contextPreviewLines {
+		lines = append(lines, dimStyle.Render("· ctrl+o to collapse"))
+	}
+	out := head
+	for _, l := range lines {
+		out += "\n  " + dimStyle.Render(clip(l, width-4))
+	}
+	return out
 }
 
 // toolCallBlock renders a tool call two-tone: the ⏺ marker and tool

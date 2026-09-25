@@ -10,6 +10,14 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Runner preface (2026-09-25):** `Runner.Preface` writes optional groundwork
+(a context-gatherer brief) into the transcript as its own user message
+wrapped in `<task-context>` tags, ahead of the user's message — session
+truth like any message, replayed to the provider and summarizable by
+compaction. On resume, `replayTranscript` renders it as a new dim
+collapsible `◆ context brief` block (capped at 4 lines, ctrl+o expands)
+instead of a user bubble.
+
 **Subagent activity streams into the TUI (2026-09-25):** a task call's
 in-flight child no longer runs invisibly (ROADMAP "Next" #1). The task tool
 forwards each child tool call through a new `SubagentConfig.Progress` hook
@@ -770,7 +778,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | Live subagent activity: task tool forwards child tool calls via `SubagentConfig.Progress`; the task call block upserts a dim `⎿ kind · activity · N calls` line, cleared at the report (ROADMAP Next #1); fakeai plays an explore scenario for the tmux harness | (this commit) |
+| 2026-09-25 | `Runner.Preface` injects a `<task-context>` brief message ahead of the user turn; replay renders it as a dim collapsible context-brief block | (this commit) |
+| 2026-09-25 | Live subagent activity: task tool forwards child tool calls via `SubagentConfig.Progress`; the task call block upserts a dim `⎿ kind · activity · N calls` line, cleared at the report (ROADMAP Next #1); fakeai plays an explore scenario for the tmux harness | 7c72328 |
 | 2026-09-25 | Typed subagents: `task` gains `subagent_type` (general-purpose / explore / context-gatherer / plan) + `description`; read-only kinds run read/glob/grep only with per-kind report caps and system sections | 83ea1d0 |
 | 2026-09-25 | `WORKFLOW.md`: the build-and-verify loop written down — plan → implement+tests → live-TTY self-verify (`scripts/tmux-selftest.sh`) → gate → docs; tmux harness usage, fake-model extension, SGR-test lessons, gotchas | (this commit) |
 | 2026-09-25 | Self-test harness: `scripts/tmux-selftest.sh` + `scripts/fakeai.py` — khode driven against a scripted fake model in an isolated tmux TTY, frames captured plain + with SGRs; diff features verified live (expand/collapse, both bands, gutter numbers) | (this commit) |

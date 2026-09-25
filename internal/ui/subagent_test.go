@@ -84,3 +84,65 @@ func TestTaskProgressWithoutActiveTaskIsIgnored(t *testing.T) {
 		t.Fatalf("stale progress appended a block")
 	}
 }
+
+func TestReplayRendersTaskContextAsDimBrief(t *testing.T) {
+	// A resumed session shows the gatherer's brief as a dim collapsible
+	// block, not a user bubble.
+	m := newTestModel(t)
+	brief := "<task-context>\n## Summary\none\n## Key files\n- a/b.go:1 — entry\n- c/d.go:9 — helper\n- e/f.go:2 — risk\n</task-context>"
+	if err := m.session.Append(llm.Message{Role: llm.RoleUser, Content: brief}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.session.Append(llm.Message{Role: llm.RoleUser, Content: "the actual task"}); err != nil {
+		t.Fatal(err)
+	}
+	m.replayTranscript(m.session)
+
+	var ctx, user int
+	for i, msg := range m.messages {
+		switch msg.kind {
+		case kindContext:
+			ctx++
+			out := ansiStrip(m.block(i, 100))
+			if !strings.Contains(out, "◆ context brief") {
+				t.Errorf("context block missing head: %q", out)
+			}
+			if !strings.Contains(out, "ctrl+o to expand") {
+				t.Errorf("long brief should collapse: %q", out)
+			}
+			msg.expanded = true
+			m.messages[i] = msg
+			out = ansiStrip(m.block(i, 100))
+			if !strings.Contains(out, "e/f.go:2") || !strings.Contains(out, "ctrl+o to collapse") {
+				t.Errorf("expanded brief should show every line: %q", out)
+			}
+		case kindText:
+			user++
+			if out := ansiStrip(m.block(i, 100)); !strings.Contains(out, "the actual task") {
+				t.Errorf("user turn block = %q", out)
+			}
+		}
+	}
+	if ctx != 1 || user != 1 {
+		t.Fatalf("blocks: kindContext=%d kindText=%d", ctx, user)
+	}
+}
+
+func TestShortBriefRendersWithoutExpandHint(t *testing.T) {
+	m := newTestModel(t)
+	if err := m.session.Append(llm.Message{Role: llm.RoleUser,
+		Content: "<task-context>\nnot a real task — nothing to gather\n</task-context>"}); err != nil {
+		t.Fatal(err)
+	}
+	m.replayTranscript(m.session)
+
+	for i, msg := range m.messages {
+		if msg.kind == kindContext {
+			if out := ansiStrip(m.block(i, 100)); strings.Contains(out, "ctrl+o") {
+				t.Errorf("short brief should not hint expansion: %q", out)
+			}
+			return
+		}
+	}
+	t.Fatal("no kindContext block rendered")
+}
