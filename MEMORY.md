@@ -251,6 +251,20 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Gotchas & lessons learned
 
+- **Self-testing TUI features in a live TTY (the user asked for this
+  instead of screenshots)**: `scripts/tmux-selftest.sh` runs khode
+  against `scripts/fakeai.py` (scripted OpenAI SSE: thinking + prose +
+  write + edit rounds) inside tmux on the ISOLATED socket `-L khv` —
+  never the user's tmux server. `capture-pane -p` gives the readable
+  frame, `-e` adds SGRs; the user's features (ctrl+o expand) drive fine
+  via `send-keys C-o`. Gotchas: tmux re-encodes truecolor to the 256
+  palette in -e captures (48;5 forms — the band's tint shifts; trust
+  the raw SGR unit tests for exact hexes); the fake server's round
+  counter is process state, so restart it per scenario; a full-screen
+  app exiting takes the socket's whole server down if it is the only
+  session (known gotcha below). Verified end to end: write diff
+  collapsed/expanded, edit with both bands, collapse cycle.
+
 - **OpenAI-protocol streams that carry both `reasoning_content` and
   inline `<think>` are not duplicating**: `TestOpenAIThinkingStream`
   pins that a stream sending "ponder " via `reasoning_content` and
@@ -596,6 +610,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Session summary | Commits |
 |---|---|---|
+| 2026-09-25 | User: "can't you run khode in your own tty" — yes; built the self-test harness (scripts/tmux-selftest.sh + scripts/fakeai.py, isolated tmux socket + scripted OpenAI SSE server) and verified the diff features live: boot clean on a preconfigured HOME, thinking + prose + write turn, 27-line diff capped with ctrl+o expand/collapse cycle, edit turn showing both bands and old/new gutter numbers, -e capture proving band coverage per row. One fake-server bug found on the way (fragment joining must produce valid JSON — khode correctly rejects malformed args). Harness committed for every future TUI feature | (this commit) |
 | 2026-09-25 | User: "that's worst" — screenshot showed first-token-on-black rows (band killed by the gutter's SHORT reset `\x1b[m`; the re-injection only knew `\x1b[0m`) and a wall of saturated green. Fix: bandLine strips every reset (regexp `\x1b\[0*m`) and paints the band once — tokens carry their own fg so resets are unneeded; swatch-dump verified one band SGR per row covering gutter+code+pad, lexerless files included. Second bug caught in the same dump: a run ending in a blank line fell back to PLAIN (chroma folds the trailing newline → row count one short) — padded back, regression test added. Bands darkened #1B4626/#4E2229. Lesson: assert on the RAW SGR stream, not ansiStrip'd text — the previous band test passed while the bands were visibly broken | (this commit) |
 | 2026-09-25 | "Not colorful like grok" — two root causes, both found by dumping the raw SGR stream of a rendered diff: (1) the aurora token palette left identifiers/punctuation unstyled → terminal default → monochrome; replaced with VSCode Dark+ mapping (chroma's JS lexer emits `const` as plain Keyword → purple, not KeywordDeclaration-blue — assert against real lexer output, not assumed types). (2) bandLine injected the background once at line start, but the lipgloss gutter's own reset killed the band for the whole code portion — bands must be re-injected after EVERY `\x1b[0m` on the row. Bands brightened to #1A5A2D / #5F232D; regression test counts ≥2 band SGRs per banded line | (this commit) |
 | 2026-09-25 | Grok-style write diffs (user picked Grok's screenshot over the +/- marker look): `renderDiffLines` rewritten — `@@` headers parsed for per-side line numbers (Sscanf bug of the day: forgot the pointer args, headers silently unparsed and rendered as content line 0), dim right-aligned gutter sized to the diff's largest number, full-width bands via `bandLine` SGR injection (hexDiffAddBg #17301F / hexDiffDelBg #3B1D21), headers and markers dropped, body flush left. Cap counts content only (header no longer drawn). 5 diff tests updated/added incl. multi-hunk gutter numbering; visual dump eyeballed | (this commit) |

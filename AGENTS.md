@@ -108,6 +108,9 @@ go build -o khode ./cmd/khode && ./khode   # run
 go test ./...           # tests (add them as packages grow)
 scripts/build-release.sh   # official release build (plain cross-compile — no
                            # secrets are baked; `all` cross-compiles)
+scripts/tmux-selftest.sh   # run khode against a scripted fake model in a real
+                           # tmux TTY (isolated socket) and capture the frames —
+                           # self-verify TUI features instead of asking the user
 ```
 
 khateway sign-in: `/login` runs the device flow — a short code is shown,
