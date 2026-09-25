@@ -25,6 +25,9 @@ func TestDumpViews(t *testing.T) {
 	if dir == "" {
 		t.Skip("DUMP_DIR not set")
 	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// lipgloss v2 renders truecolor escapes unconditionally; color
 	// downsampling happens at write time through a colorprofile.Writer,
 	// so raw View() content keeps full truecolor regardless of tty.
@@ -70,6 +73,22 @@ func TestDumpViews(t *testing.T) {
 	st.ctxIn, st.ctxOut = 120_000, 8_000
 	st = resize(st)
 	write("chat-streaming.txt", st.View().Content)
+
+	// live todo checklist: one upserted panel at the live edge and the
+	// current task on the status line.
+	tdm := newTestModel(t)
+	tdm.messages = append(tdm.messages,
+		uiMessage{role: llm.RoleUser, raw: "refactor the permission gate", history: true},
+		uiMessage{role: llm.RoleAssistant, raw: "Plan approved — tracking it as todos.", history: true},
+	)
+	seedTodo(t, tdm, `[{"content":"add the todo panel","status":"completed"},
+		{"content":"wire the plan handoff to the todo tool","status":"in_progress"},
+		{"content":"replay the panel on resume","status":"pending"}]`)
+	tdm.streaming = true
+	tdm.turnStart = time.Now().Add(-14 * time.Second)
+	tdm.handleStreamEvent(llm.ToolResultEvent{CallID: "t1", Name: "todo", Output: "…"})
+	tdm = resize(tdm)
+	write("chat-todo.txt", tdm.View().Content)
 
 	// --- walkthrough ---
 	wm := resize(newSettingsModel(t))

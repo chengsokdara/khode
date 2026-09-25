@@ -97,3 +97,14 @@ func TestSystemPromptComposesBaseAndContext(t *testing.T) {
 		t.Error("prompt must equal the base prompt without context files")
 	}
 }
+
+// The base prompt has to teach the todo workflow — the tool exists but
+// only earns its keep when the model is told to drive it.
+func TestSystemPromptGuidesTodoWorkflow(t *testing.T) {
+	got := DefaultSystemPrompt(t.TempDir())
+	for _, want := range []string{"todo tool", "in_progress", "completed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("system prompt missing todo guidance %q: %q", want, got)
+		}
+	}
+}

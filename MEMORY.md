@@ -105,6 +105,8 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-25 | Todo updates render as one upserted checklist panel at the live edge (todo call lines suppressed), not one result block per update; the panel reads the tool's `List()` for original order, and replay pairs results to todo calls by call id | Claude Code parity the user picked over a pinned panel; the tool's own render reorders by status (lines would jump between updates) and transcript results can interleave with other tools' in one round |
+| 2026-09-25 | The model is driven to the todo list by prompt text (base system prompt) + the plan tool's approval result, not by auto-seeding todos from the plan | the model composes better item wording than a mechanical plan→items split; the approval result is the strongest lever — it is the exact tool output the model reads at the switch to implementation |
 | 2026-09-24 | User messages render as a green left rule (`userBar`); `userCard`'s background slab deleted | filled backgrounds are where terminal color degradation bites — the user saw black-on-green; bars match the answer-bar grammar so all transcript roles read as one family |
 | 2026-09-24 | Input ↑/↓ history gated to the cursor being on the first/last (visual) line, draft stashed | multi-line drafts keep line-navigation semantics; shell convention; seeded from the transcript so `--resume` recalls what that session sent |
 | 2026-09-24 | Click-to-cursor ports bubbles' textarea `wrap()` column-for-column into `internal/ui/input.go` | the v2 textarea has no mouse support; clicks can only land where text renders, so the mirror must track `wrap()` across bubbles upgrades |
@@ -566,6 +568,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Session summary | Commits |
 |---|---|---|
+| 2026-09-25 | Live todo checklist (user asked for plan→todo→check-off like popular TUIs, picked the transcript panel): `DefaultSystemPrompt` teaches the workflow, plan approval result hands off to the todo list; ui `kindTodo` panel upserts in place at the live edge via the existing streaming-block mutation pattern, todo call lines suppressed, empty list clears, `full`/`fullResultBody` deleted; status line shows current task + done/total while streaming (reset on turn start/end/session switch); replay parses todo call inputs by id with `parseTodoRender` fallback for sanitized inputs; 6 new/updated ui tests + plan-approval + prompt tests | (this commit) |
 | 2026-09-16 | Scaffolded repo; Phase 1 done (TUI + Anthropic streaming + sessions + docs) | baa7520 |
 | 2026-09-16 | Phase 2 step 1: OpenAI provider via openai-go v1.12, `--provider` flag, fake-SSE provider test, docs | 7ae2922 |
 | 2026-09-16 | Phase 2 step 2: `config.Provider` + per-provider `models` map with legacy migration, flags → overrides, config unit tests, docs | 3de9993 |

@@ -301,29 +301,193 @@ func TestCompactEventNotice(t *testing.T) {
 	}
 }
 
-func TestTodoResultShowsWholeList(t *testing.T) {
-	evs := []llm.Event{
-		llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "todo", Input: json.RawMessage(`{}`)}},
-		llm.ToolResultEvent{CallID: "c1", Name: "todo",
-			Output: "❯ one\n☐ two\n☐ three\n☐ four\n☑ five"},
-		llm.DoneEvent{},
+// seedTodo writes a list through the real todo tool, so the panel and
+// status line read the same state an agent's Exec leaves behind.
+func seedTodo(t *testing.T, m Model, items string) {
+	t.Helper()
+	td, ok := m.tools.Get("todo")
+	if !ok {
+		t.Fatal("todo tool not registered")
 	}
-	m := pumpModel(t, newTestModel(t), evs)
+	if _, err := td.Exec(context.Background(), json.RawMessage(`{"items":`+items+`}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The agent's checklist is one panel, not a transcript of tool calls:
+// todo call lines are suppressed, each todo result upserts a single
+// kindTodo entry at the live edge with the newest list.
+func TestTodoPanelUpsertsInPlace(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	seedTodo(t, m, `[{"content":"one","status":"in_progress"},{"content":"two","status":"pending"}]`)
+	m.handleStreamEvent(llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "todo"}})
+	m.handleStreamEvent(llm.ToolResultEvent{CallID: "c1", Name: "todo", Output: "❯ one\n☐ two"})
+
+	counts := func() (panels, calls int) {
+		for _, msg := range m.messages {
+			switch msg.kind {
+			case kindTodo:
+				panels++
+			case kindToolCall:
+				calls++
+			}
+		}
+		return panels, calls
+	}
+	if panels, calls := counts(); panels != 1 || calls != 0 {
+		t.Fatalf("after first update: panels=%d calls=%d, want 1 panel, 0 call lines", panels, calls)
+	}
+	if out := ansiStrip(m.block(len(m.messages)-1, 80)); !strings.Contains(out, "❯ one") ||
+		!strings.Contains(out, "☐ two") {
+		t.Errorf("panel body = %q", out)
+	}
+
+	// The next update replaces the panel: still exactly one, still at
+	// the live edge, now showing the newer list.
+	seedTodo(t, m, `[{"content":"one","status":"completed"},{"content":"two","status":"in_progress"},{"content":"three","status":"pending"}]`)
+	m.handleStreamEvent(llm.ToolResultEvent{CallID: "c2", Name: "todo", Output: "…"})
+
+	if panels, calls := counts(); panels != 1 || calls != 0 {
+		t.Fatalf("after second update: panels=%d calls=%d, want 1 panel, 0 call lines", panels, calls)
+	}
+	last := m.messages[len(m.messages)-1]
+	if last.kind != kindTodo {
+		t.Fatalf("panel at %v after upsert, want at the live edge", last.kind)
+	}
+	out := ansiStrip(m.block(len(m.messages)-1, 80))
+	for _, want := range []string{"☑ one", "❯ two", "☐ three", "1/3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("panel = %q, missing %q", out, want)
+		}
+	}
+}
+
+// An empty list means the agent cleared its tasks: the panel goes away.
+func TestTodoPanelClearsOnEmptyList(t *testing.T) {
+	m := newTestModel(t)
+	seedTodo(t, m, `[{"content":"one","status":"completed"}]`)
+	m.handleStreamEvent(llm.ToolResultEvent{CallID: "c1", Name: "todo", Output: "☑ one"})
+	seedTodo(t, m, `[]`)
+	m.handleStreamEvent(llm.ToolResultEvent{CallID: "c2", Name: "todo", Output: "(task list cleared)"})
+
+	for _, msg := range m.messages {
+		if msg.kind == kindTodo {
+			t.Error("cleared list left a panel behind")
+		}
+	}
+}
+
+// A rejected todo call (bad status, say) renders as a normal error
+// result instead of a panel of stale state.
+func TestTodoErrorResultStaysNormal(t *testing.T) {
+	m := newTestModel(t)
+	m.handleStreamEvent(llm.ToolResultEvent{CallID: "c1", Name: "todo",
+		Output:  `items[0]: status "done" must be pending, in_progress, or completed`,
+		IsError: true})
 
 	found := false
 	for i, msg := range m.messages {
-		if msg.kind == kindToolResult && msg.full {
+		if msg.kind == kindTodo {
+			t.Error("error result rendered as a panel")
+		}
+		if msg.kind == kindToolResult && msg.isErr {
 			found = true
-			out := m.block(i, 80)
-			for _, want := range []string{"❯ one", "☑ five"} {
-				if !strings.Contains(out, want) {
-					t.Errorf("todo block %q missing %q — list must render whole", out, want)
-				}
+			if out := m.block(i, 80); !strings.Contains(out, "must be pending") {
+				t.Errorf("error block = %q", out)
 			}
 		}
 	}
 	if !found {
-		t.Error("todo result was not flagged full")
+		t.Error("todo error result not rendered as an error block")
+	}
+}
+
+// While a turn runs, the status line names the task in progress and the
+// done/total count; ending the turn clears the current task.
+func TestTodoStatusLineShowsTask(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.streaming = true
+
+	seedTodo(t, m, `[{"content":"wire the handoff","status":"in_progress"},{"content":"write tests","status":"pending"},{"content":"done thing","status":"completed"}]`)
+	m.handleStreamEvent(llm.ToolResultEvent{CallID: "c1", Name: "todo", Output: "…"})
+
+	got := ansiStrip(m.statusLine())
+	for _, want := range []string{"❯ wire the handoff", "1/3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status line = %q, missing %q", got, want)
+		}
+	}
+
+	m.handleStreamEvent(llm.DoneEvent{})
+	if m.streaming {
+		t.Fatal("turn did not finish")
+	}
+	if m.todoNow != "" {
+		t.Errorf("todo task %q survived the turn", m.todoNow)
+	}
+}
+
+// A resumed transcript shows the final checklist — one panel at the
+// last todo update, call lines suppressed — and pairs results to calls
+// by id when a round mixes tools and the results interleave.
+func TestTodoReplayRendersFinalPanel(t *testing.T) {
+	sess, err := agent.NewSession(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+		{ID: "r1", Name: "read", Input: json.RawMessage(`{"path":"README.md"}`)},
+		{ID: "t1", Name: "todo", Input: json.RawMessage(
+			`{"items":[{"content":"one","status":"completed"},{"content":"two","status":"in_progress"}]}`)},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(llm.Message{Role: llm.RoleTool,
+		ToolResult: &llm.ToolResult{CallID: "t1", Content: "☑ one\n❯ two"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(llm.Message{Role: llm.RoleTool,
+		ToolResult: &llm.ToolResult{CallID: "r1", Content: "file body"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Provider: "test", MaxTokens: 100}
+	cfg.SetModel("test-model")
+	m := New(cfg, &config.Auth{}, nameOnlyProvider{}, sess, tools.Default(t.TempDir()), nil, t.TempDir())
+
+	panels, callLines, readResults := 0, 0, 0
+	for i, msg := range m.messages {
+		switch msg.kind {
+		case kindTodo:
+			panels++
+			out := ansiStrip(m.block(i, 80))
+			for _, want := range []string{"☑ one", "❯ two", "1/2"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("replayed panel = %q, missing %q", out, want)
+				}
+			}
+		case kindToolCall:
+			callLines++
+			if strings.Contains(msg.raw, "todo") {
+				t.Errorf("replayed todo call line: %q", msg.raw)
+			}
+		case kindToolResult:
+			readResults++
+			if !strings.Contains(msg.raw, "file body") {
+				t.Errorf("non-todo result lost: %q", msg.raw)
+			}
+		}
+	}
+	if panels != 1 {
+		t.Errorf("replayed panels = %d, want 1", panels)
+	}
+	if callLines != 1 || readResults != 1 {
+		t.Errorf("call lines = %d, other results = %d, want 1 each", callLines, readResults)
 	}
 }
 

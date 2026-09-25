@@ -46,6 +46,9 @@ func TestPlanToolApprovalFlow(t *testing.T) {
 	if !strings.Contains(out, "accept-edits") {
 		t.Fatalf("approval result = %q", out)
 	}
+	if !strings.Contains(out, "todo") {
+		t.Errorf("approval result does not hand the plan off to the todo list: %q", out)
+	}
 	if !<-approved {
 		t.Fatal("approval did not round-trip")
 	}

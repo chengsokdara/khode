@@ -77,6 +77,15 @@ var (
 	delStyle    = lipgloss.NewStyle().Foreground(colErr)
 	warnStyle   = lipgloss.NewStyle().Foreground(colWarn)
 
+	// todoPanel frames the agent's live task checklist; done items dim
+	// away, the one in progress runs bright cyan (khode's activity
+	// color), pending items stay at tool-result quiet.
+	todoPanel   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colBorder).Padding(0, 1)
+	todoTitle   = lipgloss.NewStyle().Bold(true).Foreground(colCyanHi)
+	todoDone    = lipgloss.NewStyle().Foreground(colDim)
+	todoActive  = lipgloss.NewStyle().Bold(true).Foreground(colCyanHi)
+	todoPending = lipgloss.NewStyle().Foreground(colResult)
+
 	// pickSel marks whatever a list cursor rests on.
 	pickSel = lipgloss.NewStyle().Bold(true).Foreground(colCyanHi)
 

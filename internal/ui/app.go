@@ -48,6 +48,7 @@ const (
 	kindThinking
 	kindToolCall
 	kindToolResult
+	kindTodo // the agent's live task checklist panel
 )
 
 // uiMessage is a message shown in the chat pane. Only messages with
@@ -60,7 +61,6 @@ type uiMessage struct {
 	rendered  string
 	streaming bool
 	isErr     bool
-	full      bool // tool results meant to be read whole (todo lists)
 	final     bool // the closing assistant message of a turn: bright answer bar
 	history   bool
 }
@@ -129,6 +129,13 @@ type Model struct {
 	// alias the copies.
 	partial      *strings.Builder
 	partialThink *strings.Builder
+
+	// todoNow is the agent's current todo item with done/total counts,
+	// mirrored from the todo tool so the status line can show live
+	// progress while a turn runs.
+	todoNow   string
+	todoDone  int
+	todoTotal int
 
 	// ctxIn/ctxOut are the most recent request's usage: ctxIn is the
 	// transcript size the provider saw, so the status line can render
@@ -237,17 +244,29 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 // into scrollback exactly as it looked when it happened.
 func (m *Model) replayTranscript(sess *agent.Session) {
 	msgs := sess.Messages()
+	// todoCalls remembers parsed todo-call inputs by call id: a round's
+	// results can interleave with other tools' results, so pairing goes
+	// through the id, not transcript adjacency.
+	todoCalls := map[string][]tools.Todo{}
 	for idx, msg := range msgs {
 		final := isFinalAnswer(msgs, idx)
 		switch {
 		case msg.Role == llm.RoleTool && msg.ToolResult != nil:
-			m.messages = append(m.messages, uiMessage{
-				role:    msg.Role,
-				kind:    kindToolResult,
-				raw:     msg.ToolResult.Content,
-				isErr:   msg.ToolResult.IsError,
-				history: true,
-			})
+			if items, isTodo := todoCalls[msg.ToolResult.CallID]; isTodo {
+				delete(todoCalls, msg.ToolResult.CallID)
+				if items == nil {
+					items = parseTodoRender(msg.ToolResult.Content)
+				}
+				m.upsertTodoPanel(items)
+			} else {
+				m.messages = append(m.messages, uiMessage{
+					role:    msg.Role,
+					kind:    kindToolResult,
+					raw:     msg.ToolResult.Content,
+					isErr:   msg.ToolResult.IsError,
+					history: true,
+				})
+			}
 		case msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0:
 			if msg.Thinking != "" {
 				m.messages = append(m.messages, uiMessage{role: msg.Role, kind: kindThinking, raw: msg.Thinking, history: true})
@@ -256,6 +275,12 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 				m.messages = append(m.messages, uiMessage{role: msg.Role, raw: msg.Content, history: true, final: final})
 			}
 			for _, c := range msg.ToolCalls {
+				if c.Name == "todo" {
+					// The checklist panel renders todo updates; the call
+					// line would only repeat the list as JSON.
+					todoCalls[c.ID] = parseTodoInput(c.Input)
+					continue
+				}
 				m.messages = append(m.messages, uiMessage{
 					role: msg.Role, kind: kindToolCall, raw: formatToolCall(c), history: true,
 				})
@@ -330,6 +355,7 @@ func (m *Model) useSession(sess *agent.Session) {
 	m.ctxIn, m.ctxOut = 0, 0
 	m.messages = nil
 	m.replayTranscript(sess)
+	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0
 }
 
 // --- tea.Model -------------------------------------------------------------
@@ -913,15 +939,23 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 
 	case llm.ToolCallEvent:
 		m.sealStreamingText()
+		if e.Name == "todo" {
+			// The checklist panel is the feedback for todo updates; a
+			// call line would only echo the whole list back as JSON.
+			return tea.Batch(m.pump(), m.flush())
+		}
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
 		})
 		return tea.Batch(m.pump(), m.flush())
 
 	case llm.ToolResultEvent:
+		if e.Name == "todo" && !e.IsError {
+			m.upsertTodoPanel(m.todoList())
+			return tea.Batch(m.pump(), m.flush())
+		}
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleTool, kind: kindToolResult, raw: e.Output, isErr: e.IsError,
-			full: e.Name == "todo",
 		})
 		return tea.Batch(m.pump(), m.flush())
 
@@ -996,6 +1030,106 @@ func (m *Model) sealStreamingText() {
 	m.messages[idx].streaming = false
 }
 
+// todoTool returns the registered todo list tool, or nil when absent.
+func (m *Model) todoTool() *tools.Todos {
+	t, ok := m.tools.Get("todo")
+	if !ok {
+		return nil
+	}
+	td, _ := t.(*tools.Todos)
+	return td
+}
+
+// todoList snapshots the todo tool's current items, nil when the tool
+// is missing from the registry.
+func (m *Model) todoList() []tools.Todo {
+	td := m.todoTool()
+	if td == nil {
+		return nil
+	}
+	return td.List()
+}
+
+// upsertTodoPanel refreshes the single checklist panel: the newest todo
+// state replaces the previous rendering and moves to the live edge, so
+// scrollback ends up with one panel showing the final list. An empty
+// list removes the panel — the agent cleared its tasks. The status
+// line's current-task fields mirror the same state.
+func (m *Model) upsertTodoPanel(items []tools.Todo) {
+	m.todoNow, m.todoDone, m.todoTotal = "", 0, len(items)
+	for _, td := range items {
+		switch td.Status {
+		case tools.TodoInProgress:
+			m.todoNow = td.Content
+		case tools.TodoCompleted:
+			m.todoDone++
+		}
+	}
+	for i := range m.messages {
+		if m.messages[i].kind == kindTodo {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			break
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	m.messages = append(m.messages, uiMessage{
+		role: llm.RoleTool, kind: kindTodo, raw: renderTodoBody(items),
+	})
+}
+
+// renderTodoBody draws the checklist body: one line per item in the
+// model's execution order, marked ☑ done, ❯ in progress, ☐ pending.
+func renderTodoBody(items []tools.Todo) string {
+	lines := make([]string, len(items))
+	for i, td := range items {
+		switch td.Status {
+		case tools.TodoCompleted:
+			lines[i] = "☑ " + td.Content
+		case tools.TodoInProgress:
+			lines[i] = "❯ " + td.Content
+		default:
+			lines[i] = "☐ " + td.Content
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// parseTodoInput extracts the item list from a todo call's input JSON;
+// a malformed call (sanitized to {} in the transcript) yields nil.
+func parseTodoInput(input json.RawMessage) []tools.Todo {
+	var in struct {
+		Items []tools.Todo `json:"items"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return nil
+	}
+	return in.Items
+}
+
+// parseTodoRender recovers items from a todo result's rendered lines —
+// the replay fallback when the transcript's call input was sanitized
+// away. Unmarked lines (the "(task list cleared)" note) are skipped.
+func parseTodoRender(out string) []tools.Todo {
+	var items []tools.Todo
+	for _, l := range strings.Split(out, "\n") {
+		var td tools.Todo
+		switch {
+		case strings.HasPrefix(l, "☑ "):
+			td = tools.Todo{Status: tools.TodoCompleted, Content: strings.TrimSpace(l[len("☑ "):])}
+		case strings.HasPrefix(l, "❯ "):
+			td = tools.Todo{Status: tools.TodoInProgress, Content: strings.TrimSpace(l[len("❯ "):])}
+		case strings.HasPrefix(l, "☐ "):
+			td = tools.Todo{Status: tools.TodoPending, Content: strings.TrimSpace(l[len("☐ "):])}
+		default:
+			continue
+		}
+		items = append(items, td)
+	}
+	return items
+}
+
 // markFinalAnswer flags the turn's last assistant text block so it
 // renders under the bright answer bar. A cached render is dropped: the
 // block may already have been drawn with the mid-turn bar. Errors keep
@@ -1016,6 +1150,7 @@ func (m *Model) markFinalAnswer() {
 func (m *Model) finishStream() tea.Cmd {
 	m.streaming = false
 	m.events = nil
+	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
@@ -1102,6 +1237,7 @@ func (m *Model) startTurn(input string) tea.Cmd {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0 // fresh turn, no task yet
 	runner := &agent.Runner{
 		Provider:  m.provider,
 		Session:   m.session,
@@ -1326,6 +1462,12 @@ func (m *Model) statusLine() string {
 		elapsed := time.Since(m.turnStart).Truncate(time.Second)
 		state = m.spinner.View() + statusStyle.Render("working") +
 			dimStyle.Render(" · "+elapsed.String())
+		if m.todoNow != "" {
+			state += statusStyle.Render(" · ❯ " + clip(m.todoNow, max(12, m.width/4)))
+			if m.todoTotal > 0 {
+				state += dimStyle.Render(fmt.Sprintf(" · %d/%d", m.todoDone, m.todoTotal))
+			}
+		}
 		if m.retryNote != "" {
 			state += warnStyle.Render(" · " + clip(m.retryNote, max(20, m.width/2)))
 		}
@@ -1387,13 +1529,11 @@ func (m *Model) block(i int, width int) string {
 	switch {
 	case msg.kind == kindToolCall:
 		out = toolCallBlock(msg.raw, width)
+	case msg.kind == kindTodo:
+		out = todoPanelBlock(msg.raw, width)
 	case msg.kind == kindThinking:
 		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
 	case msg.kind == kindToolResult:
-		if msg.full {
-			out = resultStyle.Width(width).Render(fullResultBody(msg.raw))
-			break
-		}
 		body := summarizeToolResult(msg.raw)
 		style := resultStyle
 		prefix := "⎿  "
@@ -1534,14 +1674,29 @@ func summarizeToolResult(raw string) string {
 	return truncate(strings.Join(shown, " · "), 200)
 }
 
-// fullResultBody indents a multi-line tool result under the result
-// marker, for tools whose output is the point (the todo list).
-func fullResultBody(raw string) string {
-	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
-	for i := 1; i < len(lines); i++ {
-		lines[i] = "   " + lines[i]
+// todoPanelBlock draws the agent's task checklist as a bordered card:
+// a done/total title over one styled line per item, clipped to the
+// card's column budget.
+func todoPanelBlock(body string, width int) string {
+	lim := max(16, min(width-6, 56))
+	lines := strings.Split(body, "\n")
+	done := 0
+	styled := make([]string, len(lines))
+	for i, raw := range lines {
+		line := clip(raw, lim)
+		switch {
+		case strings.HasPrefix(raw, "☑"):
+			done++
+			styled[i] = todoDone.Render(line)
+		case strings.HasPrefix(raw, "❯"):
+			styled[i] = todoActive.Render(line)
+		default:
+			styled[i] = todoPending.Render(line)
+		}
 	}
-	return "⎿  " + strings.Join(lines, "\n")
+	title := todoTitle.Render(fmt.Sprintf("◆ Tasks · %d/%d", done, len(lines)))
+	return todoPanel.Render(
+		lipgloss.JoinVertical(lipgloss.Left, append([]string{title}, styled...)...))
 }
 
 // compactJSON squeezes a tool call's input onto one line.

@@ -59,8 +59,10 @@ internal/agent/      conversation machinery
   approve.go           Approver interface + Bridge carrying tool/plan questions
   task.go              subagent task tool (fresh in-memory session, report back)
   plan.go              plan tool: present a plan, approval switches to accept-edits
+                       and hands the plan off to the todo list
 internal/ui/         Bubble Tea app
-  app.go               root Model, agent-loop wiring, slash commands
+  app.go               root Model, agent-loop wiring, slash commands,
+                       live todo checklist panel (one upserted panel + status-line task)
   devicelogin.go       /login overlay: khateway device sign-in (mint → show URL+code →
                        poll → key into auth.json, khateway active, model auto-pick)
   modepicker.go        shift+tab mode cycling, /mode picker, mode line above the input

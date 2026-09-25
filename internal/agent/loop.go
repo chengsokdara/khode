@@ -262,7 +262,10 @@ surgical string replacements; use write only for new files or full
 rewrites. Tool calls may need the user's approval — if one is declined,
 adapt instead of retrying it unchanged. In plan mode nothing can be
 modified: investigate, then present your complete plan with the plan
-tool; implementation starts once the user approves it. Be concise and
+tool; implementation starts once the user approves it. For multi-step
+work, keep a todo list with the todo tool: break the work into concrete
+steps, keep exactly one step in_progress, mark steps completed as soon
+as they are done, and add steps as you discover them. Be concise and
 practical. Prefer exact commands and code over prose. Format responses
 in markdown.`, workdir)
 }

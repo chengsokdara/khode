@@ -72,7 +72,9 @@ func (p *PlanTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 		}
 		return "", errors.New("the user declined this plan — refine it or ask what they would like changed")
 	}
-	return "the user approved the plan — khode switched to accept-edits mode; implement it", nil
+	return "the user approved the plan — khode switched to accept-edits mode. " +
+		"Record the plan as todo items with the todo tool (first one in_progress), " +
+		"then implement, marking each item completed as you finish it.", nil
 }
 
 // interface guards: the plan tool satisfies the tool contract.

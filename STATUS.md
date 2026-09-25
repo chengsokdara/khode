@@ -10,6 +10,21 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Live todo checklist (2026-09-25):** the todo tool now actually drives
+multi-step work, Claude Code style. The base system prompt teaches the
+workflow (multi-step work keeps a todo list, exactly one item
+in_progress, completed items marked as they finish), and an approved
+plan hands off to the list — the plan tool's approval result tells the
+model to record the plan as todos before implementing. In the TUI, todo
+updates render as one checklist panel that upserts in place at the live
+edge (call lines suppressed; an empty list clears the panel), styled
+☑ done / ❯ in progress / ☐ pending with a done/total title, and the
+status line shows the current task plus progress while a turn runs
+("working · ❯ wire handoff · 2/5 · 14s"). Resume replays the final
+panel by pairing results to todo calls through their call id (mixed
+rounds interleave results). Display-only: the transcript still keeps
+every todo call and result.
+
 **Turn-hang hardening (2026-09-24):** a khateway 504 used to pin the
 turn in silent "working" for ~10 minutes (the user saw 6) and a
 mid-stream stall could hang forever. Three bounds now guarantee an
@@ -618,6 +633,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | Live todo checklist: system prompt + plan-approval handoff drive the todo tool; TUI renders one in-place checklist panel (todo call lines suppressed, empty list clears, id-paired replay) and the status line tracks the current task | (this commit) |
 | 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs | baa7520 |
 | 2026-09-16 | OpenAI provider (`openai-go` v1.12) + `--provider` flag + fake-SSE provider test | 7ae2922 |
 | 2026-09-16 | Provider selection in config: `provider` + per-provider `models` map, legacy migration, flags → overrides | 3de9993 |
