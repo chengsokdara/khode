@@ -1,6 +1,6 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-25 (free-models auto-sync — daily cron + per-provider opt-in — complete locally, not deployed)
+Last updated: 2026-09-25 (free-models auto-sync DEPLOYED — daily cron live, version aedbaffe)
 
 ## Cross-session facts
 
@@ -26,9 +26,10 @@ Last updated: 2026-09-25 (free-models auto-sync — daily cron + per-provider op
   `--test-scheduled` and `/__scheduled` is in run_worker_first — WITHOUT the
   run_worker_first entry the assets SPA fallback swallows the route (silent
   200 index.html; found by smoke). Last-run summary persists in settings
-  `models_sync_last_run` (GET/POST /api/admin/models/sync). NOT deployed —
-  migration 0013 needs `wrangler d1 migrations apply khateway --remote`.
-  Counts: offline 371, smoke_gateway 231.
+  `models_sync_last_run` (GET/POST /api/admin/models/sync). DEPLOYED
+  2026-09-25 (version aedbaffe-186b-4206-a4f9-6e8da55d3820; migration 0013
+  applied remote first; trigger registered `17 3 * * *`). Counts: offline
+  372, smoke_gateway 231.
 - **Usage dashboard (2026-09-24)** — the admin usage dashboard lives at
   `/admin/usage` backed by `GET /api/admin/usage?days=N` (clamp 1–90, default
   7; days=1 hourly, else daily buckets; bucket-aligned window, current partial

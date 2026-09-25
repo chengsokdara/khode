@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-25 (free-models auto-sync — daily cron + admin Sync now — complete locally, not yet deployed)
+Last updated: 2026-09-25 (free-models auto-sync DEPLOYED — daily cron live at 03:17 UTC)
 
 ## How to use this file
 
@@ -11,9 +11,8 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
-- **Free-models auto-sync ✅ complete (2026-09-25, local only — NOT deployed;
-  run `wrangler d1 migrations apply khateway --remote` for 0013 before the
-  next deploy)** — user: "update the models list on a regular basis … only
+- **Free-models auto-sync ✅ complete + DEPLOYED (2026-09-25)** — user:
+  "update the models list on a regular basis … only
   import or update model that is free." Approved decisions: daily period,
   per-provider opt-in, auto-disable dropouts (sync-owned rows only), Gemini
   listings count as free-tier. Shipped:
@@ -62,6 +61,14 @@ If something is claimed ✅ but not verified, it says so.
   - Deploy note: the cron starts firing on its own after deploy (03:17 UTC
     daily); no auto_sync provider exists until toggled in the Providers UI,
     so early deploys are no-ops.
+  - **DEPLOYED ✅ (2026-09-25, version aedbaffe-186b-4206-a4f9-6e8da55d3820)**:
+    migration 0013 applied remote FIRST, then `npm run deploy` — wrangler
+    registered the trigger (`schedule: 17 3 * * *`). Live checks green:
+    /health ok; served bundle == local build (index-B3hC6bDe.js);
+    GET /api/admin/models/sync + /api/admin/providers → 401 admin envelopes
+    (new routes live). No provider has auto_sync on yet — the first cron run
+    (03:17 UTC) is a no-op until the OpenRouter provider is toggled in the
+    Providers UI.
 - **Usage dashboard filters ✅ complete (2026-09-25, local only)** — user:
   "the admin usage page should have proper filters that make sense." Approved
   scope: the core four (Key · Model · Provider · Endpoint — user/org + status
