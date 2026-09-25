@@ -10,6 +10,25 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Git-style diffs for writes + streaming dedup (2026-09-25):** edit and
+write results now render as their git-style change in the chat — the
+`⏺ edit <path>` call line (path only; the compacted-JSON args are gone
+since the diff carries the content) over a `⎿` block pairing the result
+summary with the colorized unified diff (dim `@@` hunks, red `-`, green
+`+`, clipped to width, capped at 20 lines with a "… N more diff lines"
+tail). The diff is computed from the tool *input alone*
+(`tools.ChangeDiff`: edit diffs `old_string`→`new_string`, write shows
+its content as additions) — no file access, so it is identical live and
+on `--resume` replay (`replayTranscript` pairs call→result by call id
+like the todo panel); write-overwrites show all-additions rather than an
+old→new diff (the pre-write content is unrecoverable at replay time).
+Errored write-class calls keep the plain red result rendering. The same
+task fixed the duplicate streaming render: `messageViewport` painted
+every in-flight block twice — once in the history loop, again via
+`streamingBlock()` at the live edge — so streaming thinking lines (and
+answer bars) appeared doubled with stacked vertical bar segments; the
+history loop now skips streaming blocks.
+
 **Test isolation fix (2026-09-25):** `go test ./internal/ui` could
 overwrite the developer's real `~/.khode/config.json` — `newTestModel`
 didn't pin HOME, so tests that reach persisting paths (mode picker
@@ -642,6 +661,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | Git-style diffs for edit/write in the chat (`tools.ChangeDiff` from input alone, `kindDiff` block with colorized capped diff, path-only call lines, replay support) + fix: streaming blocks rendered twice per frame (duplicate thinking lines, stacked bars) | (this commit) |
 | 2026-09-25 | Test isolation: `isolateHome` in `newTestModel` stops `go test ./internal/ui` from writing the real `~/.khode/config.json` (a fixture clobber shipped in the mode-persist tests); canary-verified | (this commit) |
 | 2026-09-25 | Live todo checklist: system prompt + plan-approval handoff drive the todo tool; TUI renders one in-place checklist panel (todo call lines suppressed, empty list clears, id-paired replay) and the status line tracks the current task | e4d8dd9 |
 | 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs | baa7520 |

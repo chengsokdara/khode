@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -233,4 +234,29 @@ func diffAdvance(op diffOp, oldLine, newLine *int) {
 	case '+':
 		*newLine++
 	}
+}
+
+// ChangeDiff renders the unified diff a write-class tool call applies,
+// computed from its input alone — no file access, so the result is the
+// same live (before or after exec) and when replaying a transcript
+// whose file has already changed. edit diffs old_string against
+// new_string; write shows its content as pure additions. It returns ""
+// for any other tool or unparseable input so callers fall back to the
+// plain result line.
+func ChangeDiff(name string, input json.RawMessage) string {
+	switch name {
+	case "edit":
+		var a editArgs
+		if err := arg(input, &a); err != nil {
+			return ""
+		}
+		return UnifiedDiff(a.OldString, a.NewString, 3)
+	case "write":
+		var a writeArgs
+		if err := arg(input, &a); err != nil {
+			return ""
+		}
+		return UnifiedDiff("", a.Content, 3)
+	}
+	return ""
 }

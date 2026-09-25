@@ -49,6 +49,7 @@ const (
 	kindToolCall
 	kindToolResult
 	kindTodo // the agent's live task checklist panel
+	kindDiff // an edit/write call's change, rendered git-style
 )
 
 // uiMessage is a message shown in the chat pane. Only messages with
@@ -58,6 +59,7 @@ type uiMessage struct {
 	role      llm.Role
 	kind      uiMessageKind
 	raw       string
+	diff      string // kindDiff only: the call's plain unified diff text
 	rendered  string
 	streaming bool
 	isErr     bool
@@ -129,6 +131,11 @@ type Model struct {
 	// alias the copies.
 	partial      *strings.Builder
 	partialThink *strings.Builder
+
+	// diffCalls remembers the change diff of in-flight edit/write calls
+	// by call id: the result event carries only the summary line, so the
+	// git-style block pairs it with the diff computed at call time.
+	diffCalls map[string]string
 
 	// todoNow is the agent's current todo item with done/total counts,
 	// mirrored from the todo tool so the status line can show live
@@ -246,8 +253,10 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 	msgs := sess.Messages()
 	// todoCalls remembers parsed todo-call inputs by call id: a round's
 	// results can interleave with other tools' results, so pairing goes
-	// through the id, not transcript adjacency.
+	// through the id, not transcript adjacency. diffCalls does the same
+	// for write-class calls, whose results replay as git-style diffs.
 	todoCalls := map[string][]tools.Todo{}
+	diffCalls := map[string]string{}
 	for idx, msg := range msgs {
 		final := isFinalAnswer(msgs, idx)
 		switch {
@@ -258,6 +267,19 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 					items = parseTodoRender(msg.ToolResult.Content)
 				}
 				m.upsertTodoPanel(items)
+			} else if d, isDiff := diffCalls[msg.ToolResult.CallID]; isDiff {
+				delete(diffCalls, msg.ToolResult.CallID)
+				if msg.ToolResult.IsError {
+					m.messages = append(m.messages, uiMessage{
+						role: msg.Role, kind: kindToolResult, raw: msg.ToolResult.Content,
+						isErr: true, history: true,
+					})
+				} else {
+					m.messages = append(m.messages, uiMessage{
+						role: msg.Role, kind: kindDiff, raw: msg.ToolResult.Content,
+						diff: d, history: true,
+					})
+				}
 			} else {
 				m.messages = append(m.messages, uiMessage{
 					role:    msg.Role,
@@ -280,6 +302,9 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 					// line would only repeat the list as JSON.
 					todoCalls[c.ID] = parseTodoInput(c.Input)
 					continue
+				}
+				if d := tools.ChangeDiff(c.Name, c.Input); d != "" {
+					diffCalls[c.ID] = d
 				}
 				m.messages = append(m.messages, uiMessage{
 					role: msg.Role, kind: kindToolCall, raw: formatToolCall(c), history: true,
@@ -831,6 +856,9 @@ func (m Model) chatView() string {
 func (m Model) messageViewport(rows int) string {
 	var blocks []string
 	for i := range m.messages {
+		if m.messages[i].streaming {
+			continue // streamingBlock paints these once, at the live edge
+		}
 		blocks = append(blocks, m.block(i, m.printWidth()))
 	}
 	if streaming := m.streamingBlock(); streaming != "" {
@@ -944,6 +972,14 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 			// call line would only echo the whole list back as JSON.
 			return tea.Batch(m.pump(), m.flush())
 		}
+		// Write-class calls bank their change diff now, computed from the
+		// input alone; the result event pairs it with the summary line.
+		if d := tools.ChangeDiff(e.Name, e.Input); d != "" {
+			if m.diffCalls == nil {
+				m.diffCalls = make(map[string]string)
+			}
+			m.diffCalls[e.ID] = d
+		}
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
 		})
@@ -952,6 +988,16 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.ToolResultEvent:
 		if e.Name == "todo" && !e.IsError {
 			m.upsertTodoPanel(m.todoList())
+			return tea.Batch(m.pump(), m.flush())
+		}
+		d, hasDiff := m.diffCalls[e.CallID]
+		delete(m.diffCalls, e.CallID)
+		if hasDiff && !e.IsError {
+			// A write-class result renders as its change: the summary
+			// line over the colorized diff, instead of flattened output.
+			m.messages = append(m.messages, uiMessage{
+				role: llm.RoleTool, kind: kindDiff, raw: e.Output, diff: d,
+			})
 			return tea.Batch(m.pump(), m.flush())
 		}
 		m.messages = append(m.messages, uiMessage{
@@ -1529,6 +1575,8 @@ func (m *Model) block(i int, width int) string {
 	switch {
 	case msg.kind == kindToolCall:
 		out = toolCallBlock(msg.raw, width)
+	case msg.kind == kindDiff:
+		out = diffBlock(msg.raw, msg.diff, width)
 	case msg.kind == kindTodo:
 		out = todoPanelBlock(msg.raw, width)
 	case msg.kind == kindThinking:
@@ -1628,14 +1676,50 @@ func humanTokens(n int64) string {
 const toolResultPreviewLines = 2
 
 // formatToolCall renders a tool call as one compact line: name plus
-// single-line arguments.
+// single-line arguments. Write-class calls show just the file — the
+// diff block under them carries the content.
 func formatToolCall(c llm.ToolCall) string {
-	args := compactJSON(c.Input)
 	line := c.Name
-	if args != "" && args != "{}" {
+	if p := toolCallPath(c.Name, c.Input); p != "" {
+		line += " " + p
+	} else if args := compactJSON(c.Input); args != "" && args != "{}" {
 		line += " " + args
 	}
 	return truncate(line, 120)
+}
+
+// toolCallPath extracts the file a write-class call targets, "" for any
+// other tool or unparseable input.
+func toolCallPath(name string, input json.RawMessage) string {
+	if name != "edit" && name != "write" {
+		return ""
+	}
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return ""
+	}
+	return a.Path
+}
+
+// diffPreviewLines caps the change block the chat shows for one
+// edit/write call.
+const diffPreviewLines = 20
+
+// diffBlock renders a write-class result as a git-style change: the ⎿
+// summary line, then the colorized diff hung under it, clipped to the
+// chat width and capped at diffPreviewLines lines.
+func diffBlock(summary, diff string, width int) string {
+	lines := strings.Split(colorizeDiff(diff, width-3), "\n")
+	if extra := len(lines) - diffPreviewLines; extra > 0 {
+		lines = append(lines[:diffPreviewLines],
+			dimStyle.Render(fmt.Sprintf("… %d more diff lines", extra)))
+	}
+	for i := range lines {
+		lines[i] = "   " + lines[i]
+	}
+	return resultStyle.Render("⎿  "+summary) + "\n" + strings.Join(lines, "\n")
 }
 
 // toolCallBlock renders a tool call two-tone: the ⏺ marker and tool

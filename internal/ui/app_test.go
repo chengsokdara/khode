@@ -778,3 +778,134 @@ func TestPgUpPgDnScrollViewport(t *testing.T) {
 		t.Fatalf("scroll = %d, want clamped at 0", m.scroll)
 	}
 }
+
+// The live edge renders in-flight blocks exactly once: messageViewport
+// skips streaming blocks in the history loop because streamingBlock
+// paints them at the live edge. The old double render showed every
+// streaming thinking line — and every answer bar — twice per frame.
+func TestStreamingBlocksRenderOnce(t *testing.T) {
+	evs := []llm.Event{
+		llm.ThinkingDeltaEvent{Text: "weighing options"},
+		llm.TextDeltaEvent{Text: "final answer"},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	out := ansiStrip(m.messageViewport(30))
+	if n := strings.Count(out, "weighing options"); n != 1 {
+		t.Errorf("thinking text appears %d times in the live frame, want 1:\n%s", n, out)
+	}
+	if n := strings.Count(out, "final answer"); n != 1 {
+		t.Errorf("answer text appears %d times in the live frame, want 1:\n%s", n, out)
+	}
+}
+
+// An edit result renders as its git-style change: the call line names
+// the file only, the diff block pairs the summary with -/+ lines.
+func TestEditResultRendersDiff(t *testing.T) {
+	evs := []llm.Event{
+		llm.ToolCallEvent{ToolCall: llm.ToolCall{
+			ID: "c1", Name: "edit",
+			Input: json.RawMessage(`{"path":"main.go","old_string":"x := 1","new_string":"x := 2"}`),
+		}},
+		llm.ToolResultEvent{CallID: "c1", Name: "edit",
+			Output: "Edited main.go (1 occurrence, +1 −1 lines)"},
+		llm.DoneEvent{},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+
+	sawCall, sawDiff := false, false
+	for i, msg := range m.messages {
+		out := ansiStrip(m.block(i, 80))
+		switch msg.kind {
+		case kindToolCall:
+			sawCall = true
+			if !strings.Contains(out, "⏺ edit main.go") || strings.Contains(out, "x := 1") {
+				t.Errorf("tool call block = %q, want name + path only", out)
+			}
+		case kindDiff:
+			sawDiff = true
+			for _, want := range []string{"⎿  Edited main.go", "-x := 1", "+x := 2"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("diff block = %q, missing %q", out, want)
+				}
+			}
+		case kindToolResult:
+			t.Errorf("edit result rendered as a plain result: %q", out)
+		}
+	}
+	if !sawCall || !sawDiff {
+		t.Fatalf("blocks missing: call=%v diff=%v", sawCall, sawDiff)
+	}
+}
+
+// A failed write-class call keeps the plain red error rendering; the
+// banked diff is discarded, not shown.
+func TestEditErrorKeepsPlainResult(t *testing.T) {
+	evs := []llm.Event{
+		llm.ToolCallEvent{ToolCall: llm.ToolCall{
+			ID: "c1", Name: "edit",
+			Input: json.RawMessage(`{"path":"main.go","old_string":"a","new_string":"b"}`),
+		}},
+		llm.ToolResultEvent{CallID: "c1", Name: "edit",
+			Output: "old_string not found in main.go", IsError: true},
+		llm.DoneEvent{},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+
+	found := false
+	for i, msg := range m.messages {
+		switch {
+		case msg.kind == kindDiff:
+			t.Errorf("errored edit rendered as a diff: %q", ansiStrip(m.block(i, 80)))
+		case msg.kind == kindToolResult && msg.isErr:
+			found = true
+			if out := ansiStrip(m.block(i, 80)); !strings.Contains(out, "not found") {
+				t.Errorf("error block = %q", out)
+			}
+		}
+	}
+	if !found {
+		t.Error("error result block missing")
+	}
+}
+
+// Resumed sessions replay write-class results as diffs too, mirroring
+// what the live turn showed.
+func TestEditReplayRendersDiff(t *testing.T) {
+	sess, err := agent.NewSession(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+		{ID: "w1", Name: "write", Input: json.RawMessage(`{"path":"new.txt","content":"hi\n"}`)},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Append(llm.Message{Role: llm.RoleTool,
+		ToolResult: &llm.ToolResult{CallID: "w1", Content: "Wrote new.txt (1 line)"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Provider: "test", MaxTokens: 100}
+	cfg.SetModel("test-model")
+	m := New(cfg, &config.Auth{}, nameOnlyProvider{}, sess, tools.Default(t.TempDir()), nil, t.TempDir())
+
+	sawDiff := false
+	for i, msg := range m.messages {
+		if msg.kind != kindDiff {
+			continue
+		}
+		sawDiff = true
+		out := ansiStrip(m.block(i, 80))
+		for _, want := range []string{"⎿  Wrote new.txt", "+hi"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("replayed diff block = %q, missing %q", out, want)
+			}
+		}
+	}
+	if !sawDiff {
+		t.Error("replayed write rendered no diff block")
+	}
+}

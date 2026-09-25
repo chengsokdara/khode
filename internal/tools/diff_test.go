@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -115,5 +116,34 @@ func TestDiffLargeFileTrims(t *testing.T) {
 	removed, added := DiffStat(a.String(), b.String())
 	if removed != 0 || added != 1 {
 		t.Errorf("DiffStat on 50k-line file = (%d, %d), want (0, 1)", removed, added)
+	}
+}
+
+func TestChangeDiff(t *testing.T) {
+	edit := `{"path":"a.go","old_string":"x := 1\n","new_string":"x := 2\n"}`
+	got := ChangeDiff("edit", json.RawMessage(edit))
+	want := "@@ -1,1 +1,1 @@\n-x := 1\n+x := 2\n"
+	if got != want {
+		t.Errorf("ChangeDiff(edit) = %q, want %q", got, want)
+	}
+
+	got = ChangeDiff("write", json.RawMessage(`{"path":"new.txt","content":"hi\n"}`))
+	want = "@@ -0,0 +1,1 @@\n+hi\n"
+	if got != want {
+		t.Errorf("ChangeDiff(write) = %q, want %q", got, want)
+	}
+
+	for _, c := range []struct {
+		name  string
+		input string
+	}{
+		{"read", `{"path":"a.go"}`},
+		{"edit", `not json`},
+		{"write", `{"path":""}`},
+		{"edit", `{"path":"a.go"}`}, // missing old_string parses to identical empty strings
+	} {
+		if got := ChangeDiff(c.name, json.RawMessage(c.input)); got != "" {
+			t.Errorf("ChangeDiff(%s, %s) = %q, want \"\"", c.name, c.input, got)
+		}
 	}
 }

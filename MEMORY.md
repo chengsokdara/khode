@@ -105,6 +105,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-25 | Edit/write chat diffs are computed from the tool input alone (`tools.ChangeDiff`: edit = `old_string`→`new_string`, write = all-additions), never by touching the file | race-free live (exec may already have run when the UI handles the call event) and identical on `--resume` replay, where the file has changed and pre-write content is unrecoverable |
 | 2026-09-25 | Todo updates render as one upserted checklist panel at the live edge (todo call lines suppressed), not one result block per update; the panel reads the tool's `List()` for original order, and replay pairs results to todo calls by call id | Claude Code parity the user picked over a pinned panel; the tool's own render reorders by status (lines would jump between updates) and transcript results can interleave with other tools' in one round |
 | 2026-09-25 | The model is driven to the todo list by prompt text (base system prompt) + the plan tool's approval result, not by auto-seeding todos from the plan | the model composes better item wording than a mechanical plan→items split; the approval result is the strongest lever — it is the exact tool output the model reads at the switch to implementation |
 | 2026-09-24 | User messages render as a green left rule (`userBar`); `userCard`'s background slab deleted | filled backgrounds are where terminal color degradation bites — the user saw black-on-green; bars match the answer-bar grammar so all transcript roles read as one family |
@@ -245,6 +246,16 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Gotchas & lessons learned
 
+- **OpenAI-protocol streams that carry both `reasoning_content` and
+  inline `<think>` are not duplicating**: `TestOpenAIThinkingStream`
+  pins that a stream sending "ponder " via `reasoning_content` and
+  "<think>more thought</think>Answer text" via content concatenates
+  BOTH into thinking ("ponder more thought") and answers "Answer text"
+  — some providers emit complementary reasoning through the two
+  channels. Suppressing the `<think>` splitter once `reasoning_content`
+  speaks (tried 2026-09-25 for the "duplicate thinking" report) leaks
+  raw tags into the answer; the real duplication was the UI rendering
+  streaming blocks twice.
 - **bubbles v2 textarea facts that bit the click-mapping work**: it has
   ZERO mouse support (`Update` handles only `PasteMsg`/`KeyPressMsg` —
   cursor placement must be done app-side); the Prompt renders on EVERY
@@ -580,6 +591,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Session summary | Commits |
 |---|---|---|
+| 2026-09-25 | Git-style diffs for writes + streaming dedup (user: "render write ops like git diff" and "duplicate thinking lines, multiple vertical bars while thinking"): root cause of both thinking symptoms was `messageViewport` rendering streaming blocks twice (history loop + `streamingBlock()` at the live edge) — history loop now skips them; `tools.ChangeDiff` computes edit/write diffs from input alone (input-only by design: race-free live, stable on replay), new `kindDiff` block pairs the result summary with a colorized, width-clipped, 20-line-capped diff, call lines show path only for write-class tools, replay pairs call→result by id like todoCalls. An attempted guard suppressing `<think>` splitting after `reasoning_content` was reverted — `TestOpenAIThinkingStream` pins the dual channels as complementary, and the guard leaked tags into answers (gotcha recorded). Tests: TestChangeDiff + 4 ui tests (stream-once, live diff, error keeps plain result, replay diff) + frame dump eyeballed | (this commit) |
 | 2026-09-25 | Fixed test-suite clobbering of the developer's real `~/.khode/config.json` (user: rebuilt khode and it came up "no api key / test-model"): `newTestModel` didn't isolate HOME, so any persisting-path test (`click_test` mode-picker apply, modepicker cycling, perm `/mode plan`) wrote the "test"/"test-model" fixture over the live config while tests stayed green (persist tests reload their own write). `isolateHome(t)` (HOME → temp dir + provider key envs cleared) now runs inside `newTestModel`; full suite verified by canary diff to leave `~/.khode` untouched; user's config restored to khateway defaults (clobbered copy kept at `~/.khode/config.json.clobbered-by-tests.bak`; khateway auth key was never touched) | (this commit) |
 | 2026-09-25 | Live todo checklist (user asked for plan→todo→check-off like popular TUIs, picked the transcript panel): `DefaultSystemPrompt` teaches the workflow, plan approval result hands off to the todo list; ui `kindTodo` panel upserts in place at the live edge via the existing streaming-block mutation pattern, todo call lines suppressed, empty list clears, `full`/`fullResultBody` deleted; status line shows current task + done/total while streaming (reset on turn start/end/session switch); replay parses todo call inputs by id with `parseTodoRender` fallback for sanitized inputs; 6 new/updated ui tests + plan-approval + prompt tests | e4d8dd9 |
 | 2026-09-16 | Scaffolded repo; Phase 1 done (TUI + Anthropic streaming + sessions + docs) | baa7520 |

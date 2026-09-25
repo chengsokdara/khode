@@ -212,6 +212,8 @@ func (o *OpenAI) streamAttempt(ctx context.Context, params openai.ChatCompletion
 
 	// Content deltas are run through a <think> splitter so inline
 	// reasoning (DeepSeek, Ollama, proxies) never lands in the answer.
+	// reasoning_content and <think> can carry complementary reasoning on
+	// the same stream, so both always feed the thinking event.
 	var sp thinkSplitter
 
 	usage := UsageEvent{}
