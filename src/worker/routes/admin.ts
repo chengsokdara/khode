@@ -416,7 +416,9 @@ adminApp.get('/overview', async (c) => {
 // request_logs. Everything is computed in D1 (created_at is indexed); buckets
 // are UTC via strftime(unixepoch) and zero-filled here so charts get a
 // continuous axis. The window is bucket-aligned: the current (partial) bucket
-// is the last one, so `days` yields exactly days*24 buckets.
+// is the last one, so `days` yields exactly days*24 buckets. Optional
+// drill-down filters (api_key_id / model / provider / dialect) narrow every
+// query; unknown values simply match nothing (Logs-endpoint lax style).
 
 const usageAggregates = {
   requests: count(),
@@ -466,16 +468,26 @@ adminApp.get('/usage', async (c) => {
   const buckets = kind === 'hour' ? days * 24 : days;
   const since = Math.floor(until / stepMs) * stepMs - (buckets - 1) * stepMs;
   const prevSince = since - buckets * stepMs;
-  const inWindow = and(gte(requestLogs.createdAt, since), lt(requestLogs.createdAt, until));
+  // Drill-down filters ride BOTH windows so the delta cards compare
+  // like-for-like (this week on key X vs last week on key X).
+  const apiKeyId = c.req.query('api_key_id')?.trim() || '';
+  const modelSlug = c.req.query('model')?.trim() || '';
+  const providerId = c.req.query('provider')?.trim() || '';
+  const dialect = c.req.query('dialect')?.trim() || '';
+  const filterConds = [
+    apiKeyId ? eq(requestLogs.apiKeyId, apiKeyId) : undefined,
+    modelSlug ? eq(requestLogs.modelSlug, modelSlug) : undefined,
+    providerId ? eq(requestLogs.providerId, providerId) : undefined,
+    dialect ? eq(requestLogs.dialect, dialect) : undefined,
+  ];
+  const inWindow = and(gte(requestLogs.createdAt, since), lt(requestLogs.createdAt, until), ...filterConds);
+  const inPrevWindow = and(gte(requestLogs.createdAt, prevSince), lt(requestLogs.createdAt, since), ...filterConds);
   const fmt = kind === 'hour' ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%dT00:00:00';
   const bucketExpr = sql<string>`strftime(${fmt}, ${requestLogs.createdAt}/1000, 'unixepoch')`;
 
   const [totalsRow, prevRow, seriesRows, modelRows, keyRows, dialectRows] = await Promise.all([
     db.select(usageAggregates).from(requestLogs).where(inWindow),
-    db
-      .select(usageAggregates)
-      .from(requestLogs)
-      .where(and(gte(requestLogs.createdAt, prevSince), lt(requestLogs.createdAt, since))),
+    db.select(usageAggregates).from(requestLogs).where(inPrevWindow),
     db
       .select({ bucket: bucketExpr, ...usageAggregates })
       .from(requestLogs)

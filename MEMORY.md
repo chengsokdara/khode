@@ -1,6 +1,6 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-24 (admin usage dashboard — /admin/usage + /api/admin/usage — shipped, local only)
+Last updated: 2026-09-25 (usage dashboard filters — /admin/usage filter bar — shipped, local only)
 
 ## Cross-session facts
 
@@ -14,8 +14,12 @@ Last updated: 2026-09-24 (admin usage dashboard — /admin/usage + /api/admin/us
   codebase's first SQL time-bucketing; buckets are UTC, labels render local
   client-side. Deltas compare the immediately preceding window of equal
   length. Charts assume zero-filled continuous series — keep that contract if
-  the endpoint grows filters. NOT deployed as of this note (ships with next
-  `npm run deploy`).
+  the endpoint grows filters. Drill-down filters (api_key_id/model/provider/
+  dialect) ride BOTH windows — prev-window included — so delta cards always
+  compare like-for-like; keep that property when adding new filters.
+  DEPLOYED 2026-09-24 (version b9618f46) and
+  live-verified — the remote dashboard is already aggregating real
+  khode/portal traffic. The 2026-09-25 filter update is local-only.
 - **P-pack (2026-09-24, sessions 30)** — four queued polish items shipped in
   one sequence (commits 69c0d83 / 1032263 / 8c9aea7 / 95dd4cd): anthropic
   cache_control passthrough (block markers fold to MESSAGE level canonically —

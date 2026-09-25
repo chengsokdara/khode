@@ -302,7 +302,15 @@ export const api = {
   logout: () => req<{ ok: boolean }>('/api/admin/logout', { method: 'POST' }),
 
   overview: () => req<Overview>('/api/admin/overview'),
-  usage: (days: number) => req<Usage>(`/api/admin/usage?days=${days}`),
+  usage: (f: { days: number; api_key_id?: string; model?: string; provider?: string; dialect?: string }) => {
+    const p = new URLSearchParams();
+    p.set('days', String(f.days));
+    if (f.api_key_id) p.set('api_key_id', f.api_key_id);
+    if (f.model) p.set('model', f.model);
+    if (f.provider) p.set('provider', f.provider);
+    if (f.dialect) p.set('dialect', f.dialect);
+    return req<Usage>(`/api/admin/usage?${p.toString()}`);
+  },
   providers: () => req<Provider[]>('/api/admin/providers'),
   createProvider: (p: Record<string, unknown>) => req<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(p) }),
   updateProvider: (id: string, p: Record<string, unknown>) => req<Provider>(`/api/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),

@@ -214,7 +214,8 @@ src/worker/
 └── routes/
     ├── admin.ts    — login/logout (logout deletes the session's playground key), overview (+24h
     │                 usage), usage analytics (GET /usage — bucket-aligned UTC time series,
-    │                 window + prev-window totals, top models/keys/dialect breakdowns),
+    │                 window + prev-window totals, top models/keys/dialect breakdowns,
+    │                 api_key_id/model/provider/dialect drill-down filters),
     │                 providers CRUD + test, models CRUD,
     │                 api-keys CRUD (M7: raw key returned once; M8/M9 DTOs add user_id/user_email
     │                 + org_id/org_name; M14: list excludes playground keys),
@@ -307,8 +308,9 @@ src/web/
 │                      no chart library, deliberate
 └── pages/          — Landing.tsx (public landing at /), Login.tsx, Overview.tsx, Providers.tsx
                       (CRUD/presets/test only — no discovery UI),
-                      Usage.tsx (admin usage dashboard — range selector 24h/7d/30d, delta stat
-                      cards, requests/errors + spend + tokens charts, top models/keys/dialects).
+                      Usage.tsx (admin usage dashboard — range selector 24h/7d/30d, Key/Model/
+                      Provider/Endpoint filter bar + Reset, delta stat cards, requests/errors +
+                      spend + tokens charts, top models/keys/dialects).
                       Models.tsx (list + "Add models" modal: Fetch-from-provider tab — fetch,
                       filterable picker, enriched import — and Custom-model tab; shared edit modal),
                       Playground.tsx (M14: chat tester — model picker, streaming SSE
@@ -753,8 +755,12 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   `/admin/usage` (Usage.tsx) — range selector, delta stat cards vs the
   previous window, stacked bar charts from `components/charts.tsx`
   (hand-rolled SVG, no chart lib), top-models table + HBars breakdowns;
-  polls every 60 s. Smoke-pinned in `scripts/smoke.mjs` (bucket counts,
-  zero-fill, clamp, 401, by_model membership).
+  polls every 60 s. Drill-down filters (`api_key_id` / `model` / `provider` /
+  `dialect` query params; empty = unfiltered, unknown values match nothing)
+  ride BOTH windows so deltas stay like-for-like, and the page's filter bar
+  (Key/Model/Provider/Endpoint selects + Reset) feeds them. Smoke-pinned in
+  `scripts/smoke.mjs` (bucket counts, zero-fill, clamp, 401, by_model
+  membership, model/key filter narrowing + bogus-dialect → 0).
 
 ## Build & run
 

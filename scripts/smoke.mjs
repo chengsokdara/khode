@@ -163,6 +163,24 @@ const j = async (path, opts = {}) => {
         }),
       );
       if (!ok) throw new Error('usage dashboard checks failed');
+
+      const uf = await j('/api/admin/usage?days=7&model=zzz-no-such-model');
+      const ud = await j('/api/admin/usage?days=7&dialect=zzz-bogus');
+      const uk = await j(`/api/admin/usage?days=7&api_key_id=${keyCreate.body.id}`);
+      const fOk =
+        uf.body?.totals?.requests >= 1 &&
+        uf.body?.by_model?.length === 1 &&
+        uf.body?.by_model?.[0]?.model_slug === 'zzz-no-such-model' &&
+        ud.body?.totals?.requests === 0 &&
+        uk.body?.totals?.requests >= 1 &&
+        uk.body?.by_key?.length === 1 &&
+        uk.body?.by_key?.[0]?.key_id === keyCreate.body.id;
+      console.log(
+        'usage filters (expect ok):',
+        fOk,
+        JSON.stringify({ byModel: uf.body?.totals?.requests, bogusDialect: ud.body?.totals?.requests, byKey: uk.body?.totals?.requests }),
+      );
+      if (!fOk) throw new Error('usage filter checks failed');
     }
   }
 

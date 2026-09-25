@@ -104,9 +104,34 @@ function UsageStat({ label, value, delta }: { label: string; value: string; delt
 
 export function Usage() {
   const [days, setDays] = useState(7);
+  const [keyF, setKeyF] = useState('');
+  const [modelF, setModelF] = useState('');
+  const [providerF, setProviderF] = useState('');
+  const [dialectF, setDialectF] = useState('');
+
+  const kq = useQuery({ queryKey: ['api-keys'], queryFn: api.apiKeys });
+  const pq = useQuery({ queryKey: ['providers'], queryFn: api.providers });
+  const mq = useQuery({ queryKey: ['models', ''], queryFn: () => api.models(undefined) });
+
+  const anyFilter = !!(keyF || modelF || providerF || dialectF);
+  const resetFilters = () => {
+    setKeyF('');
+    setModelF('');
+    setProviderF('');
+    setDialectF('');
+  };
+
   const q = useQuery({
-    queryKey: ['usage', days],
-    queryFn: () => api.usage(days),
+    queryKey: ['usage', days, keyF, modelF, providerF, dialectF],
+    queryFn: () =>
+      api.usage({
+        days,
+        api_key_id: keyF || undefined,
+        model: modelF || undefined,
+        provider: providerF || undefined,
+        dialect: dialectF || undefined,
+      }),
+    placeholderData: (prev) => prev, // keep the previous view up while a filter switch refetches
     refetchInterval: 60_000, // dashboard is a live surface — poll gently
   });
 
@@ -136,6 +161,57 @@ export function Usage() {
         }
       />
 
+      <Card className="mb-5">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
+          <span className="mr-1 text-[11px] font-medium tracking-wide text-zinc-600 uppercase">Filter</span>
+          <div className="w-40">
+            <Select value={keyF} onChange={(e) => setKeyF(e.target.value)} className="h-8 text-xs">
+              <option value="">All keys</option>
+              {(kq.data ?? []).map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="w-44">
+            <Select value={modelF} onChange={(e) => setModelF(e.target.value)} className="h-8 text-xs">
+              <option value="">All models</option>
+              {(mq.data ?? []).map((m) => (
+                <option key={m.id} value={m.slug}>
+                  {m.slug}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="w-40">
+            <Select value={providerF} onChange={(e) => setProviderF(e.target.value)} className="h-8 text-xs">
+              <option value="">All providers</option>
+              {(pq.data ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="w-36">
+            <Select value={dialectF} onChange={(e) => setDialectF(e.target.value)} className="h-8 text-xs">
+              <option value="">All endpoints</option>
+              {Object.entries(DIALECT_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {anyFilter ? (
+            <button onClick={resetFilters} className="text-xs text-zinc-500 hover:text-zinc-300">
+              Reset
+            </button>
+          ) : null}
+        </div>
+      </Card>
+
       {q.isLoading || !data ? (
         <div className="flex justify-center py-20">
           <Spinner />
@@ -144,12 +220,22 @@ export function Usage() {
         <Card>
           <EmptyState
             icon={<BarChart3 className="h-8 w-8" />}
-            title="No requests in this window"
-            description="Once clients hit the gateway, usage shows up here — try the Playground to make the first call."
+            title={anyFilter ? 'No requests match the current filters' : 'No requests in this window'}
+            description={
+              anyFilter
+                ? 'Nothing matches the current range and filters — widen the range or reset them.'
+                : 'Once clients hit the gateway, usage shows up here — try the Playground to make the first call.'
+            }
             action={
-              <Link to="/admin/playground">
-                <Button variant="outline">Open the Playground</Button>
-              </Link>
+              anyFilter ? (
+                <Button variant="outline" onClick={resetFilters}>
+                  Reset filters
+                </Button>
+              ) : (
+                <Link to="/admin/playground">
+                  <Button variant="outline">Open the Playground</Button>
+                </Link>
+              )
             }
           />
         </Card>

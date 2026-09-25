@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-24 (admin usage dashboard shipped; P-pack + social sign-in live)
+Last updated: 2026-09-25 (usage dashboard filters shipped — local only; dashboard itself deployed)
 
 ## How to use this file
 
@@ -11,6 +11,23 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **Usage dashboard filters ✅ complete (2026-09-25, local only)** — user:
+  "the admin usage page should have proper filters that make sense." Approved
+  scope: the core four (Key · Model · Provider · Endpoint — user/org + status
+  offered and declined). `GET /api/admin/usage` accepts `api_key_id` / `model`
+  / `provider` / `dialect` (empty = unfiltered; unknown values match nothing,
+  Logs-endpoint lax style) and threads them through ALL six queries — both
+  windows included, so delta cards compare like-for-like. Page: filter bar
+  card (four selects fed by the existing api-keys/models/providers endpoints
+  + Reset) between header and stats; query key carries all filters;
+  `placeholderData` keeps the previous view up while a filter switch
+  refetches; no-match filters get their own empty state ("No requests match
+  the current filters" + Reset filters) vs the unfiltered Playground nudge.
+  Verified: check clean, 350 offline tests, smoke +1 filter check block
+  (model filter narrows by_model to one entry, bogus dialect → 0 requests,
+  key filter narrows by_key to that key) — ALL PASS; browser pass: endpoint
+  filter narrowed stats 24→9 with charts redrawing, stacked no-match combo
+  showed the empty state, Reset restored everything. NOT deployed yet.
 - **Admin usage dashboard ✅ complete (2026-09-24)** — user: "There should be a
   proper usage dashboard in the admin; it should have graph, chart, bars, etc."
   Approved plan: new `/admin/usage` page, hand-rolled SVG charts (no new deps),
@@ -43,7 +60,12 @@ If something is claimed ✅ but not verified, it says so.
     (IAB full-page captures tile fixed sidebars — known capture artifact,
     not a page bug; clean 1440×2160 viewport capture used instead) + the
     empty state after clearing logs; traffic re-seeded afterwards.
-  NOT deployed (local only) — ships with the next `npm run deploy`.
+  **DEPLOYED ✅ (version b9618f46)** — `npm run deploy` shipped worker + SPA.
+    Live checks green: /health ok; / serves the new bundle
+    (index--TPpWNxU.js); /api/admin/usage 401 unauth; logged-in fetch
+    returns real remote aggregates (41 requests / 7 d, 3 models, khode
+    keys); the live /admin/usage page browser-verified rendering every
+    panel with production data.
 
 - **P-pack: cache_control passthrough + DO login buckets + fallback backoff +
   spend-cap reservations ✅ complete (sessions 30, 2026-09-24)** — user picked
@@ -920,6 +942,13 @@ from the unscheduled polish queue or user direction.
 
 ## Recent changes
 
+- 2026-09-25 — **Usage dashboard filters**. `/api/admin/usage` gains
+  api_key_id/model/provider/dialect params threaded through every query incl.
+  the prev-window (like-for-like deltas); Usage.tsx gains a filter bar
+  (Key/Model/Provider/Endpoint + Reset) and a no-match empty state; smoke.mjs
+  +filter narrowing checks. check clean, 350 offline tests, smoke green,
+  browser-verified. Local only — deploy pending.
+
 - 2026-09-24 — **Admin usage dashboard**. `GET /api/admin/usage` (bucketed
   series + totals + breakdowns over request_logs, all in D1), new
   `components/charts.tsx` (hand-rolled SVG stacked bars / HBars / Delta — no
@@ -927,7 +956,9 @@ from the unscheduled polish queue or user direction.
   requests&errors / spend / tokens charts, top models/keys/dialects),
   App.tsx NAV + legacy `/usage` redirect, smoke.mjs +6 usage checks. check
   clean, 350 offline tests, smoke green (incl. gateway 220 re-run).
-  Browser-verified both ranges + empty state. Not yet deployed.
+  Browser-verified both ranges + empty state. DEPLOYED (version b9618f46)
+  and live-verified: new bundle served, usage 401 unauth, /admin/usage
+  rendering real production aggregates.
 
 - 2026-09-24 — **P-pack shipped (4 commits) + DEPLOYED live**. cache_control
   passthrough, DO-backed login buckets, one-retry fallback backoff with
