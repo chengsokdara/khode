@@ -33,6 +33,7 @@ const (
 	rowAPIKey
 	rowBaseURL
 	rowModel
+	rowSubagentModel
 	rowMaxTokens
 	rowMode
 	rowGatherContext
@@ -209,6 +210,8 @@ func (m *Model) activateRow() tea.Cmd {
 		m.openEditor(rowBaseURL)
 	case rowModel:
 		return m.openModelRow()
+	case rowSubagentModel:
+		m.openEditor(rowSubagentModel)
 	case rowMaxTokens:
 		m.openEditor(rowMaxTokens)
 	case rowMCP:
@@ -379,6 +382,10 @@ func (m *Model) openEditor(row settingsRow) {
 	case rowModel:
 		in.SetValue(m.cfg.Model())
 		hint = "enter switches model"
+	case rowSubagentModel:
+		in.SetValue(m.cfg.SubModel())
+		in.Placeholder = "(main model)"
+		hint = "empty falls back to the main model"
 	case rowMaxTokens:
 		in.SetValue(strconv.Itoa(m.cfg.MaxTokens))
 		hint = "enter saves the token budget"
@@ -433,6 +440,13 @@ func (m *Model) commitEditor() tea.Cmd {
 		}
 		m.cfg.SetModel(val)
 		m.saveSettings("model → " + m.cfg.Model())
+	case rowSubagentModel:
+		m.cfg.SetSubagentModel(val)
+		if val == "" {
+			m.saveSettings("subagent model → main model")
+		} else {
+			m.saveSettings("subagent model → " + val)
+		}
 	case rowMaxTokens:
 		n, err := strconv.Atoi(val)
 		if err != nil || n <= 0 {
@@ -998,6 +1012,8 @@ func rowLabel(row settingsRow) string {
 		return "base url"
 	case rowModel:
 		return "model"
+	case rowSubagentModel:
+		return "subagent model"
 	case rowMaxTokens:
 		return "max tokens"
 	case rowMode:
@@ -1042,6 +1058,11 @@ func (s *settings) value(m *Model, row settingsRow) string {
 			return mo
 		}
 		return dimStyle.Render("not set · enter to pick")
+	case rowSubagentModel:
+		if mo := m.cfg.SubModel(); mo != "" {
+			return mo + dimStyle.Render("  task subagents and the gatherer ride this model")
+		}
+		return dimStyle.Render("(main model · enter to set a cheaper one)")
 	case rowMaxTokens:
 		return strconv.Itoa(m.cfg.MaxTokens)
 	case rowMode:

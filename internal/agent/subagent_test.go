@@ -265,3 +265,48 @@ func TestRunnerNoPrefaceKeepsSingleUserTurn(t *testing.T) {
 		t.Fatalf("unexpected transcript: %+v", msgs)
 	}
 }
+
+func TestTaskToolUsesSubModelWhenSet(t *testing.T) {
+	// With SubModel configured, the subagent's requests carry it; the
+	// parent's requests keep the main model.
+	p := &fakeProvider{responses: [][]llm.Event{
+		{
+			llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "o1", Name: "task",
+				Input: json.RawMessage(`{"prompt":"small job","subagent_type":"explore"}`)}},
+		},
+		{
+			llm.TextDeltaEvent{Text: "tiny report."},
+		},
+		{
+			llm.TextDeltaEvent{Text: "done"},
+		},
+	}}
+	r, _ := newTestRunner(t, p, nil)
+	tt := NewTaskTool(SubagentConfig{
+		Provider:  p,
+		Workdir:   t.TempDir(),
+		Model:     func() string { return "main-model" },
+		SubModel:  func() string { return "fast-model" },
+		MaxTokens: func() int { return 100 },
+	})
+	r.Tools.Register(tt)
+
+	res, _ := callTask(t, r, "x")
+	if res.IsError {
+		t.Fatalf("task failed: %s", res.Content)
+	}
+	var subModels, mainModels []string
+	for _, req := range p.requests {
+		if req.System != "" && strings.Contains(req.System, "# Subagent") {
+			subModels = append(subModels, req.Model)
+		} else {
+			mainModels = append(mainModels, req.Model)
+		}
+	}
+	if len(subModels) == 0 || subModels[0] != "fast-model" {
+		t.Fatalf("subagent requests = %v, want fast-model", subModels)
+	}
+	if len(mainModels) == 0 || mainModels[0] != "test-model" {
+		t.Fatalf("main requests = %v, want the runner's own model", mainModels)
+	}
+}

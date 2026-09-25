@@ -396,6 +396,7 @@ func (m *Model) registerTaskTool() {
 		Provider:  m.provider,
 		Workdir:   m.workdir,
 		Model:     m.cfg.Model,
+		SubModel:  m.cfg.SubModel,
 		MaxTokens: func() int { return m.cfg.MaxTokens },
 		Mode:      modeFn,
 		Approver:  m.approvals,
@@ -1468,11 +1469,15 @@ func (m *Model) shouldGather() bool {
 // routes by m.gathering) and its live block shows the sweep's activity.
 func (m *Model) startGather(input string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
+	model := m.cfg.Model()
+	if fast := m.cfg.SubModel(); fast != "" {
+		model = fast
+	}
 	sub := &agent.Runner{
 		Provider:  m.provider,
 		Session:   agent.NewMemorySession(),
 		Tools:     agent.GathererRegistry(m.workdir),
-		Model:     m.cfg.Model(),
+		Model:     model,
 		MaxTokens: m.cfg.MaxTokens,
 		System:    agent.GathererSystemPrompt(m.workdir),
 		MaxRounds: gatherMaxRounds,

@@ -121,3 +121,44 @@ func TestGatherContextToggle(t *testing.T) {
 		t.Error("explicit false did not round trip")
 	}
 }
+
+func TestSubagentModelOverride(t *testing.T) {
+	// Absent means subagents ride the main model; a stored value is
+	// trimmed and survives a save/load round trip.
+	cfg := rawConfig{}.apply()
+	if cfg.SubModel() != "" {
+		t.Error("default subagent model should be empty")
+	}
+	cfg = rawConfig{SubagentModel: "  fast-model  "}.apply()
+	if got := cfg.SubModel(); got != "fast-model" {
+		t.Errorf("subagent model = %q, want trimmed fast-model", got)
+	}
+
+	cfg.SetSubagentModel("haiku")
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw rawConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got := raw.apply().SubModel(); got != "haiku" {
+		t.Errorf("subagent model did not round trip: %q", got)
+	}
+
+	cfg.SetSubagentModel("")
+	data, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh raw: the cleared field is omitted from the JSON (empty +
+	// omitempty), and Unmarshal would keep the old value otherwise.
+	var cleared rawConfig
+	if err := json.Unmarshal(data, &cleared); err != nil {
+		t.Fatal(err)
+	}
+	if got := cleared.apply().SubModel(); got != "" {
+		t.Errorf("cleared subagent model came back: %q", got)
+	}
+}

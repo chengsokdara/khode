@@ -10,6 +10,13 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Subagent model override (2026-09-25):** `subagent_model` in config.json
+(+ a `/settings` editor row) routes task subagents and the gatherer onto a
+faster/cheaper model while the main conversation keeps the main model;
+empty falls back. `SubagentConfig` reads it live via a `SubModel` func, so
+/settings changes apply to subagents spawned afterwards. Test pins that the
+subagent request carries the override while the parent keeps its model.
+
 **Automatic new-session context gatherer (2026-09-25):** the first real
 prompt of a fresh session now runs a read-only context-gatherer subagent
 before the main turn. The UI drives the sweep directly (read/glob/grep
@@ -790,8 +797,9 @@ Backlog lives in `ROADMAP.md`.
 
 ## Changelog
 
-| Date | Change |
-|---|---|
+| Date | Change |  |
+|---|---|---|
+| 2026-09-25 | `subagent_model` config + /settings row: task subagents and the gatherer can run a cheaper model; empty = main model | (this commit) |
 | 2026-09-25 | Automatic first-prompt context gatherer: read-only sweep before the first turn of a fresh session, live `◆ gathering context` block → durable context-brief block, failure-safe, esc stops; `/settings` toggle (`gather_context`) | (this commit) |
 | 2026-09-25 | `Runner.Preface` injects a `<task-context>` brief message ahead of the user turn; replay renders it as a dim collapsible context-brief block | (this commit) |
 | 2026-09-25 | Live subagent activity: task tool forwards child tool calls via `SubagentConfig.Progress`; the task call block upserts a dim `⎿ kind · activity · N calls` line, cleared at the report (ROADMAP Next #1); fakeai plays an explore scenario for the tmux harness | 7c72328 |

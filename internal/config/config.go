@@ -111,6 +111,10 @@ type Config struct {
 	// gatherer is read-only, so this only trades one model call for a
 	// better-grounded first turn.
 	GatherContext *bool `json:"gather_context,omitempty"`
+	// SubagentModel overrides the model that task subagents and the
+	// context gatherer run on (a faster/cheaper one fits their narrow
+	// jobs). Empty means the main model.
+	SubagentModel string `json:"subagent_model,omitempty"`
 
 	// override is the session-scoped --model flag value; never persisted.
 	override string
@@ -122,6 +126,13 @@ func (c *Config) GatherOn() bool { return c.GatherContext == nil || *c.GatherCon
 
 // SetGatherContext persists the gatherer toggle.
 func (c *Config) SetGatherContext(on bool) { c.GatherContext = &on }
+
+// SubModel returns the subagent model override, "" when subagents
+// should ride the main model.
+func (c *Config) SubModel() string { return strings.TrimSpace(c.SubagentModel) }
+
+// SetSubagentModel persists the subagent model override; empty clears it.
+func (c *Config) SetSubagentModel(name string) { c.SubagentModel = strings.TrimSpace(name) }
 
 // Dir returns khode's state directory (~/.khode).
 func Dir() string {
@@ -241,6 +252,7 @@ type rawConfig struct {
 	MCPServers      map[string]MCPServer      `json:"mcp_servers"`
 	Hooks           Hooks                     `json:"hooks"`
 	GatherContext   *bool                     `json:"gather_context"`
+	SubagentModel   string                    `json:"subagent_model"`
 	Model           string                    `json:"model"` // legacy single-model schema
 }
 
@@ -265,6 +277,7 @@ func (r rawConfig) apply() *Config {
 	if r.GatherContext != nil {
 		cfg.GatherContext = r.GatherContext
 	}
+	cfg.SubagentModel = strings.TrimSpace(r.SubagentModel)
 	if len(r.CustomProviders) > 0 {
 		cfg.CustomProviders = r.CustomProviders
 		// Snap the active name to the stored key's casing so it lines

@@ -39,6 +39,10 @@ type SubagentConfig struct {
 	Model     func() string
 	MaxTokens func() int
 	Mode      func() perm.Mode
+	// SubModel is an optional faster/cheaper model for subagents
+	// (explore and gather sweeps fit small models); "" falls back to
+	// Model.
+	SubModel func() string
 	// Approver is shared with the main loop: a subagent's risky call
 	// raises the same approval dialog in the UI.
 	Approver Approver
@@ -97,11 +101,18 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 	}
 	kind, spec := normalizeKind(a.SubagentType)
 
+	model := t.cfg.Model()
+	if t.cfg.SubModel != nil {
+		if fast := t.cfg.SubModel(); fast != "" {
+			model = fast
+		}
+	}
+
 	sub := &Runner{
 		Provider:  t.cfg.Provider,
 		Session:   NewMemorySession(),
 		Tools:     registryFor(kind, t.cfg.Workdir),
-		Model:     t.cfg.Model(),
+		Model:     model,
 		MaxTokens: t.cfg.MaxTokens(),
 		System:    t.subagentSystem(spec),
 		Mode:      t.cfg.Mode, // live: subagents follow mid-turn switches too
