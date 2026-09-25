@@ -56,15 +56,22 @@ internal/hooks/      user lifecycle hooks around tool calls (pre_tool veto, post
 internal/agent/      conversation machinery
   session.go           JSONL transcript (source of truth for LLM history)
   loop.go              agent loop: stream → gated tool calls → results → stream
+                       (Runner.Preface writes a <task-context> brief ahead of the turn)
   compact.go           context compaction: summarize near the token window
   context.go           AGENTS.md/CLAUDE.md project context for the system prompt
   approve.go           Approver interface + Bridge carrying tool/plan questions
-  task.go              subagent task tool (fresh in-memory session, report back)
+  subagent.go          subagent kind catalog: general-purpose / explore / context-gatherer
+                       / plan — per-kind toolset (read-only kinds get read/glob/grep),
+                       system section, and report cap
+  task.go              subagent task tool (subagent_type + description + prompt; fresh
+                       in-memory session, progress feed to the UI, report back)
   plan.go              plan tool: present a plan, approval switches to accept-edits
                        and hands the plan off to the todo list
 internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands,
-                       live todo checklist panel (one upserted panel + status-line task)
+                       live todo checklist panel (one upserted panel + status-line task),
+                       live subagent activity lines, first-prompt context gatherer
+                       (◆ gathering context → ◆ context brief → Runner.Preface turn)
   devicelogin.go       /login overlay: khateway device sign-in (mint → show URL+code →
                        poll → key into auth.json, khateway active, model auto-pick)
   modepicker.go        shift+tab mode cycling, /mode picker, mode line above the input
@@ -130,6 +137,10 @@ without a key is stopped by a pre-flight check instead of failing on a
 401 — for khateway that check points at `/login` too. State lives in
 `~/.khode/` (config, auth, `sessions/*.jsonl`). Never commit API keys,
 and never put them in `config.json` — that file must stay shareable.
+Subagent knobs: `gather_context` (default on) runs the read-only
+context-gatherer on the first prompt of a fresh session; `subagent_model`
+(empty = main model) runs task subagents and the gatherer on a
+faster/cheaper model. Both are `/settings` rows.
 
 ## Conventions
 
