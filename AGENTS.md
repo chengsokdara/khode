@@ -1,8 +1,10 @@
 # AGENTS.md — Instructions for AI Agents
 
 This file is for any AI agent (or human contributor) working in this repo.
-Read it before writing code. Read `RULES.md` for hard rules. Read `STATUS.md`,
-`ROADMAP.md`, and `MEMORY.md` to find out where the project stands.
+Read it before writing code. Read `RULES.md` for hard rules. Read `WORKFLOW.md`
+for the build-and-verify loop (TUI features self-test in a live TTY — no user
+screenshots). Read `STATUS.md`, `ROADMAP.md`, and `MEMORY.md` to find out
+where the project stands.
 
 ## What khode is
 

@@ -745,6 +745,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | `WORKFLOW.md`: the build-and-verify loop written down — plan → implement+tests → live-TTY self-verify (`scripts/tmux-selftest.sh`) → gate → docs; tmux harness usage, fake-model extension, SGR-test lessons, gotchas | (this commit) |
 | 2026-09-25 | Self-test harness: `scripts/tmux-selftest.sh` + `scripts/fakeai.py` — khode driven against a scripted fake model in an isolated tmux TTY, frames captured plain + with SGRs; diff features verified live (expand/collapse, both bands, gutter numbers) | (this commit) |
 | 2026-09-25 | Band rendering fixed: short-form lipgloss resets stripped so the band covers whole rows (was first-token black), trailing-blank runs keep colors (chroma folds trailing newline), bands darkened to quiet stripes | (this commit) |
 | 2026-09-25 | Colorful Grok diffs: VSCode Dark+ token palette (was monochrome — identifiers fell to terminal default) + bands re-injected after every SGR reset so they cover the full row, not just the gutter; brighter band tints | (this commit) |
