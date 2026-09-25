@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -952,7 +953,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.ThinkingDeltaEvent:
 		sealed := m.ensureStreamingBlock(kindThinking)
 		m.partialThink.WriteString(e.Text)
-		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
+		if idx := m.streamingIndex(); idx >= 0 {
 			m.messages[idx].raw = m.partialThink.String()
 		}
 		return tea.Batch(m.pump(), m.flushIf(sealed))
@@ -960,7 +961,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	case llm.TextDeltaEvent:
 		sealed := m.ensureStreamingBlock(kindText)
 		m.partial.WriteString(e.Text)
-		if idx := len(m.messages) - 1; idx >= 0 && m.messages[idx].streaming {
+		if idx := m.streamingIndex(); idx >= 0 {
 			m.messages[idx].raw = m.partial.String()
 		}
 		return tea.Batch(m.pump(), m.flushIf(sealed))
@@ -1039,38 +1040,53 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 }
 
 // ensureStreamingBlock opens a fresh streaming bubble of the given kind
-// when the last block is not one (turn start, a new round after tool
-// calls, or the thinking ↔ answer switch within one round — the switch
-// seals the old phase, reports it, and appends the new one). A sealed
-// block always carries content by the time the stream moves on.
+// when no open one matches (turn start, a new round after tool calls,
+// or the thinking ↔ answer switch within one round — the switch seals
+// the old phase, reports it, and appends the new one). A sealed block
+// always carries content by the time the stream moves on; one that
+// never said anything is dropped instead of sealing into a stray bar.
 func (m *Model) ensureStreamingBlock(kind uiMessageKind) (sealed bool) {
-	if len(m.messages) > 0 {
-		last := &m.messages[len(m.messages)-1]
-		if last.streaming {
-			if last.kind == kind {
-				return false
-			}
-			last.streaming = false
-			m.partial.Reset()
-			m.partialThink.Reset()
-			sealed = true // the old phase can print now
+	if idx := m.streamingIndex(); idx >= 0 {
+		if m.messages[idx].kind == kind {
+			return false
+		}
+		sealed = true
+		if strings.TrimSpace(m.messages[idx].raw) == "" {
+			m.messages = append(m.messages[:idx], m.messages[idx+1:]...)
+		} else {
+			m.messages[idx].streaming = false
 		}
 	}
+	m.partial.Reset()
+	m.partialThink.Reset()
 	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kind, streaming: true, history: true})
 	return sealed
 }
 
+// streamingIndex finds the open streaming block — normally the last
+// message, but activity appended after it (a todo panel refresh, a
+// compaction notice) must not freeze the block's raw updates.
+func (m *Model) streamingIndex() int {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].streaming {
+			return i
+		}
+	}
+	return -1
+}
+
 // sealStreamingText finalizes the open streaming bubble for display: the
-// session write itself belongs to the agent loop, not the UI.
+// session write itself belongs to the agent loop, not the UI. A block
+// that never said anything is dropped, not sealed into a bare bar.
 func (m *Model) sealStreamingText() {
 	m.partial.Reset()
 	m.partialThink.Reset()
-	idx := len(m.messages) - 1
-	if idx < 0 || !m.messages[idx].streaming {
+	idx := m.streamingIndex()
+	if idx < 0 {
 		return
 	}
-	if m.messages[idx].raw == "" {
-		m.messages = m.messages[:idx] // drop the empty streaming block
+	if strings.TrimSpace(m.messages[idx].raw) == "" {
+		m.messages = append(m.messages[:idx], m.messages[idx+1:]...)
 		return
 	}
 	m.messages[idx].streaming = false
@@ -1603,11 +1619,7 @@ func (m *Model) block(i int, width int) string {
 		out = userBar.Width(width).Render(userMark.Render("❯ ") + strings.Join(wlines, "\n  "))
 	case msg.role == llm.RoleAssistant:
 		if msg.streaming {
-			// Live text rides the same markdown pipeline, re-run per
-			// delta; the cursor trails the last line until the block
-			// seals into the plain answer-bar view.
-			out = answerBar.Width(width).Render(renderMarkdown(msg.raw, width-answerBarOverhead)) +
-				streamCursor.Render("▌")
+			out = renderAnswer(msg.raw, width, answerBar, true)
 		} else {
 			// Sealed prose rides the answer bar: bright cyan on the
 			// turn's final message, dim teal on mid-turn text.
@@ -1615,7 +1627,7 @@ func (m *Model) block(i int, width int) string {
 			if msg.final {
 				bar = answerBarFinal
 			}
-			out = bar.Width(width).Render(renderMarkdown(msg.raw, width-answerBarOverhead))
+			out = renderAnswer(msg.raw, width, bar, false)
 		}
 	default:
 		out = systemStyle.Width(width).Render("· " + msg.raw)
@@ -1661,6 +1673,35 @@ func (m *Model) invalidateRendered() {
 
 // --- helpers -----------------------------------------------------------------
 
+// ansiRe matches SGR/CSI escape sequences so styled rows can be
+// measured: a padding-only row and a bare bar glyph compare equal once
+// the styling is stripped.
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;:]*[a-zA-Z]`)
+
+func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+// renderAnswer renders assistant prose on its answer bar. Trailing rows
+// that carry nothing but the bar are dropped first: raw text mid-stream
+// often ends inside an unfinished markdown construct (an unclosed code
+// fence, a started list or heading), which glamour renders as an empty
+// final row — left alone it paints a stray bar-only line that reads as
+// a second vertical rule beside the text. A raw that is only
+// whitespace renders nothing at all.
+func renderAnswer(raw string, width int, bar lipgloss.Style, streaming bool) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	lines := strings.Split(bar.Width(width).Render(renderMarkdown(raw, width-answerBarOverhead)), "\n")
+	for len(lines) > 1 && strings.TrimSpace(stripANSI(lines[len(lines)-1])) == "┃" {
+		lines = lines[:len(lines)-1]
+	}
+	out := strings.Join(lines, "\n")
+	if streaming {
+		out += streamCursor.Render("▌")
+	}
+	return out
+}
+
 func humanTokens(n int64) string {
 	switch {
 	case n >= 1_000_000:
@@ -1675,32 +1716,53 @@ func humanTokens(n int64) string {
 // toolResultPreview caps how many lines of a tool result the chat shows.
 const toolResultPreviewLines = 2
 
-// formatToolCall renders a tool call as one compact line: name plus
-// single-line arguments. Write-class calls show just the file — the
-// diff block under them carries the content.
+// formatToolCall renders a tool call as one compact line: name plus a
+// readable summary of the arguments — the command for bash, the file
+// for write-class tools — falling back to the compacted JSON when a
+// tool has no friendlier shape.
 func formatToolCall(c llm.ToolCall) string {
 	line := c.Name
-	if p := toolCallPath(c.Name, c.Input); p != "" {
-		line += " " + p
-	} else if args := compactJSON(c.Input); args != "" && args != "{}" {
+	if args := toolCallArgs(c.Name, c.Input); args != "" {
 		line += " " + args
 	}
-	return truncate(line, 120)
+	return truncate(line, 200)
 }
 
-// toolCallPath extracts the file a write-class call targets, "" for any
-// other tool or unparseable input.
-func toolCallPath(name string, input json.RawMessage) string {
-	if name != "edit" && name != "write" {
-		return ""
-	}
+// toolCallArgs summarizes a tool call's input for the activity line.
+// The plan call shows nothing: its dialog is the feedback (same rule as
+// the todo panel); task shows its description; everything else the UI
+// has no shape for keeps the raw JSON.
+func toolCallArgs(name string, input json.RawMessage) string {
 	var a struct {
-		Path string `json:"path"`
+		Command     string `json:"command"`
+		Path        string `json:"path"`
+		Pattern     string `json:"pattern"`
+		Description string `json:"description"`
 	}
-	if err := json.Unmarshal(input, &a); err != nil {
+	if json.Unmarshal(input, &a) != nil {
+		return compactJSON(input)
+	}
+	switch name {
+	case "bash":
+		return oneLine(a.Command)
+	case "read", "write", "edit":
+		return a.Path
+	case "glob", "grep":
+		return a.Pattern
+	case "plan":
 		return ""
+	case "task":
+		if a.Description != "" {
+			return oneLine(a.Description)
+		}
 	}
-	return a.Path
+	return compactJSON(input)
+}
+
+// oneLine flattens a multi-line string for the activity line: newlines
+// become spaces and runs of whitespace collapse.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // diffPreviewLines caps the change block the chat shows for one

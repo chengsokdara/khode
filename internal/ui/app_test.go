@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -160,10 +159,7 @@ func TestModifierEnterInsertsNewline(t *testing.T) {
 }
 
 // ansiStrip removes SGR/CSI escape sequences for content assertions.
-func ansiStrip(s string) string {
-	re := regexp.MustCompile(`\x1b\[[0-9;:]*[a-zA-Z]`)
-	return re.ReplaceAllString(s, "")
-}
+func ansiStrip(s string) string { return stripANSI(s) }
 
 func TestPlainEnterSubmits(t *testing.T) {
 	m := newTestModel(t)
@@ -251,7 +247,7 @@ func TestToolBlocksRender(t *testing.T) {
 		out := ansiStrip(m.block(i, 80))
 		switch msg.kind {
 		case kindToolCall:
-			if !strings.Contains(out, "⏺ read") || !strings.Contains(out, `"path":"README.md"`) {
+			if !strings.Contains(out, "⏺ read") || !strings.Contains(out, "README.md") {
 				t.Errorf("tool call block = %q", out)
 			}
 			sawCall = true
@@ -907,5 +903,110 @@ func TestEditReplayRendersDiff(t *testing.T) {
 	}
 	if !sawDiff {
 		t.Error("replayed write rendered no diff block")
+	}
+}
+
+// Streaming prose often pauses inside an unfinished markdown construct
+// (an unclosed fence, a started list or heading), which glamour renders
+// as an empty final row — left alone that row paints a bar-only line
+// that reads as a second vertical rule beside the text (and a
+// whitespace-only raw paints nothing at all). No assistant block may
+// ever end in, or consist solely of, a bar-only row.
+func TestAnswerBarNeverEndsInBareBar(t *testing.T) {
+	m := newTestModel(t)
+	raws := []string{
+		"document both options. Let me start scaffolding:",
+		"text\n```",
+		"text\n```go\n",
+		"text\n- ",
+		"text\n> ",
+		"text\n---",
+		"text\n# ",
+		"text\n\n\n",
+		" ",
+		"\n",
+		"",
+	}
+	for _, raw := range raws {
+		for _, streaming := range []bool{false, true} {
+			m.messages = append(m.messages, uiMessage{
+				role: llm.RoleAssistant, kind: kindText, raw: raw, streaming: streaming,
+			})
+			out := ansiStrip(m.block(len(m.messages)-1, 100))
+			lines := strings.Split(out, "\n")
+			for i, l := range lines {
+				if strings.TrimSpace(l) == "┃" {
+					t.Errorf("raw=%q streaming=%v: line %d is bar-only: %q", raw, streaming, i, out)
+				}
+			}
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+	}
+}
+
+// A whitespace-only text delta between thinking phases (some models emit
+// them) must not leave a sealed empty block behind: the switch drops it.
+func TestWhitespaceDeltaLeavesNoEmptyBlock(t *testing.T) {
+	evs := []llm.Event{
+		llm.ThinkingDeltaEvent{Text: "plan first"},
+		llm.TextDeltaEvent{Text: " "},
+		llm.TextDeltaEvent{Text: "\n"},
+		llm.ThinkingDeltaEvent{Text: "back to reasoning"},
+		llm.TextDeltaEvent{Text: "real answer"},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+
+	for i, msg := range m.messages {
+		if msg.kind == kindText && strings.TrimSpace(msg.raw) == "" {
+			t.Errorf("msg[%d]: whitespace-only text block survived", i)
+		}
+	}
+	var answer string
+	for _, msg := range m.messages {
+		if msg.kind == kindText {
+			answer = msg.raw
+		}
+	}
+	if answer != "real answer" {
+		t.Errorf("answer = %q, want the post-whitespace text only", answer)
+	}
+}
+
+// Activity appended after the streaming block (a todo panel refresh, a
+// compaction notice) must not freeze its raw updates: deltas target the
+// open streaming block wherever it sits.
+func TestDeltaTargetsStreamingBlockPastActivity(t *testing.T) {
+	m := newTestModel(t)
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kindText, raw: "hello", streaming: true})
+	m.partial.WriteString("hello")
+	m.messages = append(m.messages, uiMessage{role: llm.RoleTool, kind: kindTodo, raw: "❯ task"})
+
+	m.handleStreamEvent(llm.TextDeltaEvent{Text: " world"})
+
+	if got := m.messages[0].raw; got != "hello world" {
+		t.Errorf("streaming block raw = %q, want %q", got, "hello world")
+	}
+}
+
+// Tool call lines read as commands and paths, not raw JSON: bash shows
+// its command flattened to one line, read shows the path, and only
+// shapeless tools fall back to the compacted JSON.
+func TestToolCallLinesAreReadable(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"bash", `{"command":"mkdir -p a\nb && echo hi","timeout":30000}`, "bash mkdir -p a b && echo hi"},
+		{"read", `{"path":"cmd/khode/main.go"}`, "read cmd/khode/main.go"},
+		{"glob", `{"pattern":"**/*.go"}`, "glob **/*.go"},
+		{"plan", `{"plan":"## Step 1"}`, "plan"},
+		{"mcp__x__y", `{"q":"z"}`, `mcp__x__y {"q":"z"}`},
+	}
+	for _, c := range cases {
+		got := formatToolCall(llm.ToolCall{ID: "c1", Name: c.name, Input: json.RawMessage(c.input)})
+		if got != c.want {
+			t.Errorf("formatToolCall(%s) = %q, want %q", c.name, got, c.want)
+		}
 	}
 }

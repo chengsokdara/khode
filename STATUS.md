@@ -10,6 +10,28 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Readable tool calls + stray-bar fix (2026-09-25):** tool call lines
+read as commands and paths instead of raw JSON — `⏺ bash mkdir -p
+khode-test/backend` (multi-line commands flattened), `⏺ read
+cmd/main.go`, `⏺ glob **/*.go`; write-class tools keep the path-only
+form (their diff block carries the content), plan shows nothing (its
+dialog is the feedback), task shows its description, and only shapeless
+tools (MCP) keep the compacted JSON; the 120-char truncation cap rose
+to 200. Root-caused the "two vertical lines while thinking" report: raw
+text mid-stream regularly pauses inside an unfinished markdown
+construct (an unclosed code fence, a started list/heading/rule), and
+glamour renders that open construct as an empty final row — which the
+answer bar painted as a bar-only line directly under the text, reading
+as a second vertical rule beside it (every thinking pause between
+output bursts re-created it). `renderAnswer` now drops trailing
+bar-only rows before painting the bar and cursor, and a whitespace-only
+raw renders nothing; structurally, phase switches and seals drop a
+streaming block that never said anything (whitespace-only deltas from
+some models no longer leave a stray block), and delta updates target
+the open streaming block wherever it sits, so activity appended after
+it (todo panel refresh, compaction notice) can no longer freeze its raw
+into an orphaned half-rendered block.
+
 **Git-style diffs for writes + streaming dedup (2026-09-25):** edit and
 write results now render as their git-style change in the chat — the
 `⏺ edit <path>` call line (path only; the compacted-JSON args are gone
@@ -661,7 +683,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | Git-style diffs for edit/write in the chat (`tools.ChangeDiff` from input alone, `kindDiff` block with colorized capped diff, path-only call lines, replay support) + fix: streaming blocks rendered twice per frame (duplicate thinking lines, stacked bars) | (this commit) |
+| 2026-09-25 | Tool call lines readable (bash command, paths, patterns — JSON only for shapeless tools) + stray-bar fix: unfinished mid-stream markdown constructs rendered bar-only rows; trailing bar-only rows dropped, whitespace-only blocks never seal, deltas target the open streaming block past appended activity | (this commit) |
+| 2026-09-25 | Git-style diffs for edit/write in the chat (`tools.ChangeDiff` from input alone, `kindDiff` block with colorized capped diff, path-only call lines, replay support) + fix: streaming blocks rendered twice per frame (duplicate thinking lines, stacked bars) | 7f40bf8 |
 | 2026-09-25 | Test isolation: `isolateHome` in `newTestModel` stops `go test ./internal/ui` from writing the real `~/.khode/config.json` (a fixture clobber shipped in the mode-persist tests); canary-verified | (this commit) |
 | 2026-09-25 | Live todo checklist: system prompt + plan-approval handoff drive the todo tool; TUI renders one in-place checklist panel (todo call lines suppressed, empty list clears, id-paired replay) and the status line tracks the current task | e4d8dd9 |
 | 2026-09-16 | Phase 1: TUI chat + Anthropic streaming + sessions + docs | baa7520 |
