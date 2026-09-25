@@ -10,6 +10,24 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**VSCode-style diff highlighting + expandable output (2026-09-25):** the
+diff under edit/write results now syntax-highlights the code instead of
+painting every line flat green/red — chroma (already glamour's lexer)
+lexes the code in the aurora palette (keywords cyan, strings/numbers
+amber, comments dim italic, names mint; `internal/ui/highlight.go`) with
+the lexer picked by the changed file's extension, run-based so
+consecutive same-kind diff lines lex as one snippet and multi-line
+comments survive; the +/− markers keep their green/red tint and `@@`
+headers stay dim. Tool results and diffs with hidden lines are
+expandable: ctrl+o toggles the most recent truncated block between its
+summary and its full output (errors expand into a red body under the
+bold header), the truncation markers carry "ctrl+o" hints, and the
+blocks register click regions — a press anywhere on one toggles it
+(viewport lines now carry their message index for region mapping).
+Highlighting is deterministic by file extension — content sniffing was
+dropped after it highlighted a `.blob` as JavaScript. chroma and
+x/ansi moved indirect→direct at unchanged versions.
+
 **Readable tool calls + stray-bar fix (2026-09-25):** tool call lines
 read as commands and paths instead of raw JSON — `⏺ bash mkdir -p
 khode-test/backend` (multi-line commands flattened), `⏺ read
@@ -683,7 +701,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | Tool call lines readable (bash command, paths, patterns — JSON only for shapeless tools) + stray-bar fix: unfinished mid-stream markdown constructs rendered bar-only rows; trailing bar-only rows dropped, whitespace-only blocks never seal, deltas target the open streaming block past appended activity | (this commit) |
+| 2026-09-25 | VSCode-style syntax highlighting in edit/write diffs (aurora chroma palette, lexer by file extension, run-based) + expandable truncated tool results and diffs (ctrl+o, click regions, red non-bold error bodies) | (this commit) |
+| 2026-09-25 | Tool call lines readable (bash command, paths, patterns — JSON only for shapeless tools) + stray-bar fix: unfinished mid-stream markdown constructs rendered bar-only rows; trailing bar-only rows dropped, whitespace-only blocks never seal, deltas target the open streaming block past appended activity | 90f32fb |
 | 2026-09-25 | Git-style diffs for edit/write in the chat (`tools.ChangeDiff` from input alone, `kindDiff` block with colorized capped diff, path-only call lines, replay support) + fix: streaming blocks rendered twice per frame (duplicate thinking lines, stacked bars) | 7f40bf8 |
 | 2026-09-25 | Test isolation: `isolateHome` in `newTestModel` stops `go test ./internal/ui` from writing the real `~/.khode/config.json` (a fixture clobber shipped in the mode-persist tests); canary-verified | (this commit) |
 | 2026-09-25 | Live todo checklist: system prompt + plan-approval handoff drive the todo tool; TUI renders one in-place checklist panel (todo call lines suppressed, empty list clears, id-paired replay) and the status line tracks the current task | e4d8dd9 |

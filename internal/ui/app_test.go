@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -661,8 +662,8 @@ func TestFlushPrintsSealedBlocks(t *testing.T) {
 	if got := ansiStrip(m.View().Content); !strings.Contains(got, "in flight") {
 		t.Errorf("viewport missing the sealed block: %q", got)
 	}
-	if got := ansiStrip(m.streamingBlock()); strings.Contains(got, "in flight") {
-		t.Error("sealed block still rendered as a live block")
+	if m.streamingIndex() >= 0 {
+		t.Error("sealed block still registered as streaming")
 	}
 }
 
@@ -788,7 +789,8 @@ func TestStreamingBlocksRenderOnce(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 
-	out := ansiStrip(m.messageViewport(30))
+	vp, _ := m.messageViewport(30)
+	out := ansiStrip(vp)
 	if n := strings.Count(out, "weighing options"); n != 1 {
 		t.Errorf("thinking text appears %d times in the live frame, want 1:\n%s", n, out)
 	}
@@ -1008,5 +1010,120 @@ func TestToolCallLinesAreReadable(t *testing.T) {
 		if got != c.want {
 			t.Errorf("formatToolCall(%s) = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// Diff code is syntax-highlighted in the aurora palette (VSCode-style):
+// a JS write diff lexes as JavaScript — keywords cyan, strings amber —
+// while the + marker stays green, and a file without a lexer keeps the
+// code plain.
+func TestDiffHighlightsCode(t *testing.T) {
+	diff := "@@ -0,0 +1,3 @@\n" +
+		"+const router = require('express');\n" +
+		"+// fetch all todos\n" +
+		"+router.get('/', handler);\n"
+	out := diffBlock("Wrote routes/todos.js (3 lines)", diff, "routes/todos.js", 100, false)
+	for _, want := range []string{
+		"\x1b[38;2;94;234;212m", // keyword cyan (#5EEAD4) — const/router
+		"\x1b[38;2;251;191;36m", // string amber (#FBBF24) — 'express'
+		"\x1b[38;2;92;107;115m", // comment dim (#5C6B73)
+		addStyle.Render("+"),    // the green marker
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("highlighted diff missing %q: %q", want, ansiStrip(out))
+		}
+	}
+
+	plain := diffBlock("Wrote data.blob (1 line)", "@@ -0,0 +1,1 @@\n+const x = 1;\n", "data.blob", 100, false)
+	if strings.Contains(plain, "\x1b[38;2;94;234;212m") {
+		t.Errorf("lexerless file unexpectedly highlighted: %q", ansiStrip(plain))
+	}
+}
+
+// ctrl+o expands the most recent truncated block — a tool result's full
+// output — and collapses it again.
+func TestCtrlOExpandsResult(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 10; i++ {
+		lines = append(lines, fmt.Sprintf("detail line %d", i))
+	}
+	evs := []llm.Event{
+		llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c1", Name: "bash",
+			Input: json.RawMessage(`{"command":"verbose-cmd"}`)}},
+		llm.ToolResultEvent{CallID: "c1", Name: "bash",
+			Output: strings.Join(lines, "\n"), IsError: true},
+		llm.DoneEvent{},
+	}
+	m := pumpModel(t, newTestModel(t), evs)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	if out := ansiStrip(m.block(1, 100)); !strings.Contains(out, "(+8 more lines · ctrl+o)") {
+		t.Errorf("collapsed error block = %q", out)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(Model)
+	out := ansiStrip(m.block(1, 100))
+	for _, want := range []string{"detail line 1", "detail line 10", "ctrl+o to collapse"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expanded error block missing %q: %q", want, out)
+		}
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if out := ansiStrip(m.block(1, 100)); strings.Contains(out, "detail line 10") {
+		t.Errorf("collapsed block still shows detail: %q", out)
+	}
+}
+
+// A capped diff expands the same way: ctrl+o reveals every diff line.
+func TestCtrlOExpandsDiff(t *testing.T) {
+	var b strings.Builder
+	fmt.Fprint(&b, "@@ -0,0 +1,30 @@\n")
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "+line %d\n", i)
+	}
+	m := newTestModel(t)
+	m.messages = append(m.messages, uiMessage{
+		role: llm.RoleTool, kind: kindDiff, raw: "Wrote big.txt (30 lines)",
+		diff: b.String(), path: "big.txt", history: true,
+	})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	// The @@ header counts toward the cap: 20 drawn lines (header +
+	// 19 content), 11 hidden.
+	if out := ansiStrip(m.block(0, 100)); !strings.Contains(out, "… 11 more diff lines · ctrl+o to expand") {
+		t.Errorf("collapsed diff = %q", out)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(Model)
+	out := ansiStrip(m.block(0, 100))
+	if !strings.Contains(out, "line 30") {
+		t.Errorf("expanded diff missing the tail: %q", out)
+	}
+	if !strings.Contains(out, "ctrl+o to collapse") {
+		t.Errorf("expanded diff missing the collapse hint: %q", out)
+	}
+}
+
+// Truncated blocks are clickable: pressing the region registered for an
+// expandable block toggles its detail.
+func TestClickTogglesExpand(t *testing.T) {
+	m := newTestModel(t)
+	m.messages = append(m.messages, uiMessage{
+		role: llm.RoleTool, kind: kindToolResult, isErr: true,
+		raw: "one\ntwo\nthree\nfour", history: true,
+	})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	m = clickAt(t, m, func(r region) bool { return r.kind == clickExpand })
+	if !m.messages[0].expanded {
+		t.Error("click did not expand the truncated result")
+	}
+	m = clickAt(t, m, func(r region) bool { return r.kind == clickExpand })
+	if m.messages[0].expanded {
+		t.Error("click did not collapse the expanded result")
 	}
 }

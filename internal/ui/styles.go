@@ -73,9 +73,12 @@ var (
 	// than prose, clearly apart from the dim italic thinking/system
 	// notes.
 	resultStyle = lipgloss.NewStyle().Foreground(colResult)
-	addStyle    = lipgloss.NewStyle().Foreground(colGreen)
-	delStyle    = lipgloss.NewStyle().Foreground(colErr)
-	warnStyle   = lipgloss.NewStyle().Foreground(colWarn)
+	// errDetail carries an expanded error's body: red like its header
+	// but not bold — the loudness budget of a 30-line stack trace.
+	errDetailStyle = lipgloss.NewStyle().Foreground(colErr)
+	addStyle       = lipgloss.NewStyle().Foreground(colGreen)
+	delStyle       = lipgloss.NewStyle().Foreground(colErr)
+	warnStyle      = lipgloss.NewStyle().Foreground(colWarn)
 
 	// todoPanel frames the agent's live task checklist; done items dim
 	// away, the one in progress runs bright cyan (khode's activity

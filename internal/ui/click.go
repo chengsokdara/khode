@@ -34,6 +34,7 @@ const (
 	clickMoreUp                     // a list window's "↑ N more" note: page the cursor up
 	clickMoreDown                   // a list window's "↓ N more" note: page the cursor down
 	clickInput                      // the chat input's text area (idx = visible row): place the cursor
+	clickExpand                     // a truncated tool result or diff (idx = message index): toggle its detail
 )
 
 // Setup-banner commands, as clickHintCmd's idx.
@@ -273,6 +274,12 @@ func (m Model) mouseClicked(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// negative column (border or prompt click) lands at col 0.
 		m.placeInputCursor(r.idx, msg.X-1-lipgloss.Width(m.textarea.Prompt))
 		return m, textarea.Blink
+	case clickExpand:
+		if r.idx >= 0 && r.idx < len(m.messages) {
+			msg := &m.messages[r.idx]
+			msg.expanded = !msg.expanded
+			msg.rendered = ""
+		}
 	case clickHintCmd:
 		switch r.idx {
 		case hintWelcome:

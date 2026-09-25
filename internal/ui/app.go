@@ -61,11 +61,20 @@ type uiMessage struct {
 	kind      uiMessageKind
 	raw       string
 	diff      string // kindDiff only: the call's plain unified diff text
+	path      string // kindDiff only: the file the diff is for (lexer pick)
 	rendered  string
 	streaming bool
 	isErr     bool
+	expanded  bool // truncated results and diffs: ctrl+o/click reveals all
 	final     bool // the closing assistant message of a turn: bright answer bar
 	history   bool
+}
+
+// diffChange is a write-class call's change, banked at call time and
+// paired with its result through the call id.
+type diffChange struct {
+	path string
+	diff string
 }
 
 // Model is the root Bubble Tea model.
@@ -136,7 +145,7 @@ type Model struct {
 	// diffCalls remembers the change diff of in-flight edit/write calls
 	// by call id: the result event carries only the summary line, so the
 	// git-style block pairs it with the diff computed at call time.
-	diffCalls map[string]string
+	diffCalls map[string]diffChange
 
 	// todoNow is the agent's current todo item with done/total counts,
 	// mirrored from the todo tool so the status line can show live
@@ -257,7 +266,7 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 	// through the id, not transcript adjacency. diffCalls does the same
 	// for write-class calls, whose results replay as git-style diffs.
 	todoCalls := map[string][]tools.Todo{}
-	diffCalls := map[string]string{}
+	diffCalls := map[string]diffChange{}
 	for idx, msg := range msgs {
 		final := isFinalAnswer(msgs, idx)
 		switch {
@@ -278,7 +287,7 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 				} else {
 					m.messages = append(m.messages, uiMessage{
 						role: msg.Role, kind: kindDiff, raw: msg.ToolResult.Content,
-						diff: d, history: true,
+						diff: d.diff, path: d.path, history: true,
 					})
 				}
 			} else {
@@ -305,7 +314,7 @@ func (m *Model) replayTranscript(sess *agent.Session) {
 					continue
 				}
 				if d := tools.ChangeDiff(c.Name, c.Input); d != "" {
-					diffCalls[c.ID] = d
+					diffCalls[c.ID] = diffChange{path: writeToolPath(c.Name, c.Input), diff: d}
 				}
 				m.messages = append(m.messages, uiMessage{
 					role: msg.Role, kind: kindToolCall, raw: formatToolCall(c), history: true,
@@ -620,6 +629,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.String() == "pgdown":
 		m.scroll = max(0, m.scroll-max(1, m.height-6))
 		return m, nil
+	// ctrl+o expands the most recent truncated block — a tool result's
+	// full output or a capped diff — and collapses it again.
+	case msg.String() == "ctrl+o":
+		m.toggleExpand()
+		return m, nil
 	// ↑/↓ recall prompts from the input history — but only when the
 	// cursor already sits on the input's first/last line, so a
 	// multi-line draft still moves the cursor between its lines.
@@ -804,8 +818,8 @@ func (m Model) chatView() string {
 
 	// The viewport fills the middle; a conversation shorter than it
 	// pads above, the way a full-height layout leaves the middle open.
-	vlines := strings.Split(
-		viewportStyle.Width(m.width).Render(m.messageViewport(vrows)), "\n")
+	viewport, lineOf := m.messageViewport(vrows)
+	vlines := strings.Split(viewportStyle.Width(m.width).Render(viewport), "\n")
 	for len(vlines) < vrows {
 		vlines = append([]string{""}, vlines...)
 	}
@@ -827,6 +841,16 @@ func (m Model) chatView() string {
 			addRegion(r)
 		}
 		y += lipgloss.Height(band.view)
+	}
+	// Expandable blocks in the viewport register one full-width region
+	// per visible line: a press anywhere on the block toggles its
+	// detail. The window's pad lines sit above the conversation lines.
+	vtop := midTop - vrows
+	pad := len(vlines) - len(lineOf)
+	for i, mi := range lineOf {
+		if mi >= 0 && expandable(m.messages[mi]) {
+			addRegion(region{x: 0, y: vtop + pad + i, w: m.width, kind: clickExpand, idx: mi})
+		}
 	}
 	// The input box: one full-width region per inner row, so a press
 	// places the textarea cursor where the click landed (input.go).
@@ -853,24 +877,36 @@ func (m Model) chatView() string {
 }
 
 // messageViewport renders the conversation as viewport rows, ending at
-// the live edge unless the user has scrolled back (m.scroll).
-func (m Model) messageViewport(rows int) string {
-	var blocks []string
+// the live edge unless the user has scrolled back (m.scroll). Beside
+// the joined lines it returns, per line, the index of the message the
+// line belongs to (-1 for separators and filler) so chatView can
+// register the frame's click regions on expandable blocks.
+func (m Model) messageViewport(rows int) (string, []int) {
+	var lines []string
+	lineOf := make([]int, 0, len(m.messages))
+	appendBlock := func(i int) {
+		if len(lines) > 0 {
+			lines = append(lines, "", "")
+			lineOf = append(lineOf, -1, -1)
+		}
+		for _, l := range strings.Split(m.block(i, m.printWidth()), "\n") {
+			lines = append(lines, l)
+			lineOf = append(lineOf, i)
+		}
+	}
 	for i := range m.messages {
 		if m.messages[i].streaming {
-			continue // streamingBlock paints these once, at the live edge
+			continue // the live edge paints these below
 		}
-		blocks = append(blocks, m.block(i, m.printWidth()))
+		appendBlock(i)
 	}
-	if streaming := m.streamingBlock(); streaming != "" {
-		blocks = append(blocks, streaming)
-	}
-	var lines []string
-	if len(blocks) > 0 {
-		lines = strings.Split(strings.Join(blocks, "\n\n"), "\n")
+	for i := range m.messages {
+		if m.messages[i].streaming {
+			appendBlock(i)
+		}
 	}
 	if len(lines) == 0 {
-		return dimStyle.Render("· nothing yet — say hello")
+		return dimStyle.Render("· nothing yet — say hello"), []int{-1}
 	}
 	// A fixed window of exactly `rows` lines, ending `scroll` lines
 	// above the live edge: the frame must stay terminal-height, so
@@ -878,22 +914,7 @@ func (m Model) messageViewport(rows int) string {
 	start := len(lines) - rows - m.scroll
 	start = max(0, min(start, len(lines)-1))
 	end := min(start+rows, len(lines))
-	return strings.Join(lines[start:end], "\n")
-}
-
-// streamingBlock renders the in-flight turn, if any — blocks marked
-// streaming render with the live cursor; sealed ones are plain history.
-func (m Model) streamingBlock() string {
-	var blocks []string
-	for i := range m.messages {
-		if m.messages[i].streaming {
-			blocks = append(blocks, strings.TrimSpace(m.block(i, m.printWidth())))
-		}
-	}
-	if len(blocks) == 0 {
-		return ""
-	}
-	return strings.Join(blocks, "\n\n")
+	return strings.Join(lines[start:end], "\n"), lineOf[start:end]
 }
 
 // helpLine renders the bottom key reference: key names faint cyan,
@@ -906,6 +927,9 @@ func (m Model) helpLine() string {
 		{"pgup/pgdn", "history"},
 		{"esc", "stop stream"},
 		{"ctrl+c", "quit"},
+		// Dropped first on narrow terminals: the truncation markers
+		// name it where it matters.
+		{"ctrl+o", "expand"},
 	}
 	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
@@ -977,9 +1001,9 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		// input alone; the result event pairs it with the summary line.
 		if d := tools.ChangeDiff(e.Name, e.Input); d != "" {
 			if m.diffCalls == nil {
-				m.diffCalls = make(map[string]string)
+				m.diffCalls = make(map[string]diffChange)
 			}
-			m.diffCalls[e.ID] = d
+			m.diffCalls[e.ID] = diffChange{path: writeToolPath(e.Name, e.Input), diff: d}
 		}
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
@@ -995,9 +1019,9 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		delete(m.diffCalls, e.CallID)
 		if hasDiff && !e.IsError {
 			// A write-class result renders as its change: the summary
-			// line over the colorized diff, instead of flattened output.
+			// line over the highlighted diff, instead of flat output.
 			m.messages = append(m.messages, uiMessage{
-				role: llm.RoleTool, kind: kindDiff, raw: e.Output, diff: d,
+				role: llm.RoleTool, kind: kindDiff, raw: e.Output, diff: d.diff, path: d.path,
 			})
 			return tea.Batch(m.pump(), m.flush())
 		}
@@ -1592,12 +1616,16 @@ func (m *Model) block(i int, width int) string {
 	case msg.kind == kindToolCall:
 		out = toolCallBlock(msg.raw, width)
 	case msg.kind == kindDiff:
-		out = diffBlock(msg.raw, msg.diff, width)
+		out = diffBlock(msg.raw, msg.diff, msg.path, width, msg.expanded)
 	case msg.kind == kindTodo:
 		out = todoPanelBlock(msg.raw, width)
 	case msg.kind == kindThinking:
 		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
 	case msg.kind == kindToolResult:
+		if msg.expanded {
+			out = resultDetailBlock(msg.raw, msg.isErr, width)
+			break
+		}
 		body := summarizeToolResult(msg.raw)
 		style := resultStyle
 		prefix := "⎿  "
@@ -1759,6 +1787,22 @@ func toolCallArgs(name string, input json.RawMessage) string {
 	return compactJSON(input)
 }
 
+// writeToolPath extracts the file a write-class call targets — the
+// diff block lexes its code by the file it changed. "" for any other
+// tool or unparseable input.
+func writeToolPath(name string, input json.RawMessage) string {
+	if name != "edit" && name != "write" {
+		return ""
+	}
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(input, &a); err != nil {
+		return ""
+	}
+	return a.Path
+}
+
 // oneLine flattens a multi-line string for the activity line: newlines
 // become spaces and runs of whitespace collapse.
 func oneLine(s string) string {
@@ -1770,18 +1814,69 @@ func oneLine(s string) string {
 const diffPreviewLines = 20
 
 // diffBlock renders a write-class result as a git-style change: the ⎿
-// summary line, then the colorized diff hung under it, clipped to the
-// chat width and capped at diffPreviewLines lines.
-func diffBlock(summary, diff string, width int) string {
-	lines := strings.Split(colorizeDiff(diff, width-3), "\n")
-	if extra := len(lines) - diffPreviewLines; extra > 0 {
+// summary line, then the syntax-highlighted diff hung under it, capped
+// at diffPreviewLines lines unless expanded.
+func diffBlock(summary, diff, path string, width int, expanded bool) string {
+	lines := renderDiffLines(diff, path, width-3)
+	if !expanded && len(lines) > diffPreviewLines {
 		lines = append(lines[:diffPreviewLines],
-			dimStyle.Render(fmt.Sprintf("… %d more diff lines", extra)))
+			dimStyle.Render(fmt.Sprintf("… %d more diff lines · ctrl+o to expand",
+				len(lines)-diffPreviewLines)))
 	}
 	for i := range lines {
 		lines[i] = "   " + lines[i]
 	}
+	if expanded {
+		lines = append(lines, "   "+dimStyle.Render("· ctrl+o to collapse"))
+	}
 	return resultStyle.Render("⎿  "+summary) + "\n" + strings.Join(lines, "\n")
+}
+
+// resultDetailBlock renders a tool result in full: every output line
+// hanging under the ⎿ header, errors in red without the header's bold.
+func resultDetailBlock(raw string, isErr bool, width int) string {
+	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	headStyle, bodyStyle := resultStyle, resultStyle
+	if isErr {
+		headStyle, bodyStyle = errorStyle, errDetailStyle
+	}
+	head := "⎿  "
+	if isErr {
+		head += "error: "
+	}
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, headStyle.Render(head+clip(lines[0], width-3)))
+	for _, l := range lines[1:] {
+		out = append(out, bodyStyle.Render("   "+clip(l, width-3)))
+	}
+	out = append(out, dimStyle.Render("   · ctrl+o to collapse"))
+	return strings.Join(out, "\n")
+}
+
+// toggleExpand flips the most recent block that hides detail — a tool
+// result longer than its preview or a capped diff — between its
+// summary and its full output.
+func (m *Model) toggleExpand() {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if !expandable(m.messages[i]) {
+			continue
+		}
+		m.messages[i].expanded = !m.messages[i].expanded
+		m.messages[i].rendered = "" // re-render at the new size
+		return
+	}
+}
+
+// expandable reports whether a block hides detail the user can reveal
+// with ctrl+o or a click.
+func expandable(msg uiMessage) bool {
+	switch msg.kind {
+	case kindToolResult:
+		return strings.Count(strings.TrimRight(msg.raw, "\n"), "\n")+1 > toolResultPreviewLines
+	case kindDiff:
+		return strings.Count(strings.TrimRight(msg.diff, "\n"), "\n")+1 > diffPreviewLines
+	}
+	return false
 }
 
 // toolCallBlock renders a tool call two-tone: the ⏺ marker and tool
@@ -1815,7 +1910,7 @@ func summarizeToolResult(raw string) string {
 	case len(lines) > toolResultPreviewLines:
 		shown = lines[:toolResultPreviewLines]
 		return truncate(strings.Join(shown, " · "), 160) +
-			fmt.Sprintf("  (+%d more lines)", len(lines)-toolResultPreviewLines)
+			fmt.Sprintf("  (+%d more lines · ctrl+o)", len(lines)-toolResultPreviewLines)
 	}
 	return truncate(strings.Join(shown, " · "), 200)
 }
