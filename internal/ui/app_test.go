@@ -834,10 +834,12 @@ func TestEditResultRendersDiff(t *testing.T) {
 			if strings.Contains(out, "@@") {
 				t.Errorf("diff block shows a hunk header: %q", out)
 			}
-			// both lines carry their background bands
-			for _, band := range []string{"\x1b[48;2;59;29;33m", "\x1b[48;2;23;48;31m"} {
-				if !strings.Contains(raw, band) {
-					t.Errorf("diff block missing band %q: %q", band, ansiStrip(raw))
+			// both lines carry their background bands, re-injected
+			// after every SGR reset on the row (the gutter and each
+			// syntax token reset) so the band covers the whole line
+			for _, band := range []string{"\x1b[48;2;95;35;45m", "\x1b[48;2;26;90;45m"} {
+				if strings.Count(raw, band) < 2 {
+					t.Errorf("diff block band %q does not cover the row: %q", band, ansiStrip(raw))
 				}
 			}
 		case kindToolResult:
@@ -908,7 +910,7 @@ func TestEditReplayRendersDiff(t *testing.T) {
 		}
 		sawDiff = true
 		raw := m.block(i, 80)
-		for _, want := range []string{"⎿  Wrote new.txt", "hi", "\x1b[48;2;23;48;31m"} {
+		for _, want := range []string{"⎿  Wrote new.txt", "hi", "\x1b[48;2;26;90;45m"} {
 			if !strings.Contains(raw, want) {
 				t.Errorf("replayed diff block = %q, missing %q", ansiStrip(raw), want)
 			}
@@ -1035,10 +1037,11 @@ func TestDiffHighlightsCode(t *testing.T) {
 		"+router.get('/', handler);\n"
 	out := diffBlock("Wrote routes/todos.js (3 lines)", diff, "routes/todos.js", 100, false)
 	for _, want := range []string{
-		"\x1b[38;2;94;234;212m", // keyword cyan (#5EEAD4) — const/router
-		"\x1b[38;2;251;191;36m", // string amber (#FBBF24) — 'express'
-		"\x1b[38;2;92;107;115m", // comment dim (#5C6B73)
-		"\x1b[48;2;23;48;31m",   // the additions band
+		"\x1b[38;2;197;134;192m", // keyword purple (#C586C0) — const
+		"\x1b[38;2;156;220;254m", // variable blue (#9CDCFE) — router
+		"\x1b[38;2;206;145;120m", // string orange (#CE9178) — 'express'
+		"\x1b[38;2;106;153;85m",  // comment green (#6A9955)
+		"\x1b[48;2;26;90;45m",    // the additions band
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("highlighted diff missing %q: %q", want, ansiStrip(out))
@@ -1046,7 +1049,7 @@ func TestDiffHighlightsCode(t *testing.T) {
 	}
 
 	plain := diffBlock("Wrote data.blob (1 line)", "@@ -0,0 +1,1 @@\n+const x = 1;\n", "data.blob", 100, false)
-	if strings.Contains(plain, "\x1b[38;2;94;234;212m") {
+	if strings.Contains(plain, "\x1b[38;2;197;134;192m") {
 		t.Errorf("lexerless file unexpectedly highlighted: %q", ansiStrip(plain))
 	}
 }

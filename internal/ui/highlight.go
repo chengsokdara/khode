@@ -3,9 +3,8 @@ package ui
 // Syntax highlighting for diff content, Grok style: the code keeps its
 // language colors and sits on full-width background bands — dark green
 // over additions, dark red over removals — behind a dim line-number
-// gutter, with no + / - markers. The token palette is aurora — keywords
-// cyan (khode's activity color), strings and numbers amber, comments
-// dim, names mint — and chroma (glamour's lexer) does the lexing.
+// gutter, with no + / - markers. Chroma (glamour's lexer) does the
+// lexing; the token palette is VSCode Dark+ (see auroraChroma).
 
 import (
 	"bytes"
@@ -20,35 +19,43 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// auroraChroma speaks the aurora palette to chroma's truecolor
-// formatter. Entries are Pygments-style descriptors: color plus
-// optional bold/italic.
+// auroraChroma speaks to chroma's truecolor formatter. The code
+// palette is VSCode Dark+ — the vivid scheme Grok renders: blue
+// keywords, purple control flow, orange strings, yellow functions,
+// light-blue variables, teal classes, green comments — while the chrome
+// around the code stays aurora. Entries are Pygments-style descriptors:
+// color plus optional bold/italic.
 var auroraChroma = chroma.MustNewStyle("khode", chroma.StyleEntries{
-	chroma.Text:                "#DCE9E5",
-	chroma.Comment:             "#5C6B73 italic",
-	chroma.CommentPreproc:      "#5C6B73",
-	chroma.Keyword:             "#5EEAD4",
-	chroma.KeywordType:         "#5EEAD4",
-	chroma.KeywordConstant:     "#5EEAD4",
-	chroma.KeywordNamespace:    "#5EEAD4",
-	chroma.OperatorWord:        "#5EEAD4",
-	chroma.LiteralString:       "#FBBF24",
-	chroma.LiteralStringEscape: "#FBBF24 bold",
-	chroma.LiteralNumber:       "#FBBF24",
-	chroma.NameFunction:        "#5EEAD4 bold",
-	chroma.NameClass:           "#99F6E4 bold",
-	chroma.NameTag:             "#F87171",
-	chroma.NameAttribute:       "#99F6E4",
-	chroma.NameBuiltin:         "#2DD4BF",
-	chroma.NameDecorator:       "#99F6E4",
-	chroma.Punctuation:         "#8FA8A3",
-	chroma.Operator:            "#8FA8A3",
-	chroma.GenericHeading:      "#5EEAD4 bold",
-	chroma.GenericSubheading:   "#99F6E4 bold",
+	chroma.Text:                "#D4D4D4",
+	chroma.Comment:             "#6A9955",
+	chroma.CommentPreproc:      "#C586C0",
+	chroma.Keyword:             "#C586C0",
+	chroma.KeywordDeclaration:  "#569CD6",
+	chroma.KeywordNamespace:    "#C586C0",
+	chroma.KeywordType:         "#569CD6",
+	chroma.KeywordConstant:     "#569CD6",
+	chroma.Operator:            "#D4D4D4",
+	chroma.Punctuation:         "#D4D4D4",
+	chroma.LiteralString:       "#CE9178",
+	chroma.LiteralStringEscape: "#D7BA7D",
+	chroma.LiteralNumber:       "#B5CEA8",
+	chroma.Name:                "#9CDCFE",
+	chroma.NameOther:           "#9CDCFE",
+	chroma.NameVariable:        "#9CDCFE",
+	chroma.NameConstant:        "#4FC1FF",
+	chroma.NameFunction:        "#DCDCAA",
+	chroma.NameClass:           "#4EC9B0",
+	chroma.NameBuiltin:         "#4EC9B0",
+	chroma.NameTag:             "#569CD6",
+	chroma.NameAttribute:       "#9CDCFE",
+	chroma.NameDecorator:       "#DCDCAA",
+	chroma.NameLabel:           "#C586C0",
+	chroma.GenericHeading:      "#569CD6 bold",
+	chroma.GenericSubheading:   "#4EC9B0 bold",
 	chroma.GenericDeleted:      "#F87171",
 	chroma.GenericInserted:     "#4ADE80",
-	chroma.GenericEmph:         "#DCE9E5 italic",
-	chroma.GenericStrong:       "#DCE9E5 bold",
+	chroma.GenericEmph:         "#D4D4D4 italic",
+	chroma.GenericStrong:       "#D4D4D4 bold",
 })
 
 // highlightLines renders code with chroma in the aurora style, one
@@ -191,9 +198,11 @@ func diffMarker(line string) byte {
 }
 
 // bandLine wraps a styled line in a full-width background band — the
-// dark green/red rows behind diff lines. Chroma resets exactly once per
-// line, so stripping that reset lets the band survive the syntax colors
-// on top; the row is padded out to the full width inside the band.
+// dark green/red rows behind diff lines. The line is assembled from
+// parts that each reset their own SGR (the lipgloss gutter, chroma's
+// per-line reset), so the background is re-injected after every reset
+// along the row — one injection at the start would only paint the
+// gutter. The row is padded out to the full width inside the band.
 func bandLine(line string, bgHex string, width int) string {
 	c, err := parseHex(bgHex)
 	if err != nil {
@@ -201,6 +210,7 @@ func bandLine(line string, bgHex string, width int) string {
 	}
 	bg := fmt.Sprintf("\x1b[48;2;%d;%d;%dm", int(c[0]), int(c[1]), int(c[2]))
 	line = strings.TrimSuffix(line, "\x1b[0m")
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+bg)
 	if pad := width - lipgloss.Width(line); pad > 0 {
 		line += strings.Repeat(" ", pad)
 	}

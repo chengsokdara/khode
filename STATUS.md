@@ -10,6 +10,19 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Colorful Grok diffs (2026-09-25):** two fixes to make the write diff
+actually read like Grok's. The token palette is now VSCode Dark+ — blue
+variables (#9CDCFE), purple control flow (#C586C0), orange strings
+(#CE9178), green comments (#6A9955), teal classes, pale-green numbers —
+replacing the first aurora mapping that only colored keywords, strings,
+and comments and left every identifier at the terminal's default
+(monochrome). And the background bands now cover the whole row: the
+line is assembled from parts that each reset their own SGR (the
+lipgloss gutter, chroma's tokens), so `bandLine` re-injects the
+background after every reset along the row — a single injection at line
+start only painted the four-character gutter. Band tints brightened to
+Grok's saturation (#1A5A2D additions, #5F232D removals).
+
 **Grok-style write diffs (2026-09-25):** the edit/write diff block
 dropped its git conventions for the Grok treatment: a dim line-number
 gutter (width of the largest number the diff shows, per-hunk numbers
@@ -717,7 +730,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | Grok-style write diffs: line-number gutter from `@@` headers (old numbers on removals, new on additions), full-width dark green/red background bands instead of +/- markers, headers dropped, flush-left body | (this commit) |
+| 2026-09-25 | Colorful Grok diffs: VSCode Dark+ token palette (was monochrome — identifiers fell to terminal default) + bands re-injected after every SGR reset so they cover the full row, not just the gutter; brighter band tints | (this commit) |
+| 2026-09-25 | Grok-style write diffs: line-number gutter from `@@` headers (old numbers on removals, new on additions), full-width dark green/red background bands instead of +/- markers, headers dropped, flush-left body | d5b6819 |
 | 2026-09-25 | VSCode-style syntax highlighting in edit/write diffs (aurora chroma palette, lexer by file extension, run-based) + expandable truncated tool results and diffs (ctrl+o, click regions, red non-bold error bodies) | ec82868 |
 | 2026-09-25 | Tool call lines readable (bash command, paths, patterns — JSON only for shapeless tools) + stray-bar fix: unfinished mid-stream markdown constructs rendered bar-only rows; trailing bar-only rows dropped, whitespace-only blocks never seal, deltas target the open streaming block past appended activity | 90f32fb |
 | 2026-09-25 | Git-style diffs for edit/write in the chat (`tools.ChangeDiff` from input alone, `kindDiff` block with colorized capped diff, path-only call lines, replay support) + fix: streaming blocks rendered twice per frame (duplicate thinking lines, stacked bars) | 7f40bf8 |

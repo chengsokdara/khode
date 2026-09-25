@@ -31,11 +31,11 @@ const (
 	hexChipBg  = "#0F3532"
 	hexErr     = "#F87171"
 	hexWarn    = "#FBBF24"
-	// Diff band backgrounds — the dark full-width tints behind added
-	// and removed lines (Grok-style, deliberately darker than the
-	// foreground palette so syntax colors stay legible on top).
-	hexDiffAddBg = "#17301F"
-	hexDiffDelBg = "#3B1D21"
+	// Diff band backgrounds — the full-width tints behind added and
+	// removed lines (Grok-style, saturated enough to read as color
+	// stripes while syntax colors stay legible on top).
+	hexDiffAddBg = "#1A5A2D"
+	hexDiffDelBg = "#5F232D"
 )
 
 var (
