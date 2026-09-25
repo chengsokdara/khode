@@ -22,6 +22,14 @@ import (
 // cap lower via their kindSpec.ReportCap.
 const maxTaskResult = 16 << 10
 
+// SubagentProgress is one line of a running subagent's activity,
+// forwarded to the UI while the child works.
+type SubagentProgress struct {
+	Kind     string // the profile label ("general", "explore", "gather", "plan")
+	Activity string // the child's latest tool call, e.g. "read internal/llm/loop.go"
+	Calls    int    // child tool calls so far
+}
+
 // SubagentConfig wires the task tool to the app's live state. The
 // function fields are read at every call, so /model and /mode changes
 // apply to subagents spawned later.
@@ -37,6 +45,10 @@ type SubagentConfig struct {
 	// Hooks builds the lifecycle-hook runner for subagent calls; nil
 	// disables hooks inside subagents.
 	Hooks func() *hooks.Runner
+	// Progress receives one-line child activity while a subagent runs;
+	// nil disables progress reporting. It must not block: the UI side
+	// drops lines when its buffer is full.
+	Progress func(SubagentProgress)
 }
 
 // TaskTool runs one subagent per call.
@@ -100,10 +112,20 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 	}
 
 	var report strings.Builder
+	calls := 0
 	for ev := range sub.Run(ctx, a.Prompt) {
 		switch e := ev.(type) {
 		case llm.TextDeltaEvent:
 			report.WriteString(e.Text)
+		case llm.ToolCallEvent:
+			calls++
+			if t.cfg.Progress != nil {
+				t.cfg.Progress(SubagentProgress{
+					Kind:     spec.Label,
+					Activity: progressLine(e.Name, e.Input),
+					Calls:    calls,
+				})
+			}
 		case llm.ErrorEvent:
 			if errors.Is(e.Err, context.Canceled) {
 				return "", e.Err // the loop's "interrupted by user" wording wins
@@ -135,6 +157,39 @@ the only part of your run the parent agent receives.`
 		base += "\n\n" + spec.Section
 	}
 	return base
+}
+
+// progressLine flattens a child tool call into one short activity line
+// for the parent's feed: the tool's one interesting argument when it
+// has a shape, the bare name otherwise.
+func progressLine(name string, input json.RawMessage) string {
+	var a struct {
+		Command string `json:"command"`
+		Path    string `json:"path"`
+		Pattern string `json:"pattern"`
+	}
+	_ = json.Unmarshal(input, &a)
+	arg := a.Command
+	if arg == "" {
+		arg = a.Pattern
+	}
+	if arg == "" {
+		arg = a.Path
+	}
+	if arg == "" {
+		return name
+	}
+	flat := strings.Join(strings.Fields(arg), " ")
+	return name + " " + clipLine(flat, 80)
+}
+
+// clipLine hard-cuts a string to n runes.
+func clipLine(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // clipTaskResult caps a report for its kind, reserving room for the

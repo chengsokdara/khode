@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Scripted OpenAI-protocol server: round 1 streams thinking + prose +
-a write tool call (26-line file), round 2 streams the closing answer."""
+"""Scripted OpenAI-protocol server. Outer rounds replay write → edit →
+answer per run; round 4 calls task(subagent_type=explore) and the round
+after the subagent finishes closes the turn. A request whose body
+carries the subagent system section ("# Subagent") is the subagent
+itself: it first streams a grep call (held a second so the UI's live
+activity line is on screen), then the final report."""
 import json
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = 19731
@@ -21,6 +26,7 @@ def sse(self, chunks):
 
 class H(BaseHTTPRequestHandler):
     count = 0
+    sub_reported = False
     def log_message(self, *a):
         pass
     def do_GET(self):
@@ -35,12 +41,42 @@ class H(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         H.count += 1
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        if H.count == 2:
+        if b"# Subagent" in body:
+            if not H.sub_reported:
+                H.sub_reported = True
+                ga = json.dumps({"pattern": "package "})
+                sse(self, [
+                    chunk({"role": "assistant"}),
+                    chunk({"tool_calls": [{"index": 0, "id": "call_sub1", "type": "function",
+                                           "function": {"name": "grep", "arguments": ga}}]}),
+                    chunk({}, finish="tool_calls"),
+                    chunk({}, usage={"prompt_tokens": 900, "completion_tokens": 30}),
+                ])
+            else:
+                time.sleep(3.0)  # keep the live activity line readable
+                sse(self, [
+                    chunk({"content": "Report: one Go package lives in cmd/khode; hello.txt holds the sample file."}),
+                    chunk({}, finish="stop"),
+                    chunk({}, usage={"prompt_tokens": 1100, "completion_tokens": 40}),
+                ])
+        elif H.count == 4:
+            ta = json.dumps({"prompt": "survey this repository",
+                             "subagent_type": "explore",
+                             "description": "survey the repo"})
+            sse(self, [
+                chunk({"role": "assistant"}),
+                chunk({"content": "Delegating the survey."}),
+                chunk({"tool_calls": [{"index": 0, "id": "call_4", "type": "function",
+                                       "function": {"name": "task", "arguments": ta}}]}),
+                chunk({}, finish="tool_calls"),
+                chunk({}, usage={"prompt_tokens": 4200, "completion_tokens": 50}),
+            ])
+        elif H.count == 2:
             ea = json.dumps({"path": "hello.txt",
                              "old_string": "line 5: hello from the fake model",
                              "new_string": "line 5: EDITED by the fake model"})
@@ -76,9 +112,9 @@ class H(BaseHTTPRequestHandler):
             ])
         else:
             sse(self, [
-                chunk({"content": "Done - hello.txt is on disk."}),
+                chunk({"content": "The explore agent reports: one Go package in cmd/khode, sample file on disk."}),
                 chunk({}, finish="stop"),
-                chunk({}, usage={"prompt_tokens": 2400, "completion_tokens": 60}),
+                chunk({}, usage={"prompt_tokens": 4800, "completion_tokens": 60}),
             ])
 
 HTTPServer(("127.0.0.1", PORT), H).serve_forever()

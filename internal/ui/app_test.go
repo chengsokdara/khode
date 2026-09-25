@@ -218,7 +218,7 @@ func pumpModel(t *testing.T, m Model, evs []llm.Event) Model {
 	m.events = ch
 	m.streaming = true
 	for m.streaming {
-		msg := waitForEvents(ch, nil)()
+		msg := waitForEvents(ch, nil, nil)()
 		var cmd tea.Cmd
 		var next tea.Model
 		next, cmd = m.Update(msg)

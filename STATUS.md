@@ -10,6 +10,19 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Subagent activity streams into the TUI (2026-09-25):** a task call's
+in-flight child no longer runs invisibly (ROADMAP "Next" #1). The task tool
+forwards each child tool call through a new `SubagentConfig.Progress` hook
+(non-blocking, drop-on-full), the UI pumps it through the same
+`waitForEvents` select as stream events, and the active task call line grows
+a dim nested line — `⎿ explore · grep package · 1 calls` — upserted live and
+cleared when the report block lands. Verified in a live TTY via the tmux
+harness: fakeai now plays an explore-subagent scenario (grep round held
+~3s so the line is readable, then the report), mid-flight and final captures
+both checked. Sequential tool execution means at most one task runs at a
+time, so the UI tracks the active task by index+call id with no agent-side
+id plumbing.
+
 **Typed subagents (2026-09-25):** the `task` tool gained `subagent_type` and
 `description` parameters and a kind catalog (`internal/agent/subagent.go`):
 `general-purpose` keeps the current full-toolset behavior, while `explore`,
@@ -757,7 +770,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |
 |---|---|
-| 2026-09-25 | Typed subagents: `task` gains `subagent_type` (general-purpose / explore / context-gatherer / plan) + `description`; read-only kinds run read/glob/grep only with per-kind report caps and system sections | (this commit) |
+| 2026-09-25 | Live subagent activity: task tool forwards child tool calls via `SubagentConfig.Progress`; the task call block upserts a dim `⎿ kind · activity · N calls` line, cleared at the report (ROADMAP Next #1); fakeai plays an explore scenario for the tmux harness | (this commit) |
+| 2026-09-25 | Typed subagents: `task` gains `subagent_type` (general-purpose / explore / context-gatherer / plan) + `description`; read-only kinds run read/glob/grep only with per-kind report caps and system sections | 83ea1d0 |
 | 2026-09-25 | `WORKFLOW.md`: the build-and-verify loop written down — plan → implement+tests → live-TTY self-verify (`scripts/tmux-selftest.sh`) → gate → docs; tmux harness usage, fake-model extension, SGR-test lessons, gotchas | (this commit) |
 | 2026-09-25 | Self-test harness: `scripts/tmux-selftest.sh` + `scripts/fakeai.py` — khode driven against a scripted fake model in an isolated tmux TTY, frames captured plain + with SGRs; diff features verified live (expand/collapse, both bands, gutter numbers) | (this commit) |
 | 2026-09-25 | Band rendering fixed: short-form lipgloss resets stripped so the band covers whole rows (was first-token black), trailing-blank runs keep colors (chroma folds trailing newline), bands darkened to quiet stripes | (this commit) |

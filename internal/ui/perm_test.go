@@ -32,7 +32,7 @@ func startDialog(m *Model, call llm.ToolCall, risk perm.Risk) <-chan bool {
 func pumpUntilDialog(t *testing.T, m Model) Model {
 	t.Helper()
 	for m.perm == nil {
-		msg := waitForEvents(m.events, m.approvals.Requests())()
+		msg := waitForEvents(m.events, m.approvals.Requests(), nil)()
 		next, _ := m.Update(msg)
 		m = next.(Model)
 	}
@@ -82,7 +82,7 @@ func TestStalePermRequestDeclined(t *testing.T) {
 	m := newTestModel(t)
 	approved := startDialog(&m, llm.ToolCall{ID: "c1", Name: "bash", Input: json.RawMessage(`{}`)}, perm.RiskExec)
 
-	msg := waitForEvents(m.events, m.approvals.Requests())()
+	msg := waitForEvents(m.events, m.approvals.Requests(), nil)()
 	next, _ := m.Update(msg)
 	m = next.(Model)
 

@@ -48,4 +48,17 @@ echo
 echo "=== SGR capture of the diff rows (what the terminal paints) ==="
 tmux -L khv capture-pane -e -p -t main | grep -E "EDITED|48;5" | cat -v | head -6
 echo
+
+# Task scenario: round 4 calls task(explore); the subagent's live
+# activity line is held ~1s by the fake server, so a mid-flight capture
+# catches it before the report block replaces it.
+tmux -L khv send-keys -t main "now survey the repo" Enter
+sleep 1.7
+echo "=== mid-flight subagent capture (live activity line expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "task|⎿" || true
+sleep 3
+echo
+echo "=== final capture after the task report lands ==="
+tmux -L khv capture-pane -p -t main | tail -14
+echo
 echo "session left running: tmux -L khv attach -t main · cleanup: tmux -L khv kill-server"

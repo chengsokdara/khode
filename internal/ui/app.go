@@ -68,6 +68,10 @@ type uiMessage struct {
 	expanded  bool // truncated results and diffs: ctrl+o/click reveals all
 	final     bool // the closing assistant message of a turn: bright answer bar
 	history   bool
+	// subLine is the in-flight subagent's live activity under a task
+	// call line ("explore · read loop.go · 3 calls"); cleared when the
+	// task's result lands.
+	subLine string
 }
 
 // diffChange is a write-class call's change, banked at call time and
@@ -146,6 +150,17 @@ type Model struct {
 	// by call id: the result event carries only the summary line, so the
 	// git-style block pairs it with the diff computed at call time.
 	diffCalls map[string]diffChange
+
+	// taskProgress carries one-line subagent activity from the task
+	// tool's Exec (running on the agent goroutine) into Update; the
+	// sender drops lines rather than block the child. activeTask indexes
+	// the in-flight task call block (-1 when none) and activeTaskID its
+	// call id, so progress lands on the right line and clears at the
+	// result. Tool calls execute sequentially, so at most one task runs
+	// at a time.
+	taskProgress chan agent.SubagentProgress
+	activeTask   int
+	activeTaskID string
 
 	// todoNow is the agent's current todo item with done/total counts,
 	// mirrored from the todo tool so the status line can show live
@@ -243,6 +258,8 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 		partial:      new(strings.Builder),
 		partialThink: new(strings.Builder),
 		approvals:    agent.NewBridge(),
+		taskProgress: make(chan agent.SubagentProgress, 64),
+		activeTask:   -1,
 	}
 
 	m.registerTaskTool()
@@ -357,6 +374,13 @@ func (m *Model) registerTaskTool() {
 		Mode:      modeFn,
 		Approver:  m.approvals,
 		Hooks:     func() *hooks.Runner { return hooks.New(m.cfg.Hooks, m.workdir) },
+		Progress: func(p agent.SubagentProgress) {
+			// Best-effort feed: drop a line rather than stall the child.
+			select {
+			case m.taskProgress <- p:
+			default:
+			}
+		},
 	}))
 }
 
@@ -400,6 +424,10 @@ type streamEventMsg struct{ ev llm.Event }
 // streamClosedMsg arrives when the provider closed the event channel without
 // a terminal event (e.g. ctx cancelled before we drained it).
 type streamClosedMsg struct{}
+
+// taskProgressMsg is one line of a running subagent's activity, taken
+// from the taskProgress channel.
+type taskProgressMsg agent.SubagentProgress
 
 // compactDoneMsg carries the outcome of a manual /compact run.
 type compactDoneMsg struct {
@@ -449,6 +477,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamClosedMsg:
 		return m, m.finishStream()
+
+	case taskProgressMsg:
+		if m.activeTask < 0 || m.activeTask >= len(m.messages) {
+			return m, m.pump()
+		}
+		blk := m.messages[m.activeTask]
+		blk.subLine = fmt.Sprintf("%s · %s · %d calls", msg.Kind, msg.Activity, msg.Calls)
+		blk.rendered = "" // drop the block cache so the line re-renders
+		m.messages[m.activeTask] = blk
+		return m, m.pump()
 
 	case compactDoneMsg:
 		switch {
@@ -945,9 +983,11 @@ func (m Model) helpLine() string {
 
 // --- streaming -------------------------------------------------------------
 
-// waitForEvents blocks until either the stream produces an event or the
-// approval bridge has a question; whichever the agent loop offers first.
-func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request) tea.Cmd {
+// waitForEvents blocks until either the stream produces an event, the
+// approval bridge has a question, or a subagent reports activity;
+// whichever the agent loop offers first. A nil channel never fires, so
+// callers opt out by passing nil.
+func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request, prog <-chan agent.SubagentProgress) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case ev, ok := <-ch:
@@ -960,13 +1000,16 @@ func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request) tea.Cmd {
 				return nil
 			}
 			return permRequestMsg{req: req}
+		case p := <-prog:
+			return taskProgressMsg(p)
 		}
 	}
 }
 
-// pump schedules the next poll of the stream and the approval bridge.
+// pump schedules the next poll of the stream, the approval bridge, and
+// the subagent activity feed.
 func (m *Model) pump() tea.Cmd {
-	return waitForEvents(m.events, m.approvals.Requests())
+	return waitForEvents(m.events, m.approvals.Requests(), m.taskProgress)
 }
 
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
@@ -1008,9 +1051,26 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		m.messages = append(m.messages, uiMessage{
 			role: llm.RoleAssistant, kind: kindToolCall, raw: formatToolCall(e.ToolCall),
 		})
+		if e.Name == "task" {
+			// The child reports through the progress feed while it runs;
+			// sequential execution means at most one task is in flight.
+			m.activeTask = len(m.messages) - 1
+			m.activeTaskID = e.ID
+		}
 		return tea.Batch(m.pump(), m.flush())
 
 	case llm.ToolResultEvent:
+		if e.CallID == m.activeTaskID {
+			// The report block itself is the finished feedback: drop the
+			// live activity line.
+			if m.activeTask >= 0 && m.activeTask < len(m.messages) {
+				blk := m.messages[m.activeTask]
+				blk.subLine = ""
+				blk.rendered = ""
+				m.messages[m.activeTask] = blk
+			}
+			m.activeTask, m.activeTaskID = -1, ""
+		}
 		if e.Name == "todo" && !e.IsError {
 			m.upsertTodoPanel(m.todoList())
 			return tea.Batch(m.pump(), m.flush())
@@ -1237,6 +1297,7 @@ func (m *Model) finishStream() tea.Cmd {
 	m.streaming = false
 	m.events = nil
 	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0
+	m.activeTask, m.activeTaskID = -1, ""
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
@@ -1615,6 +1676,11 @@ func (m *Model) block(i int, width int) string {
 	switch {
 	case msg.kind == kindToolCall:
 		out = toolCallBlock(msg.raw, width)
+		if msg.subLine != "" {
+			// The in-flight subagent's latest activity, dim under the
+			// call line; the report block replaces it when the task ends.
+			out += "\n" + dimStyle.Render("  ⎿ "+clip(msg.subLine, width-6))
+		}
 	case msg.kind == kindDiff:
 		out = diffBlock(msg.raw, msg.diff, msg.path, width, msg.expanded)
 	case msg.kind == kindTodo:

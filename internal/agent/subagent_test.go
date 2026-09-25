@@ -156,3 +156,70 @@ func TestClipTaskResultPerKindCap(t *testing.T) {
 		t.Fatalf("short report clipped: %q", short)
 	}
 }
+
+func TestTaskToolReportsProgress(t *testing.T) {
+	// Each child tool call becomes one progress line carrying the kind
+	// label, a flattened activity, and the running call count.
+	p := &fakeProvider{responses: [][]llm.Event{
+		{
+			llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "o1", Name: "task",
+				Input: json.RawMessage(`{"prompt":"find TODOs","subagent_type":"explore"}`)}},
+		},
+		{
+			llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "s1", Name: "grep",
+				Input: json.RawMessage(`{"pattern":"TODO"}`)}},
+		},
+		{
+			llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "s2", Name: "read",
+				Input: json.RawMessage(`{"path":"internal/agent/loop.go"}`)}},
+		},
+		{
+			llm.TextDeltaEvent{Text: "found the marks."},
+		},
+		{
+			llm.TextDeltaEvent{Text: "done"},
+		},
+	}}
+	r, _ := newTestRunner(t, p, nil)
+	var got []SubagentProgress
+	tt := NewTaskTool(SubagentConfig{
+		Provider:  p,
+		Workdir:   t.TempDir(),
+		Model:     func() string { return "test-model" },
+		MaxTokens: func() int { return 100 },
+		Progress:  func(sp SubagentProgress) { got = append(got, sp) },
+	})
+	r.Tools.Register(tt)
+
+	res, _ := callTask(t, r, "x")
+	if res.IsError {
+		t.Fatalf("task failed: %s", res.Content)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d progress lines, want 2: %+v", len(got), got)
+	}
+	if got[0].Kind != "explore" || got[0].Activity != "grep TODO" || got[0].Calls != 1 {
+		t.Errorf("got[0] = %+v", got[0])
+	}
+	if got[1].Activity != "read internal/agent/loop.go" || got[1].Calls != 2 {
+		t.Errorf("got[1] = %+v", got[1])
+	}
+}
+
+func TestProgressLineFlattensArgs(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"bash", `{"command":"go test ./internal/agent\n"}`, "bash go test ./internal/agent"},
+		{"grep", `{"pattern":"TODO"}`, "grep TODO"},
+		{"read", `{"path":"a/b.go"}`, "read a/b.go"},
+		{"shapeless", `{"items":[]}`, "shapeless"},
+	}
+	for _, c := range cases {
+		if got := progressLine(c.name, json.RawMessage(c.input)); got != c.want {
+			t.Errorf("progressLine(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

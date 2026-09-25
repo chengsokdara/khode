@@ -68,9 +68,14 @@ items and update **Next** here when the plan moves (see `RULES.md`);
 
 Backlog (no committed order):
 
-1. Stream subagent activity into the TUI instead of hiding it.
+1. ~~Stream subagent activity into the TUI instead of hiding it.~~
+   (done — task tool progress feeds a live nested line under the call)
 2. MCP: re-list tools on `tools/list_changed`; resources/prompts.
 3. Hooks: feed post_tool output to the model as feedback.
 4. OpenAI tool-call unit parity for MCP edge cases as they surface.
 5. Khode /terminal-setup: write the Terminal.app/iTerm2 shift+enter
    mapping khode's alt+enter fallback already picks up.
+6. Subagents, continued: automatic new-session context gatherer and
+   `Runner.Preface` (in flight this cycle); then parallel read-only
+   fan-out, user-defined agents (`~/.khode/agents/*.md`), a
+   code-reviewer kind, and an `/agents` overview command.
