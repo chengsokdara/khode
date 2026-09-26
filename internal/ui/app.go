@@ -974,25 +974,37 @@ func (m Model) chatView() string {
 func (m Model) messageViewport(rows int) (string, []int) {
 	var lines []string
 	lineOf := make([]int, 0, len(m.messages))
-	appendBlock := func(i int) {
+	appendBlock := func(i, prev int) {
 		if len(lines) > 0 {
-			lines = append(lines, "", "")
-			lineOf = append(lineOf, -1, -1)
+			// A tool result hangs directly under its call — the ⎿
+			// belongs to the ⏺ above it, not two blank rows away;
+			// everything else keeps the two-line breathing room.
+			blanks := 2
+			if prev >= 0 && resultHugsCall(m.messages[prev], m.messages[i]) {
+				blanks = 0
+			}
+			for range blanks {
+				lines = append(lines, "")
+				lineOf = append(lineOf, -1)
+			}
 		}
 		for _, l := range strings.Split(m.block(i, m.printWidth()), "\n") {
 			lines = append(lines, l)
 			lineOf = append(lineOf, i)
 		}
 	}
+	prev := -1
 	for i := range m.messages {
 		if m.messages[i].streaming {
 			continue // the live edge paints these below
 		}
-		appendBlock(i)
+		appendBlock(i, prev)
+		prev = i
 	}
 	for i := range m.messages {
 		if m.messages[i].streaming {
-			appendBlock(i)
+			appendBlock(i, prev)
+			prev = i
 		}
 	}
 	if len(lines) == 0 {
@@ -1005,6 +1017,16 @@ func (m Model) messageViewport(rows int) (string, []int) {
 	start = max(0, min(start, len(lines)-1))
 	end := min(start+rows, len(lines))
 	return strings.Join(lines[start:end], "\n"), lineOf[start:end]
+}
+
+// resultHugsCall reports whether block cur is the outcome of the tool
+// call before it: results and change diffs hang directly under their ⏺
+// line, one visual unit, instead of drifting two blank rows away.
+func resultHugsCall(prev, cur uiMessage) bool {
+	if prev.kind != kindToolCall {
+		return false
+	}
+	return cur.kind == kindToolResult || cur.kind == kindDiff
 }
 
 // helpLine renders the bottom key reference: key names faint cyan,

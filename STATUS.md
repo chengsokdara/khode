@@ -10,6 +10,15 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Tool results hug their call lines (2026-09-26):** the viewport treated
+every block pair to the same two-blank-line separator, so a tool's `⎿`
+result landed two blank rows under its `⏺` call — reading as unrelated
+blocks during agentic runs. `messageViewport` is now pair-aware: a
+result or change diff immediately following its call hangs directly
+under it (one visual unit, the way the ⎿ grammar always implied);
+everything else keeps the two-line breathing room. Pinned by a viewport
+test and verified in the tmux harness.
+
 **Animated header rule + streaming-cursor wrap fix (2026-09-26):** the
 header's horizontal rule now shimmers while the agent works — a bright
 cyan band travels along the quiet border teal on the breath clock (same
@@ -843,6 +852,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-26 | Tool results and diffs hang directly under their `⏺` call lines (pair-aware viewport spacing) instead of two blank rows below | (this commit) |
 | 2026-09-26 | Traveling-shimmer header rule while the agent works + streaming-cursor wrap fix (cursor hugs the text; kills the thin-bar/thick-bar artifact) | (this commit) |
 | 2026-09-26 | Icon packs (`icons`: auto/nerd/ascii, per-tool nerd marks), icon + role label attribution on thinking/assistant blocks, loud red turn errors, and the breathing working animation (cyan→mint sine tint, live phase verbs, pulsing cursor + input border) — `internal/ui/icons.go` + config/settings knob | (this commit) |
 | 2026-09-25 | `subagent_model` config + /settings row: task subagents and the gatherer can run a cheaper model; empty = main model | (this commit) |

@@ -1420,3 +1420,41 @@ func TestHeaderRuleShimmer(t *testing.T) {
 		t.Error("streaming rule band did not travel: left edge still bright")
 	}
 }
+
+// A tool result hangs directly under its call line — the ⎿ belongs to
+// the ⏺ above it — while unrelated blocks keep the two-line gap.
+func TestToolResultHugsCall(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.messages = append(m.messages,
+		uiMessage{role: llm.RoleAssistant, kind: kindToolCall, raw: "bash npm install"},
+		uiMessage{role: llm.RoleTool, kind: kindToolResult, raw: "added 2 packages"},
+		uiMessage{role: llm.RoleAssistant, kind: kindText, raw: "done deal", final: true},
+	)
+	vp, _ := m.messageViewport(40)
+	lines := strings.Split(vp, "\n")
+	callIdx, resIdx, textIdx := -1, -1, -1
+	for i, l := range lines {
+		s := stripANSI(l)
+		switch {
+		case strings.Contains(s, "⏺ bash npm install"):
+			callIdx = i
+		case strings.Contains(s, "⎿  added 2 packages"):
+			resIdx = i
+		case strings.Contains(s, "khode"):
+			textIdx = i
+		}
+	}
+	if callIdx < 0 || resIdx < 0 || textIdx < 0 {
+		t.Fatalf("blocks missing from the viewport: call=%d result=%d text=%d",
+			callIdx, resIdx, textIdx)
+	}
+	if resIdx != callIdx+1 {
+		t.Errorf("result sits %d rows under its call, want directly under", resIdx-callIdx)
+	}
+	if textIdx != resIdx+3 { // result row + two separator blanks
+		t.Errorf("text block sits %d rows after the result, want two blank rows between",
+			textIdx-resIdx)
+	}
+}
