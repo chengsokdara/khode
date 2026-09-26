@@ -10,6 +10,22 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Animated header rule + streaming-cursor wrap fix (2026-09-26):** the
+header's horizontal rule now shimmers while the agent works — a bright
+cyan band travels along the quiet border teal on the breath clock (same
+wall-clock phase as the status mark, cursor, and input border; idle stays
+static dim). Same pass fixed the "thin line over a thick line" artifact
+under a streaming reply: the answer bar pads every row to the block
+width, and appending the stream cursor behind that padding pushed it one
+cell past the viewport's content width, where the terminal wrapped it
+onto a bare bright `▌` row at column 0 (the dim `┃` of the text row above
+read as the "thin line"). `renderAnswer` now trims the padded tail
+(ANSI-aware — lipgloss emits every padding cell as its own style span)
+before appending the cursor, so it hugs the reply's last word like Claude
+Code's. Root-caused with a scripted long-stream server at full terminal
+width (repro: bare `▌` row in the captured frame; fix: cursor inline, no
+bare rows).
+
 **Icon packs, message attribution, breathing animation (2026-09-26):** the
 chat got a real visual grammar. `internal/ui/icons.go` is the single glyph
 table with three packs behind a new `icons` config knob (`/settings` row,
@@ -827,6 +843,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-26 | Traveling-shimmer header rule while the agent works + streaming-cursor wrap fix (cursor hugs the text; kills the thin-bar/thick-bar artifact) | (this commit) |
 | 2026-09-26 | Icon packs (`icons`: auto/nerd/ascii, per-tool nerd marks), icon + role label attribution on thinking/assistant blocks, loud red turn errors, and the breathing working animation (cyan→mint sine tint, live phase verbs, pulsing cursor + input border) — `internal/ui/icons.go` + config/settings knob | (this commit) |
 | 2026-09-25 | `subagent_model` config + /settings row: task subagents and the gatherer can run a cheaper model; empty = main model | (this commit) |
 | 2026-09-25 | Automatic first-prompt context gatherer: read-only sweep before the first turn of a fresh session, live `◆ gathering context` block → durable context-brief block, failure-safe, esc stops; `/settings` toggle (`gather_context`) | (this commit) |

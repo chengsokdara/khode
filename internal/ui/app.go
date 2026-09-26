@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -792,8 +793,26 @@ func (m Model) header() string {
 		hdrChipX = lipgloss.Width(left) + gap + lipgloss.Width(right) - lipgloss.Width(chip)
 		hdrChipW = lipgloss.Width(chip)
 	}
-	rule := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", max(0, m.width)))
+	rule := m.headerRule()
 	return left + strings.Repeat(" ", gap) + right + "\n" + rule
+}
+
+// headerRule is the header's horizontal rule: quiet border teal while
+// the app is idle; while a turn runs, a bright band travels along it on
+// the breath clock (the same wall-clock phase the status mark, cursor,
+// and input border ride — no extra tick machinery).
+func (m Model) headerRule() string {
+	w := max(0, m.width)
+	if !m.streaming || w == 0 {
+		return lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", w))
+	}
+	travel := math.Mod(float64(m.breathElapsed())/float64(breathPeriod), 1)
+	var b strings.Builder
+	for i := 0; i < w; i++ {
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(shimmerColor(float64(i)/float64(w), travel)).Render("─"))
+	}
+	return b.String()
 }
 
 // setupHint renders the chat frame's persistent setup banner: while a
@@ -1987,6 +2006,11 @@ var ansiRe = regexp.MustCompile(`\x1b\[[0-9;:]*[a-zA-Z]`)
 
 func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
+// trailingPadRe matches the padded tail of a bar-rendered row: runs of
+// ANSI-wrapped whitespace, the way lipgloss pads each row to the block
+// width (every padding cell arrives as its own style span).
+var trailingPadRe = regexp.MustCompile(`(?:\x1b\[[0-9;:]*m\s*)+$`)
+
 // renderAnswer renders assistant prose on its answer bar. Trailing rows
 // that carry nothing but the bar are dropped first: raw text mid-stream
 // often ends inside an unfinished markdown construct (an unclosed code
@@ -1994,7 +2018,11 @@ func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 // final row — left alone it paints a stray bar-only line that reads as
 // a second vertical rule beside the text. A raw that is only
 // whitespace renders nothing at all. While streaming, the cursor rides
-// the breath's tint instead of static cyan.
+// the breath's tint, appended after trimming the last row's padded
+// tail: the bar style pads every row to the block width, and a cursor
+// appended behind that padding lands one cell past the viewport's
+// content width, where it wraps onto a bare cursor row at column 0 —
+// the thin-bar-over-thick-bar artifact under a streaming reply.
 func renderAnswer(raw string, width int, bar lipgloss.Style, streaming bool, elapsed time.Duration) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
@@ -2002,6 +2030,9 @@ func renderAnswer(raw string, width int, bar lipgloss.Style, streaming bool, ela
 	lines := strings.Split(bar.Width(width).Render(renderMarkdown(raw, width-answerBarOverhead)), "\n")
 	for len(lines) > 1 && strings.TrimSpace(stripANSI(lines[len(lines)-1])) == "┃" {
 		lines = lines[:len(lines)-1]
+	}
+	if streaming {
+		lines[len(lines)-1] = trailingPadRe.ReplaceAllString(lines[len(lines)-1], "")
 	}
 	out := strings.Join(lines, "\n")
 	if streaming {

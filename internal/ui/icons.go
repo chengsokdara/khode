@@ -158,6 +158,23 @@ func breathStyle(elapsed time.Duration) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(breathColor(elapsed))
 }
 
+// shimmerColor tints one cell of the header's animated rule: a bright
+// band traveling along the quiet border teal, fading smoothly into it
+// on both sides. pos is the cell's position around the rule (0..1) and
+// travel is the band center's position at this instant (0..1); the
+// distance wraps so the band flows across the rule's ends.
+func shimmerColor(pos, travel float64) color.Color {
+	d := math.Abs(pos - travel)
+	if d > 0.5 {
+		d = 1 - d
+	}
+	k := math.Cos(d * math.Pi * 3) // smooth bump, half-width ⅙ of the rule
+	if k < 0 {
+		k = 0
+	}
+	return lipgloss.Color(lerpHex(hexBorder, hexCyanHi, k))
+}
+
 // --- the status line's live phase --------------------------------------------
 
 // toolVerbs names what a tool call is doing, for the status line's verb.

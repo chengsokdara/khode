@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"khode/internal/agent"
 	"khode/internal/config"
@@ -1363,5 +1364,59 @@ func TestNerdGlyphsAreSingleRunes(t *testing.T) {
 		if n := len([]rune(g)); n != 1 {
 			t.Errorf("nerd glyph %q = %d runes, want 1", g, n)
 		}
+	}
+}
+
+// The streaming cursor must hug the reply's text, not the bar block's
+// padded edge: the bar style pads every row to the block width, and a
+// cursor appended behind that padding lands one cell past the viewport's
+// content width, where it wraps onto a bare cursor row at column 0 —
+// the thin-bar-over-thick-bar artifact under a streaming reply.
+func TestStreamingCursorHugsText(t *testing.T) {
+	raw := "Heroicons is installed. Now let me write the App.tsx and replace the CSS " +
+		"with a styled Todo app. Let me also remove the unused default styles."
+	out := renderAnswer(raw, 60, answerBar, true, 0)
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > 60 {
+			t.Errorf("row %d width = %d, over the block width (wraps the cursor): %q", i, w, l)
+		}
+		if bare := strings.TrimSpace(stripANSI(l)); bare == "▌" {
+			t.Errorf("row %d is a bare cursor row: %q", i, l)
+		}
+	}
+	if last := lines[len(lines)-1]; !strings.HasSuffix(stripANSI(last), "▌") {
+		t.Errorf("last row = %q, want the text followed by the cursor", last)
+	}
+}
+
+// The header's rule is a quiet teal line while idle; while a turn runs
+// a bright band travels along it on the breath clock — at the stroke's
+// start the peak sits at the left edge, half a period later it has
+// moved to the middle.
+func TestHeaderRuleShimmer(t *testing.T) {
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = next.(Model)
+
+	idle := m.headerRule()
+	if !strings.Contains(idle, "38;2;36;84;78") || strings.Contains(idle, "94;234;212") {
+		t.Errorf("idle rule = %q, want uniform border teal", clip(idle, 60))
+	}
+
+	m.streaming = true
+	m.turnStart = time.Now() // travel ≈ 0: the band's peak is at cell 0
+	start := m.headerRule()
+	if !strings.HasPrefix(start, "\x1b[38;2;94;234;212m") {
+		t.Errorf("streaming rule = %q, want the bright band at the left edge", clip(start, 60))
+	}
+
+	m.turnStart = time.Now().Add(-breathPeriod / 2) // travel 0.5: peak mid-rule
+	mid := m.headerRule()
+	if !strings.Contains(mid, "94;234;212") {
+		t.Error("streaming rule lost the traveling band half a period in")
+	}
+	if strings.HasPrefix(mid, "\x1b[38;2;94;234;212m") {
+		t.Error("streaming rule band did not travel: left edge still bright")
 	}
 }
