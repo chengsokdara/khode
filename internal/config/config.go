@@ -115,6 +115,11 @@ type Config struct {
 	// context gatherer run on (a faster/cheaper one fits their narrow
 	// jobs). Empty means the main model.
 	SubagentModel string `json:"subagent_model,omitempty"`
+	// Icons selects the glyph pack the UI draws its marks from: "auto"
+	// (safe Unicode symbols), "nerd" (Nerd Font icons, needs a patched
+	// terminal font), or "ascii" (plain text for dumb terminals).
+	// Empty means auto.
+	Icons string `json:"icons,omitempty"`
 
 	// override is the session-scoped --model flag value; never persisted.
 	override string
@@ -133,6 +138,31 @@ func (c *Config) SubModel() string { return strings.TrimSpace(c.SubagentModel) }
 
 // SetSubagentModel persists the subagent model override; empty clears it.
 func (c *Config) SetSubagentModel(name string) { c.SubagentModel = strings.TrimSpace(name) }
+
+// Icon-set values accepted by SetIcons; IconAuto is the default.
+const (
+	IconAuto  = "auto"
+	IconNerd  = "nerd"
+	IconASCII = "ascii"
+)
+
+// IconSet returns the configured glyph pack, "auto" when unset.
+func (c *Config) IconSet() string {
+	switch strings.TrimSpace(c.Icons) {
+	case IconNerd, IconASCII:
+		return strings.TrimSpace(c.Icons)
+	}
+	return IconAuto
+}
+
+// SetIcons persists the glyph pack choice; anything but nerd/ascii
+// snaps back to auto so a hand-edited value can't wedge the UI.
+func (c *Config) SetIcons(set string) {
+	if set != IconNerd && set != IconASCII {
+		set = IconAuto
+	}
+	c.Icons = set
+}
 
 // Dir returns khode's state directory (~/.khode).
 func Dir() string {
@@ -253,6 +283,7 @@ type rawConfig struct {
 	Hooks           Hooks                     `json:"hooks"`
 	GatherContext   *bool                     `json:"gather_context"`
 	SubagentModel   string                    `json:"subagent_model"`
+	Icons           string                    `json:"icons"`
 	Model           string                    `json:"model"` // legacy single-model schema
 }
 
@@ -278,6 +309,7 @@ func (r rawConfig) apply() *Config {
 		cfg.GatherContext = r.GatherContext
 	}
 	cfg.SubagentModel = strings.TrimSpace(r.SubagentModel)
+	cfg.Icons = r.Icons
 	if len(r.CustomProviders) > 0 {
 		cfg.CustomProviders = r.CustomProviders
 		// Snap the active name to the stored key's casing so it lines

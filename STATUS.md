@@ -10,6 +10,34 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Icon packs, message attribution, breathing animation (2026-09-26):** the
+chat got a real visual grammar. `internal/ui/icons.go` is the single glyph
+table with three packs behind a new `icons` config knob (`/settings` row,
+cycles auto → nerd → ascii): **auto** rides safe width-one Unicode (the old
+`❯ ✻ ⏺ ◆` family, now routed through the table), **nerd** swaps in Nerd
+Font icons — sparkles for khode, brain for thinking, per-tool marks (book
+read, pencil edit, file-plus write, console bash, folder-search glob,
+magnify grep, account-group task, compass plan) — codepoints pinned from
+Nerd Fonts v3's glyphnames.json, and **ascii** degrades to plain
+punctuation for dumb terminals. Every message type now self-identifies:
+thinking blocks and assistant messages carry an icon + role label header
+(`✻ thinking`, `✦ khode` — the assistant mark breathing while its block
+streams, bright cyan on the final answer, dim mid-turn), tool calls draw
+their per-tool mark, turn-level errors render loud (red bold `✗ error: …`,
+not the dim italic whisper they shared with system notices), and system
+notices/gather/context/todo headers all draw from the table. The working
+animation is a **breathing glow**: the status line's MiniDot is replaced by
+the live phase's own glyph tinted cyan→mint on a ~2.2 s sine (`breathColor`
+phased off `turnStart` — the existing spinner tick re-renders the live
+region, so zero new tick plumbing), and the verb tracks what khode is
+actually doing ("thinking", "reading", "editing", "running", "delegating",
+"gathering context", "responding", "working") via a `Model.phase` field set
+by the stream events. The stream cursor `▌` and the input border ride the
+same breath. Blocks cache their render, so cycling the pack drops the
+cache (`invalidateRendered`) and the whole scrollback repaints. Verified by
+tests (pack switching, per-tool marks, width-1 ascii guarantees, phase
+verbs, error tint) and the tmux harness.
+
 **Subagent model override (2026-09-25):** `subagent_model` in config.json
 (+ a `/settings` editor row) routes task subagents and the gatherer onto a
 faster/cheaper model while the main conversation keeps the main model;
@@ -799,6 +827,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-26 | Icon packs (`icons`: auto/nerd/ascii, per-tool nerd marks), icon + role label attribution on thinking/assistant blocks, loud red turn errors, and the breathing working animation (cyan→mint sine tint, live phase verbs, pulsing cursor + input border) — `internal/ui/icons.go` + config/settings knob | (this commit) |
 | 2026-09-25 | `subagent_model` config + /settings row: task subagents and the gatherer can run a cheaper model; empty = main model | (this commit) |
 | 2026-09-25 | Automatic first-prompt context gatherer: read-only sweep before the first turn of a fresh session, live `◆ gathering context` block → durable context-brief block, failure-safe, esc stops; `/settings` toggle (`gather_context`) | (this commit) |
 | 2026-09-25 | `Runner.Preface` injects a `<task-context>` brief message ahead of the user turn; replay renders it as a dim collapsible context-brief block | (this commit) |

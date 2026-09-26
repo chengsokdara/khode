@@ -156,9 +156,10 @@ func modeAccent(mo perm.Mode) lipgloss.Style {
 // terminal supports. It is reserved for the wordmark; everywhere else
 // uses flat palette colors.
 func gradient(s, from, to string) string {
-	f, errF := parseHex(from)
-	t, errT := parseHex(to)
-	if errF != nil || errT != nil {
+	if _, err := parseHex(from); err != nil {
+		return s
+	}
+	if _, err := parseHex(to); err != nil {
 		return s
 	}
 	runes := []rune(s)
@@ -169,11 +170,7 @@ func gradient(s, from, to string) string {
 		if len(runes) > 1 {
 			frac = float64(i) / float64(len(runes)-1)
 		}
-		hex := fmt.Sprintf("#%02x%02x%02x",
-			u8(f[0]+(t[0]-f[0])*frac),
-			u8(f[1]+(t[1]-f[1])*frac),
-			u8(f[2]+(t[2]-f[2])*frac))
-		b.WriteString(style.Foreground(lipgloss.Color(hex)).Render(string(r)))
+		b.WriteString(style.Foreground(lipgloss.Color(lerpHex(from, to, frac))).Render(string(r)))
 	}
 	return b.String()
 }

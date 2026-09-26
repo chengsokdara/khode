@@ -144,6 +144,11 @@ type Model struct {
 	streaming bool
 	cancel    context.CancelFunc
 	events    <-chan llm.Event
+	// phase is what the in-flight turn is doing right now ("thinking",
+	// "responding", or the running tool's name): it drives the status
+	// line's live verb and the breathing glyph. "" means between phases
+	// — "working".
+	phase string
 	// partial accumulates the in-flight reply and partialThink the
 	// in-flight thinking. Both are pointers because Model is copied by
 	// value through Update; a value Builder would trip its
@@ -837,7 +842,8 @@ func (m Model) chatView() string {
 	status := m.statusLine()
 	border := inputBorder
 	if m.streaming {
-		border = inputBorderLive // the frame answers the stream in kind
+		// The frame answers the stream in kind, breathing with it.
+		border = inputBorderLive.BorderForeground(breathColor(m.breathElapsed()))
 	}
 	inputBox := border.Render(m.textarea.View())
 	help := m.helpLine()
@@ -1050,6 +1056,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 	}
 	switch e := ev.(type) {
 	case llm.ThinkingDeltaEvent:
+		m.phase = "thinking"
 		sealed := m.ensureStreamingBlock(kindThinking)
 		m.partialThink.WriteString(e.Text)
 		if idx := m.streamingIndex(); idx >= 0 {
@@ -1058,6 +1065,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		return tea.Batch(m.pump(), m.flushIf(sealed))
 
 	case llm.TextDeltaEvent:
+		m.phase = "responding"
 		sealed := m.ensureStreamingBlock(kindText)
 		m.partial.WriteString(e.Text)
 		if idx := m.streamingIndex(); idx >= 0 {
@@ -1066,6 +1074,7 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		return tea.Batch(m.pump(), m.flushIf(sealed))
 
 	case llm.ToolCallEvent:
+		m.phase = e.Name
 		m.sealStreamingText()
 		if e.Name == "todo" {
 			// The checklist panel is the feedback for todo updates; a
@@ -1327,6 +1336,7 @@ func (m *Model) markFinalAnswer() {
 // ready state. Session writes happened in the agent loop.
 func (m *Model) finishStream() tea.Cmd {
 	m.streaming = false
+	m.phase = ""
 	m.events = nil
 	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0
 	m.activeTask, m.activeTaskID = -1, ""
@@ -1446,6 +1456,7 @@ func (m *Model) startTurnWith(input, preface string) tea.Cmd {
 	m.cancel = cancel
 	m.events = ch
 	m.streaming = true
+	m.phase = ""
 	m.lastErr = ""
 	m.turnStart = time.Now()
 	m.partial.Reset()
@@ -1495,6 +1506,7 @@ func (m *Model) startGather(input string) tea.Cmd {
 	m.events = ch
 	m.streaming = true
 	m.gathering = true
+	m.phase = ""
 	m.lastErr = ""
 	m.turnStart = time.Now()
 	m.gatherText = new(strings.Builder)
@@ -1792,11 +1804,11 @@ func (m *Model) statusLine() string {
 	switch {
 	case m.streaming:
 		elapsed := time.Since(m.turnStart).Truncate(time.Second)
-		label := "working"
-		if m.gathering {
-			label = "gathering context"
-		}
-		state = m.spinner.View() + statusStyle.Render(label) +
+		// The breathing mark replaces the MiniDot here: the phase's own
+		// glyph swells cyan→mint on the turn clock while the verb names
+		// what the turn is doing right now.
+		state = breathStyle(m.breathElapsed()).Render(m.statusGlyph()+" ") +
+			statusStyle.Render(m.phaseVerb()) +
 			dimStyle.Render(" · "+elapsed.String())
 		if m.todoNow != "" {
 			state += statusStyle.Render(" · ❯ " + clip(m.todoNow, max(12, m.width/4)))
@@ -1809,9 +1821,9 @@ func (m *Model) statusLine() string {
 		}
 		state += dimStyle.Render(" · esc to stop")
 	case m.lastErr != "":
-		state = errorStyle.Render("✗ " + clip(m.lastErr, max(20, m.width/2)))
+		state = errorStyle.Render(m.icons().err + " " + clip(m.lastErr, max(20, m.width/2)))
 	default:
-		state = okStyle.Render("● ready")
+		state = okStyle.Render(m.icons().ready + " ready")
 		if m.lastTurn > 0 {
 			state += dimStyle.Render(" · last turn " + m.lastTurn.Truncate(time.Second).String())
 		}
@@ -1864,7 +1876,7 @@ func (m *Model) block(i int, width int) string {
 	var out string
 	switch {
 	case msg.kind == kindToolCall:
-		out = toolCallBlock(msg.raw, width)
+		out = m.toolCallBlock(msg.raw, width)
 		if msg.subLine != "" {
 			// The in-flight subagent's latest activity, dim under the
 			// call line; the report block replaces it when the task ends.
@@ -1873,13 +1885,13 @@ func (m *Model) block(i int, width int) string {
 	case msg.kind == kindDiff:
 		out = diffBlock(msg.raw, msg.diff, msg.path, width, msg.expanded)
 	case msg.kind == kindTodo:
-		out = todoPanelBlock(msg.raw, width)
+		out = m.todoPanelBlock(msg.raw, width)
 	case msg.kind == kindContext:
-		out = contextBlock(msg.raw, width, msg.expanded)
+		out = m.contextBlock(msg.raw, width, msg.expanded)
 	case msg.kind == kindGather:
-		out = gatherBlock(msg, width)
+		out = m.gatherBlock(msg, width)
 	case msg.kind == kindThinking:
-		out = thinkStyle.Width(width).Render("✻ " + msg.raw)
+		out = m.thinkingBlock(msg, width)
 	case msg.kind == kindToolResult:
 		if msg.expanded {
 			out = resultDetailBlock(msg.raw, msg.isErr, width)
@@ -1903,21 +1915,29 @@ func (m *Model) block(i int, width int) string {
 		for i, l := range wlines {
 			wlines[i] = clip(l, width-2)
 		}
-		out = userBar.Width(width).Render(userMark.Render("❯ ") + strings.Join(wlines, "\n  "))
+		out = userBar.Width(width).Render(userMark.Render(m.icons().user+" ") + strings.Join(wlines, "\n  "))
 	case msg.role == llm.RoleAssistant:
-		if msg.streaming {
-			out = renderAnswer(msg.raw, width, answerBar, true)
-		} else {
-			// Sealed prose rides the answer bar: bright cyan on the
-			// turn's final message, dim teal on mid-turn text.
-			bar := answerBar
-			if msg.final {
-				bar = answerBarFinal
-			}
-			out = renderAnswer(msg.raw, width, bar, false)
+		// Prose rides the answer bar under an attribution header: the
+		// spark mark (breathing while the block streams, bright on the
+		// turn's final message) over the dim role word. The bar beneath
+		// is bright cyan on the turn's final answer, dim teal mid-turn.
+		bar := answerBar
+		if msg.final {
+			bar = answerBarFinal
 		}
+		body := renderAnswer(msg.raw, width, bar, msg.streaming, m.breathElapsed())
+		if body == "" {
+			break // a just-opened block: no bare attribution line
+		}
+		out = m.agentHeader(msg.streaming, msg.final) + "\n" + body
 	default:
-		out = systemStyle.Width(width).Render("· " + msg.raw)
+		if strings.HasPrefix(msg.raw, "error: ") {
+			// A turn that died on an error is the loud end: red and
+			// bold, not a dim italic whisper.
+			out = errorStyle.Width(width).Render(m.icons().err + " " + msg.raw)
+		} else {
+			out = systemStyle.Width(width).Render(m.icons().system + " " + msg.raw)
+		}
 	}
 
 	// Streaming blocks re-render every frame as their raw grows, so
@@ -1973,8 +1993,9 @@ func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 // fence, a started list or heading), which glamour renders as an empty
 // final row — left alone it paints a stray bar-only line that reads as
 // a second vertical rule beside the text. A raw that is only
-// whitespace renders nothing at all.
-func renderAnswer(raw string, width int, bar lipgloss.Style, streaming bool) string {
+// whitespace renders nothing at all. While streaming, the cursor rides
+// the breath's tint instead of static cyan.
+func renderAnswer(raw string, width int, bar lipgloss.Style, streaming bool, elapsed time.Duration) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
 	}
@@ -1984,9 +2005,38 @@ func renderAnswer(raw string, width int, bar lipgloss.Style, streaming bool) str
 	}
 	out := strings.Join(lines, "\n")
 	if streaming {
-		out += streamCursor.Render("▌")
+		out += streamCursor.Foreground(breathColor(elapsed)).Render("▌")
 	}
 	return out
+}
+
+// agentHeader is the assistant's attribution line: the spark mark over
+// the dim role word. The mark breathes while the block streams, runs
+// bright cyan on the turn's final message, and stays dim mid-turn.
+func (m Model) agentHeader(streaming, final bool) string {
+	mark := m.icons().agent
+	var styled string
+	switch {
+	case streaming:
+		styled = breathStyle(m.breathElapsed()).Render(mark)
+	case final:
+		styled = toolStyle.Render(mark)
+	default:
+		styled = dimStyle.Render(mark)
+	}
+	return styled + dimStyle.Render(" khode")
+}
+
+// thinkingBlock renders the model's private reasoning: an icon + role
+// label header, the dim italic body under it. The icon breathes while
+// the phase is live and rests dim once the block seals.
+func (m Model) thinkingBlock(msg uiMessage, width int) string {
+	head := dimStyle.Render(m.icons().thinking + " thinking")
+	if msg.streaming {
+		head = breathStyle(m.breathElapsed()).Render(m.icons().thinking) +
+			dimStyle.Render(" thinking")
+	}
+	return head + "\n" + thinkStyle.Width(width).Render(msg.raw)
 }
 
 func humanTokens(n int64) string {
@@ -2142,8 +2192,13 @@ const contextPreviewLines = 4
 
 // gatherBlock renders the in-flight first-prompt context gatherer: a
 // cyan-headed live block whose subLine carries the sweep's latest read.
-func gatherBlock(msg uiMessage, width int) string {
-	out := toolStyle.Render("◆ gathering context")
+// The mark breathes while the sweep runs.
+func (m Model) gatherBlock(msg uiMessage, width int) string {
+	mark := m.icons().gather
+	out := toolStyle.Render(mark + " gathering context")
+	if msg.streaming {
+		out = breathStyle(m.breathElapsed()).Render(mark) + toolStyle.Render(" gathering context")
+	}
 	if msg.subLine != "" {
 		room := width - 24
 		if room < 12 {
@@ -2191,10 +2246,10 @@ func contextBriefLines(raw string) int {
 
 // contextBlock renders a replayed gatherer brief: dim, headed by its
 // origin, capped at contextPreviewLines until expanded.
-func contextBlock(raw string, width int, expanded bool) string {
+func (m Model) contextBlock(raw string, width int, expanded bool) string {
 	body := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(raw), "<task-context>"), "</task-context>")
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-	head := dimStyle.Render("◆ context brief · gathered for this task")
+	head := dimStyle.Render(m.icons().context + " context brief · gathered for this task")
 	if len(lines) == 1 && strings.TrimSpace(lines[0]) == "" {
 		lines = nil
 	}
@@ -2211,14 +2266,14 @@ func contextBlock(raw string, width int, expanded bool) string {
 	return out
 }
 
-// toolCallBlock renders a tool call two-tone: the ⏺ marker and tool
-// name in cyan, the arguments dim behind them.
-func toolCallBlock(raw string, width int) string {
+// toolCallBlock renders a tool call two-tone: the tool's mark and name
+// in cyan, the arguments dim behind them.
+func (m Model) toolCallBlock(raw string, width int) string {
 	name, args := raw, ""
 	if i := strings.IndexByte(raw, ' '); i >= 0 {
 		name, args = raw[:i], raw[i+1:]
 	}
-	out := toolStyle.Render("⏺ " + name)
+	out := toolStyle.Render(toolMark(m.icons(), name) + " " + name)
 	if args == "" {
 		return out
 	}
@@ -2250,7 +2305,7 @@ func summarizeToolResult(raw string) string {
 // todoPanelBlock draws the agent's task checklist as a bordered card:
 // a done/total title over one styled line per item, clipped to the
 // card's column budget.
-func todoPanelBlock(body string, width int) string {
+func (m Model) todoPanelBlock(body string, width int) string {
 	lim := max(16, min(width-6, 56))
 	lines := strings.Split(body, "\n")
 	done := 0
@@ -2267,7 +2322,7 @@ func todoPanelBlock(body string, width int) string {
 			styled[i] = todoPending.Render(line)
 		}
 	}
-	title := todoTitle.Render(fmt.Sprintf("◆ Tasks · %d/%d", done, len(lines)))
+	title := todoTitle.Render(fmt.Sprintf("%s Tasks · %d/%d", m.icons().todo, done, len(lines)))
 	return todoPanel.Render(
 		lipgloss.JoinVertical(lipgloss.Left, append([]string{title}, styled...)...))
 }

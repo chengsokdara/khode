@@ -14,6 +14,7 @@ import (
 	"khode/internal/tools"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // nameOnlyProvider satisfies Provider for tests that never stream.
@@ -200,7 +201,8 @@ func TestStatusLineShowsRetryNote(t *testing.T) {
 	if got := ansiStrip(m.statusLine()); strings.Contains(got, "retry") {
 		t.Errorf("retry note survived past the retry: %q", got)
 	}
-	if !strings.Contains(ansiStrip(m.statusLine()), "working") {
+	// The phase verb names the live phase; streaming prose is responding.
+	if !strings.Contains(ansiStrip(m.statusLine()), "responding") {
 		t.Error("streaming status lost the working state after a retry")
 	}
 }
@@ -503,7 +505,7 @@ func TestTodoReplayRendersFinalPanel(t *testing.T) {
 }
 
 // Thinking streams into its own styled block ahead of the answer: the
-// ✻ marker marks it, and the answer never mixes with the reasoning.
+// ✻ mark labels it, and the answer never mixes with the reasoning.
 func TestThinkingBlockSeparatesFromAnswer(t *testing.T) {
 	evs := []llm.Event{
 		llm.ThinkingDeltaEvent{Text: "weighing options"},
@@ -519,8 +521,8 @@ func TestThinkingBlockSeparatesFromAnswer(t *testing.T) {
 		switch {
 		case msg.kind == kindThinking:
 			sawThink = true
-			if !strings.Contains(out, "✻ weighing options") {
-				t.Errorf("thinking block = %q, want marker + reasoning", out)
+			if !strings.Contains(out, "✻ thinking") || !strings.Contains(out, "weighing options") {
+				t.Errorf("thinking block = %q, want mark + label + reasoning", out)
 			}
 		case msg.role == llm.RoleAssistant:
 			sawAnswer = true
@@ -552,7 +554,8 @@ func TestThinkingOnlyTurnRenders(t *testing.T) {
 	for i, msg := range m.messages {
 		if msg.kind == kindThinking {
 			found = true
-			if out := m.block(i, 80); !strings.Contains(out, "✻ just thinking") {
+			if out := m.block(i, 80); !strings.Contains(out, "✻ thinking") ||
+				!strings.Contains(out, "just thinking") {
 				t.Errorf("thinking block = %q", out)
 			}
 		}
@@ -1176,6 +1179,189 @@ func TestDiffGutterNumbers(t *testing.T) {
 	for i, w := range want {
 		if !strings.HasPrefix(lines[i], w) {
 			t.Errorf("line %d = %q, want prefix %q", i, lines[i], w)
+		}
+	}
+}
+
+// The icons setting repaints every block: the nerd pack swaps in Nerd
+// Font glyphs (per tool), ascii degrades to plain punctuation, and the
+// switch drops cached renders so old blocks redraw in the new pack.
+func TestIconPacksRepaint(t *testing.T) {
+	m := newTestModel(t)
+	m.messages = append(m.messages,
+		uiMessage{role: llm.RoleAssistant, kind: kindText, raw: "done deal", final: true},
+		uiMessage{role: llm.RoleAssistant, kind: kindThinking, raw: "mulling"},
+		uiMessage{role: llm.RoleAssistant, kind: kindToolCall, raw: "read main.go"},
+		uiMessage{role: "system", raw: "error: boom"},
+	)
+	for i := range m.messages {
+		m.messages[i].rendered = m.block(i, 80) // pre-cache in the default pack
+	}
+	if out := ansiStrip(m.block(0, 80)); !strings.Contains(out, "✦ khode") {
+		t.Errorf("default pack lost the assistant header: %q", out)
+	}
+
+	m.cfg.SetIcons(config.IconNerd)
+	m.invalidateRendered()
+	checks := []struct {
+		idx  int
+		want string
+		what string
+	}{
+		{0, packNerd.agent + " khode", "assistant header"},
+		{1, packNerd.thinking + " thinking", "thinking header"},
+		{2, packNerd.tools["read"] + " read", "per-tool mark"},
+		{3, packNerd.err + " error: boom", "error mark"},
+	}
+	for _, c := range checks {
+		if out := ansiStrip(m.block(c.idx, 80)); !strings.Contains(out, c.want) {
+			t.Errorf("nerd pack %s = %q, want it to contain %q", c.what, out, c.want)
+		}
+	}
+
+	m.cfg.SetIcons(config.IconASCII)
+	m.invalidateRendered()
+	for i := range m.messages {
+		m.messages[i].rendered = ""
+	}
+	checks = []struct {
+		idx  int
+		want string
+		what string
+	}{
+		{0, "* khode", "assistant header"},
+		{1, "~ thinking", "thinking header"},
+		{2, "o read", "tool mark"},
+		{3, "x error: boom", "error mark"},
+	}
+	for _, c := range checks {
+		if out := ansiStrip(m.block(c.idx, 80)); !strings.Contains(out, c.want) {
+			t.Errorf("ascii pack %s = %q, want it to contain %q", c.what, out, c.want)
+		}
+	}
+	// The ascii pack is for terminals that can barely render anything:
+	// every mark must stay one cell wide so column math holds.
+	for _, g := range []string{packASCII.user, packASCII.agent, packASCII.thinking,
+		packASCII.tool, packASCII.system, packASCII.err, packASCII.ready} {
+		if w := lipgloss.Width(g); w != 1 {
+			t.Errorf("ascii glyph %q width = %d, want 1", g, w)
+		}
+	}
+}
+
+// The status line's verb follows the live phase: thinking while the
+// model reasons, a tool verb while its call runs, working in between —
+// and the breathing mark draws the phase's own glyph.
+func TestPhaseVerbTracksPhase(t *testing.T) {
+	m := newTestModel(t)
+	cases := []struct{ phase, verb string }{
+		{"", "working"},
+		{"thinking", "thinking"},
+		{"responding", "responding"},
+		{"read", "reading"},
+		{"edit", "editing"},
+		{"write", "writing"},
+		{"bash", "running"},
+		{"glob", "scanning"},
+		{"grep", "searching"},
+		{"task", "delegating"},
+		{"mcp__pick", "calling mcp__pick"},
+	}
+	for _, tc := range cases {
+		m.phase = tc.phase
+		if got := m.phaseVerb(); got != tc.verb {
+			t.Errorf("phase %q verb = %q, want %q", tc.phase, got, tc.verb)
+		}
+	}
+	m.gathering = true
+	if got := m.phaseVerb(); got != "gathering context" {
+		t.Errorf("gathering verb = %q, want gathering context", got)
+	}
+	m.gathering = false
+	m.phase = "thinking"
+	if got := m.statusGlyph(); got != packUnicode.thinking {
+		t.Errorf("thinking status glyph = %q, want the thinking mark", got)
+	}
+	m.phase = "read"
+	if got := m.statusGlyph(); got != packUnicode.tool {
+		t.Errorf("tool status glyph = %q, want the tool mark", got)
+	}
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.streaming = true
+	m.phase = "thinking"
+	if got := ansiStrip(m.statusLine()); !strings.Contains(got, "✻ thinking ·") {
+		t.Errorf("streaming status = %q, want the breathing mark + phase verb", got)
+	}
+}
+
+// A turn that dies on an error renders the loud end — red and bold —
+// instead of the dim italic whisper a system notice gets.
+func TestTurnErrorRendersLoud(t *testing.T) {
+	m := pumpModel(t, newTestModel(t), []llm.Event{
+		llm.ErrorEvent{Err: errors.New("504 upstream timeout")},
+	})
+	var found bool
+	for i, msg := range m.messages {
+		if !strings.HasPrefix(msg.raw, "error: ") {
+			continue
+		}
+		found = true
+		out := m.block(i, 80)
+		// hexErr #F87171 renders as its 24-bit SGR triple.
+		if !strings.Contains(out, "248;113;113") {
+			t.Errorf("error block missing the red tint: %q", out)
+		}
+		if plain := ansiStrip(out); !strings.Contains(plain, "✗ error: 504 upstream timeout") {
+			t.Errorf("error block = %q", plain)
+		}
+	}
+	if !found {
+		t.Fatal("no error block rendered")
+	}
+}
+
+// The icons row cycles auto→nerd→ascii and drops the block render cache
+// so the scrollback repaints in the new pack.
+func TestSettingsIconsRowCycles(t *testing.T) {
+	m := newTestModel(t)
+	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kindToolCall, raw: "read main.go"})
+	m.messages[0].rendered = m.block(0, 80) // cache the default pack
+
+	m.OpenSettings(rowIcons) // opens focused on the icons row
+	m.activateRow()
+	if got := m.cfg.IconSet(); got != config.IconNerd {
+		t.Fatalf("icons after first cycle = %q, want nerd", got)
+	}
+	if m.messages[0].rendered != "" {
+		t.Error("cycling icons left the block cache stale")
+	}
+	if out := ansiStrip(m.block(0, 80)); !strings.Contains(out, packNerd.tools["read"]) {
+		t.Errorf("block after cycle = %q, want the nerd mark", out)
+	}
+	m.activateRow()
+	if got := m.cfg.IconSet(); got != config.IconASCII {
+		t.Errorf("icons after second cycle = %q, want ascii", got)
+	}
+	m.activateRow()
+	if got := m.cfg.IconSet(); got != config.IconAuto {
+		t.Errorf("icons after third cycle = %q, want auto", got)
+	}
+}
+
+// Every nerd glyph must be exactly one rune: a codepoint above U+FFFF
+// written with the 4-digit \u escape decodes as glyph + stray digit.
+func TestNerdGlyphsAreSingleRunes(t *testing.T) {
+	all := []string{packNerd.user, packNerd.agent, packNerd.thinking, packNerd.tool,
+		packNerd.system, packNerd.err, packNerd.ready, packNerd.gather,
+		packNerd.context, packNerd.todo}
+	for _, g := range packNerd.tools {
+		all = append(all, g)
+	}
+	for _, g := range all {
+		if n := len([]rune(g)); n != 1 {
+			t.Errorf("nerd glyph %q = %d runes, want 1", g, n)
 		}
 	}
 }

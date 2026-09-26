@@ -81,6 +81,8 @@ internal/ui/         Bubble Tea app
   welcome.go           first-run walkthrough: intro → provider → key → ready
   click.go             mouse click targets: regions recorded at render time,
                        hit-tested on press; chips synthesize their key
+  icons.go             glyph table (auto/nerd/ascii packs, per-tool marks)
+                       + the breathing animation's tint math and phase verbs
   styles.go            lipgloss palette
 ```
 
@@ -140,7 +142,10 @@ and never put them in `config.json` — that file must stay shareable.
 Subagent knobs: `gather_context` (default on) runs the read-only
 context-gatherer on the first prompt of a fresh session; `subagent_model`
 (empty = main model) runs task subagents and the gatherer on a
-faster/cheaper model. Both are `/settings` rows.
+faster/cheaper model. The `icons` knob picks the glyph pack the UI draws
+(`auto` = safe Unicode, `nerd` = Nerd Font icons needing a patched font,
+`ascii` = plain punctuation) — every glyph the chat renders comes from
+`internal/ui/icons.go`, never a literal. All are `/settings` rows.
 
 ## Conventions
 

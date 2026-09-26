@@ -37,6 +37,7 @@ const (
 	rowMaxTokens
 	rowMode
 	rowGatherContext
+	rowIcons
 	rowMCP
 	rowHooks
 	rowSentinel // keep last
@@ -192,6 +193,8 @@ func (m *Model) activateRow() tea.Cmd {
 			state = "on"
 		}
 		m.saveSettings("gather context → " + state)
+	case rowIcons:
+		m.cycleIcons(1)
 	case rowAPIKey:
 		if strings.EqualFold(m.cfg.Provider, llm.ProviderKhateway) {
 			// khateway needs a credential: offer browser sign-in next
@@ -294,6 +297,8 @@ func (m *Model) cycleSetting(dir int) {
 			}
 		}
 		m.applyMode(modes[(idx+dir+len(modes))%len(modes)])
+	case rowIcons:
+		m.cycleIcons(dir)
 	}
 }
 
@@ -342,6 +347,26 @@ func (m *Model) switchProvider(name string) {
 func (m *Model) applyMode(want perm.Mode) {
 	m.cfg.PermissionMode = string(want)
 	m.saveSettings("mode → " + string(want))
+}
+
+// iconSets are the glyph packs in cycle order; auto first as the default.
+var iconSets = []string{config.IconAuto, config.IconNerd, config.IconASCII}
+
+// cycleIcons moves the icons row to the next glyph pack (←/→ or enter)
+// and repaints the scrollback in it.
+func (m *Model) cycleIcons(dir int) {
+	idx := 0
+	for i, s := range iconSets {
+		if s == m.cfg.IconSet() {
+			idx = i
+		}
+	}
+	want := iconSets[(idx+dir+len(iconSets))%len(iconSets)]
+	m.cfg.SetIcons(want)
+	// The chat blocks are cached rendered: drop them so the whole
+	// conversation redraws in the new pack.
+	m.invalidateRendered()
+	m.saveSettings("icons → " + want)
 }
 
 // rebuildProvider re-creates the active provider client from the current
@@ -1024,6 +1049,8 @@ func rowLabel(row settingsRow) string {
 		return "hooks"
 	case rowGatherContext:
 		return "gather context"
+	case rowIcons:
+		return "icons"
 	}
 	return ""
 }
@@ -1072,6 +1099,15 @@ func (s *settings) value(m *Model, row settingsRow) string {
 			return "on" + dimStyle.Render("  gathers a context brief on the first prompt of a new session · enter to toggle")
 		}
 		return "off" + dimStyle.Render("  · enter to toggle")
+	case rowIcons:
+		set := m.cfg.IconSet()
+		switch set {
+		case config.IconNerd:
+			return set + dimStyle.Render("  Nerd Font glyphs · needs a patched terminal font · ←/→ cycle")
+		case config.IconASCII:
+			return set + dimStyle.Render("  plain punctuation for any terminal · ←/→ cycle")
+		}
+		return set + dimStyle.Render("  safe Unicode symbols everywhere · ←/→ cycle")
 	case rowMCP:
 		if n := len(m.cfg.MCPServers); n > 0 {
 			return fmt.Sprintf("%d · %s", n, strings.Join(sortedServerNames(m.cfg.MCPServers), ", "))
