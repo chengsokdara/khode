@@ -27,14 +27,27 @@ const (
 	// SubagentPlan is a read-only designer of implementation approaches
 	// the parent may present for approval.
 	SubagentPlan SubagentKind = "plan"
+	// SubagentReview reviews specific code or a change, read-only, and
+	// reports findings by severity.
+	SubagentReview SubagentKind = "code-reviewer"
 )
 
 // kindSpec is one subagent profile.
 type kindSpec struct {
 	Label string // short name for status lines and progress
+	// Description is the one-line summary /agents shows and the task
+	// schema advertises alongside the kind name.
+	Description string
 	// ReadOnly restricts the kind to read/glob/grep. Every call is then
 	// RiskRead: plan mode works and no approval dialog can fire.
 	ReadOnly bool
+	// Tools is an explicit allowlist for user-defined kinds; built-ins
+	// leave it empty and use their ReadOnly/default toolset instead.
+	// Names that do not resolve (see userTool) are dropped at spawn.
+	Tools []string
+	// Model pins the kind to a model, beating the global subagent
+	// override; empty rides the configured subagent/main model.
+	Model string
 	// ReportCap clamps the report that reaches the parent.
 	ReportCap int
 	// Section is appended to the shared subagent system prompt; empty
@@ -42,13 +55,19 @@ type kindSpec struct {
 	Section string
 }
 
-// subagentKinds is the catalog the task tool's schema enumerates.
+// subagentKinds is the catalog the task tool's schema enumerates; user
+// kinds loaded from ~/.khode/agents join it at runtime (useragents.go).
 var subagentKinds = map[SubagentKind]kindSpec{
-	SubagentGeneral: {Label: "general", ReportCap: maxTaskResult},
+	SubagentGeneral: {
+		Label:       "general",
+		Description: "your full toolset for open-ended subtasks, including any mutating work",
+		ReportCap:   maxTaskResult,
+	},
 	SubagentExplore: {
-		Label:     "explore",
-		ReadOnly:  true,
-		ReportCap: maxTaskResult / 2,
+		Label:       "explore",
+		Description: "a fast read-only search answering where things live, with path:line pointers",
+		ReadOnly:    true,
+		ReportCap:   maxTaskResult / 2,
 		Section: `# Explore
 
 You are exploring read-only: answer where things are, not what they
@@ -57,9 +76,10 @@ conclusion up front. Skim broadly with glob and grep, then read narrowly.
 If what the prompt asks about does not exist, say so plainly.`,
 	},
 	SubagentGather: {
-		Label:     "gather",
-		ReadOnly:  true,
-		ReportCap: maxTaskResult / 2,
+		Label:       "gather",
+		Description: "builds a read-only brief on how the code supports a task; also runs automatically on a fresh session's first prompt",
+		ReadOnly:    true,
+		ReportCap:   maxTaskResult / 2,
 		Section: `# Context gatherer
 
 You sweep the repository read-only to build a brief that another agent
@@ -85,9 +105,10 @@ Keep it tight; prefer pointers over prose. If the request is not a real
 coding task, reply with a single sentence saying so.`,
 	},
 	SubagentPlan: {
-		Label:     "plan",
-		ReadOnly:  true,
-		ReportCap: maxTaskResult * 3 / 4,
+		Label:       "plan",
+		Description: "designs a read-only implementation approach the parent may present for approval",
+		ReadOnly:    true,
+		ReportCap:   maxTaskResult * 3 / 4,
 		Section: `# Plan
 
 You design an implementation approach, read-only. Investigate the code,
@@ -97,28 +118,58 @@ receives only this report and may present it to the user for approval,
 so it must be concrete enough to execute without re-deriving your
 research.`,
 	},
+	SubagentReview: {
+		Label:       "review",
+		Description: "reviews named code or a change, read-only, and reports findings by severity",
+		ReadOnly:    true,
+		ReportCap:   maxTaskResult * 3 / 4,
+		Section: `# Code reviewer
+
+You review code, read-only. Investigate the files or change the prompt
+names, then end with your findings, each as: severity (blocker /
+should-fix / nit), the path:line, what is wrong, and the smallest fix
+you would suggest. Verify every finding against the actual code — read
+the surrounding context before calling something a bug — and say so
+plainly when nothing is worth flagging. Do not restate what the code
+does; the parent already has it.`,
+	},
 }
 
 // normalizeKind resolves a model-supplied subagent_type; empty or
 // unknown names fall back to the general-purpose profile.
 func normalizeKind(s string) (SubagentKind, kindSpec) {
 	k := SubagentKind(strings.ToLower(strings.TrimSpace(s)))
-	if spec, ok := subagentKinds[k]; ok {
+	if spec, ok := lookupKind(k); ok {
 		return k, spec
 	}
 	return SubagentGeneral, subagentKinds[SubagentGeneral]
 }
 
-// registryFor builds a subagent's toolset: read-only kinds get only
-// read/glob/grep, the rest the default set (which carries no task and no
-// plan tool — subagents do not recurse and never open main-loop dialogs).
-func registryFor(kind SubagentKind, workdir string) *tools.Registry {
-	if subagentKinds[kind].ReadOnly {
-		r := tools.NewRegistry()
-		r.Register(&tools.Read{Root: workdir})
-		r.Register(&tools.Glob{Root: workdir})
-		r.Register(&tools.Grep{Root: workdir})
-		return r
+// registryFor builds a subagent's toolset. Built-in read-only kinds get
+// only read/glob/grep; user kinds with a tools allowlist get exactly
+// those (see userTool); the rest get the default set (which carries no
+// task and no plan tool — subagents do not recurse and never open
+// main-loop dialogs). src is the main registry MCP tools are borrowed
+// from; nil restricts user kinds to the built-in constructors.
+func registryFor(kind SubagentKind, workdir string, src *tools.Registry) *tools.Registry {
+	spec, ok := lookupKind(kind)
+	if ok {
+		if spec.ReadOnly {
+			r := tools.NewRegistry()
+			r.Register(&tools.Read{Root: workdir})
+			r.Register(&tools.Glob{Root: workdir})
+			r.Register(&tools.Grep{Root: workdir})
+			return r
+		}
+		if len(spec.Tools) > 0 {
+			r := tools.NewRegistry()
+			for _, name := range spec.Tools {
+				if t := userTool(name, workdir, src); t != nil {
+					r.Register(t)
+				}
+			}
+			return r
+		}
 	}
 	return tools.Default(workdir)
 }
@@ -127,7 +178,7 @@ func registryFor(kind SubagentKind, workdir string) *tools.Registry {
 // runs with, for callers that drive a gatherer runner directly (the
 // UI's first-prompt gather).
 func GathererRegistry(workdir string) *tools.Registry {
-	return registryFor(SubagentGather, workdir)
+	return registryFor(SubagentGather, workdir, nil)
 }
 
 // GathererSystemPrompt is the system prompt for a context-gatherer run:

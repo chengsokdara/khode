@@ -332,6 +332,12 @@ func (m Model) rowClick(idx int) (tea.Model, tea.Cmd) {
 			m.mcpPanel.cursor = idx
 			return m, nil
 		}
+	case m.agentsPanel != nil:
+		// An overview: rows move the cursor and nothing activates.
+		if idx != m.agentsPanel.cursor {
+			m.agentsPanel.cursor = idx
+		}
+		return m, nil
 	case m.picker != nil:
 		if idx != m.picker.cursor {
 			m.picker.cursor = idx
@@ -495,5 +501,7 @@ func (m *Model) shiftListCursor(delta int) {
 		m.toolsPanel.cursor = move(m.toolsPanel.cursor, len(m.toolsPanel.names)-1)
 	case m.mcpPanel != nil:
 		m.mcpPanel.cursor = move(m.mcpPanel.cursor, len(m.mcpPanel.names)-1)
+	case m.agentsPanel != nil:
+		m.agentsPanel.cursor = move(m.agentsPanel.cursor, len(m.agentsPanel.infos)-1)
 	}
 }

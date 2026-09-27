@@ -176,6 +176,10 @@ func Dir() string {
 // SessionsDir returns the directory holding session transcripts.
 func SessionsDir() string { return filepath.Join(Dir(), "sessions") }
 
+// AgentsDir returns the directory holding user-defined subagent kinds
+// (one markdown file per kind); it may not exist.
+func AgentsDir() string { return filepath.Join(Dir(), "agents") }
+
 // Path returns the config file path.
 func Path() string { return filepath.Join(Dir(), "config.json") }
 

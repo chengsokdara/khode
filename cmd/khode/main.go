@@ -76,6 +76,12 @@ func main() {
 		cfg.SetModelOverride(*model)
 	}
 
+	// User-defined subagent kinds join the task tool's catalog; a file
+	// that fails to parse warns but never keeps khode from starting.
+	for _, w := range agent.LoadUserAgents(config.AgentsDir()) {
+		fmt.Fprintf(os.Stderr, "khode: %s\n", w)
+	}
+
 	// No key is required to launch: credentials come from the
 	// environment when set, otherwise from ~/.khode/auth.json (saved by
 	// the settings UI). With neither, khode still starts — the welcome

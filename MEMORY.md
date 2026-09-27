@@ -23,6 +23,31 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
+- **User-defined agents (2026-09-27):** the subagent kind catalog is
+  open to user files. `agent.LoadUserAgents(config.AgentsDir())`
+  (startup, main.go; reload with `r` in /agents) replaces the
+  `userKinds` map (RWMutex-guarded — task spawns read it on the agent
+  goroutine) from `~/.khode/agents/*.md`: frontmatter `name` (falls
+  back to the filename), `description`, optional `tools` allowlist
+  (comma/space separated), optional `model` pin; the markdown body is
+  the kind's system-prompt section, and user kinds keep the
+  general-purpose report budget. Allowlisted registries are built per
+  spawn (`registryFor` + `userTool`): built-in constructor names
+  (read/glob/grep/edit/write/bash/todo) instantiate FRESH with the
+  subagent workdir so the main registry's session toggles never leak
+  into children; other names (MCP tools) are borrowed from the main
+  registry through `SubagentConfig.ToolSource` (a func, like the other
+  live knobs); `task`/`plan` never resolve. Built-in names are refused
+  for user files (no shadowing), duplicate names resolve first-file,
+  and every parse problem warns (returned by LoadUserAgents, printed to
+  stderr at startup, shown in /agents) instead of failing the load. The
+  task schema's enum and description are now generated from the live
+  catalog (`KindNames`/`kindSummary`), so the model discovers user
+  agents. A per-kind `model` pin beats the global `subagent_model`.
+  `/agents` (`internal/ui/agents.go`, the /mcp dialog shape) lists all
+  kinds with a read-only/N-tools badge (read-only = built-in flag or an
+  all-read allowlist), effective toolset, source path, warnings, and
+  row clicks that only move the cursor.
 - **Working:** Phase 7 complete — khode is configurable entirely from
   the TUI and starts without any API key. Secrets live in
   `~/.khode/auth.json` (`config.Auth`, 0600, atomic temp+rename write);
@@ -105,6 +130,10 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-27 | User agent files refuse built-in names instead of shadowing them; loading REPLACES the user set (not a merge), filename order, first file wins a duplicate name | a user file silently overriding `explore`'s behavior would be a support nightmare, and replace-semantics makes reload (and tests) predictable; duplicates would otherwise depend on map iteration order |
+| 2026-09-27 | User-kind tool allowlists build per-spawn registries: fresh built-in constructor instances + MCP tools borrowed from the main registry via `SubagentConfig.ToolSource`; `task`/`plan` never resolve | sharing main-registry tool instances would leak the user's /tools session toggles into subagents (and vice versa), while MCP tools are stateless client wrappers that must be shared; recursion stays impossible by construction |
+| 2026-09-27 | The task schema's `subagent_type` enum and description are generated from the live catalog (`KindNames`/`kindSummary`), and a kind's `model` frontmatter pin beats the global `subagent_model` | the model can only call kinds it can see, so user agents must be advertised; an explicit per-kind pin expresses "this agent runs on X" more precisely than a global cheap-model default |
+| 2026-09-27 | Frontmatter parsing is hand-rolled `key: value` (no YAML dep) with unknown-field and malformed-line WARNINGS; an unterminated `---` block degrades to filename-as-name + whole-file-as-section | house style avoids casual deps (glob/diff precedent); a typo'd field name silently producing a full-toolset agent is the dangerous failure, so it must warn; dropping the kind entirely would hide a user's agent with only a dim warning |
 | 2026-09-26 | Viewport spacing is pair-aware: a kindToolResult/kindDiff block immediately after a kindToolCall block gets zero separator blanks; all other pairs keep two | the ⎿ grammar says the result belongs to the call above it — a uniform two-blank gap made each call/result read as unrelated blocks (user report); sequential execution guarantees the result is the next block, so adjacency is a safe pair signal |
 | 2026-09-26 | The stream cursor is appended after an ANSI-aware trim of the last row's padded tail (`trailingPadRe`), not after the block-width padding; the header rule's shimmer is per-cell `shimmerColor` on the breath clock, not a second ticker | lipgloss pads every bar row to the block width, so a cursor appended behind the padding lands one cell past the viewport's content width and wraps onto a bare bright `▌` row at column 0 (the "thin line over thick line" report — same stray-bar family as 2026-09-25, different trigger); the shimmer rides the existing spinner-tick re-render like every other breathing element |
 | 2026-09-26 | Icons live in one table (`internal/ui/icons.go`) with three packs behind `config.Icons` (auto=Unicode, nerd=Nerd Font opt-in, ascii=plain punctuation); emoji deliberately excluded; the `⎿` result connector stays a literal in every pack | nerd codepoints cannot be auto-detected (needs a patched font, so it is an opt-in) and emoji render double-width + clash with the aurora palette; a table lets the nerd pack differentiate per tool; the connector is grammar, not identity |

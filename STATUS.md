@@ -10,6 +10,32 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**User-defined agents (2026-09-27):** the subagent catalog is open — one
+markdown file per kind in `~/.khode/agents/` (frontmatter `name`,
+`description`, optional `tools:` allowlist, optional `model:` pin; the
+body becomes the kind's system-prompt section) joins the built-in
+profiles, so the task tool's `subagent_type` accepts them, its schema
+enum and description advertise them to the model, and a new
+`code-reviewer` built-in arrives alongside (`review` label, read-only,
+severity-graded findings). Loading (`agent.LoadUserAgents`,
+`config.AgentsDir()`) replaces the user set in filename order, refuses
+built-in-name shadows, warns per problem file (unknown frontmatter
+fields, malformed lines; an unterminated `---` block degrades to
+filename-as-name rather than dropping the kind), and runs at startup
+with stderr warnings plus `r` in the new `/agents` dialog. Allowlisted
+kinds spawn with exactly those tools — built-in constructors get fresh
+instances rooted at the workdir, other names (MCP tools) are borrowed
+from the main registry via `SubagentConfig.ToolSource`, and
+`task`/`plan` never resolve (no recursion, no main-loop dialogs); a
+kind's `model` pin beats the global `subagent_model`. The `/agents`
+dialog (the /mcp shape) lists every kind with a read-only / N-tools
+badge, the highlighted kind's effective toolset and source file, load
+warnings, and the reload key. Pinned by agent tests (frontmatter parse,
+catalog replace semantics, allowlist registry, schema enum) and ui
+tests (panel render, reload, row click); verified live in the tmux
+harness (open, reload with a user kind + a clashing file, startup
+pickup, esc close).
+
 **Tool results hug their call lines (2026-09-26):** the viewport treated
 every block pair to the same two-blank-line separator, so a tool's `⎿`
 result landed two blank rows under its `⏺` call — reading as unrelated
@@ -852,6 +878,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-27 | User-defined agents: `~/.khode/agents/*.md` (frontmatter + body) join the task catalog with tool allowlists and model pins; `code-reviewer` built-in; `/agents` overview dialog with live reload (`r`) | (this commit) |
 | 2026-09-26 | Tool results and diffs hang directly under their `⏺` call lines (pair-aware viewport spacing) instead of two blank rows below | (this commit) |
 | 2026-09-26 | Traveling-shimmer header rule while the agent works + streaming-cursor wrap fix (cursor hugs the text; kills the thin-bar/thick-bar artifact) | (this commit) |
 | 2026-09-26 | Icon packs (`icons`: auto/nerd/ascii, per-tool nerd marks), icon + role label attribution on thinking/assistant blocks, loud red turn errors, and the breathing working animation (cyan→mint sine tint, live phase verbs, pulsing cursor + input border) — `internal/ui/icons.go` + config/settings knob | (this commit) |

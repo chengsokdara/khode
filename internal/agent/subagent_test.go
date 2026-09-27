@@ -41,7 +41,7 @@ func TestRegistryForReadOnlyKinds(t *testing.T) {
 	// Read-only kinds expose only read/glob/grep, so no call from them
 	// can ever need an approval or survive plan mode as a write.
 	for _, kind := range []SubagentKind{SubagentExplore, SubagentGather, SubagentPlan} {
-		reg := registryFor(kind, t.TempDir())
+		reg := registryFor(kind, t.TempDir(), nil)
 		for _, name := range reg.Names() {
 			if reg.RiskOf(name) != perm.RiskRead {
 				t.Errorf("%s registry: %s has risk %s", kind, name, reg.RiskOf(name))
@@ -61,7 +61,7 @@ func TestRegistryForReadOnlyKinds(t *testing.T) {
 
 	// general-purpose keeps the full default set (no task/plan: no
 	// recursion) so existing task behavior is unchanged.
-	reg := registryFor(SubagentGeneral, t.TempDir())
+	reg := registryFor(SubagentGeneral, t.TempDir(), nil)
 	for _, want := range []string{"edit", "write", "bash"} {
 		if _, ok := reg.Get(want); !ok {
 			t.Errorf("general registry missing %s", want)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"khode/internal/hooks"
@@ -41,8 +42,13 @@ type SubagentConfig struct {
 	Mode      func() perm.Mode
 	// SubModel is an optional faster/cheaper model for subagents
 	// (explore and gather sweeps fit small models); "" falls back to
-	// Model.
+	// Model. A kind's own model pin (user agents' `model` frontmatter
+	// field) beats both.
 	SubModel func() string
+	// ToolSource is the main tool registry user-defined kinds borrow
+	// non-built-in tools (MCP) from; nil restricts them to the built-in
+	// constructors. The registry is only read.
+	ToolSource func() *tools.Registry
 	// Approver is shared with the main loop: a subagent's risky call
 	// raises the same approval dialog in the UI.
 	Approver Approver
@@ -65,25 +71,49 @@ func (t *TaskTool) Name() string { return "task" }
 
 func (t *TaskTool) Description() string {
 	return "Spawn a subagent with a fresh context window for one self-contained " +
-		"subtask. Kinds: general-purpose (default) has your full toolset for " +
-		"open-ended work; explore is a fast read-only search answering where " +
-		"things live; context-gatherer returns a read-only brief on how the " +
-		"code supports a task; plan designs a read-only implementation " +
-		"approach. The subagent has no memory of this conversation, so the " +
-		"prompt must be complete and standalone. Only its final message is " +
-		"returned; the rest of its work is discarded."
+		"subtask. " + kindSummary() + " The subagent has no memory of this " +
+		"conversation, so the prompt must be complete and standalone. Only " +
+		"its final message is returned; the rest of its work is discarded."
+}
+
+// kindSummary describes the kinds the schema enumerates: the built-in
+// profiles plus any loaded user agents.
+func kindSummary() string {
+	parts := make([]string, 0, 4)
+	for _, name := range KindNames() {
+		spec, ok := lookupKind(SubagentKind(name))
+		if !ok {
+			continue
+		}
+		switch {
+		case name == string(SubagentGeneral):
+			parts = append(parts, "general-purpose (default) has your full toolset for "+
+				"open-ended work, including any mutating work")
+		default:
+			d := spec.Description
+			if d == "" {
+				d = "a user-defined profile"
+			}
+			parts = append(parts, name+" — "+clipLine(d, 90))
+		}
+	}
+	return "Kinds: " + strings.Join(parts, "; ") + "."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
-	return json.RawMessage(`{
+	enum := make([]string, 0, 6)
+	for _, name := range KindNames() {
+		enum = append(enum, strconv.Quote(name))
+	}
+	return json.RawMessage(fmt.Sprintf(`{
   "type": "object",
   "properties": {
-    "subagent_type": {"type": "string", "enum": ["general-purpose", "explore", "context-gatherer", "plan"], "default": "general-purpose", "description": "explore: locate where something lives; context-gatherer: build a brief on how the code supports a task; plan: design an implementation approach; general-purpose: everything else, including any mutating work"},
+    "subagent_type": {"type": "string", "enum": [%s], "default": "general-purpose", "description": %s},
     "description": {"type": "string", "description": "Short 3-5 word label describing the subtask, shown while it runs"},
     "prompt": {"type": "string", "description": "Complete, standalone instructions: the goal, the relevant paths and facts, and what the final report should contain"}
   },
   "required": ["prompt"]
-}`)
+}`, strings.Join(enum, ", "), strconv.Quote(kindSummary())))
 }
 
 // Exec runs the subagent synchronously and returns its final message.
@@ -107,11 +137,14 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 			model = fast
 		}
 	}
+	if spec.Model != "" {
+		model = spec.Model // a kind's own pin beats the global override
+	}
 
 	sub := &Runner{
 		Provider:  t.cfg.Provider,
 		Session:   NewMemorySession(),
-		Tools:     registryFor(kind, t.cfg.Workdir),
+		Tools:     registryFor(kind, t.cfg.Workdir, t.toolSource()),
 		Model:     model,
 		MaxTokens: t.cfg.MaxTokens(),
 		System:    t.subagentSystem(spec),
@@ -156,6 +189,15 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 // kind's own section.
 func (t *TaskTool) subagentSystem(spec kindSpec) string {
 	return subagentSystemPrompt(t.cfg.Workdir, spec)
+}
+
+// toolSource resolves the registry user kinds borrow MCP tools from;
+// nil config means built-in constructors only.
+func (t *TaskTool) toolSource() *tools.Registry {
+	if t.cfg.ToolSource == nil {
+		return nil
+	}
+	return t.cfg.ToolSource()
 }
 
 // progressLine flattens a child tool call into one short activity line

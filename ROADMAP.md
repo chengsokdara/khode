@@ -76,7 +76,8 @@ Backlog (no committed order):
 5. Khode /terminal-setup: write the Terminal.app/iTerm2 shift+enter
    mapping khode's alt+enter fallback already picks up.
 6. Subagents, continued: ~~automatic new-session context gatherer and
-   `Runner.Preface`~~ (done — gather → brief → preface turn) and
-   ~~`subagent_model`~~ (done); then parallel read-only fan-out, user-defined
-   agents (`~/.khode/agents/*.md`), a code-reviewer kind, and an
-   `/agents` overview command.
+   `Runner.Preface`~~ (done — gather → brief → preface turn),
+   ~~`subagent_model`~~ (done), and ~~user-defined agents (`~/.khode/agents/*.md`),
+   a code-reviewer kind, and an `/agents` overview command~~ (done —
+   frontmatter kinds with tool allowlists and model pins join the task
+   catalog; /agents lists and reloads them); then parallel read-only fan-out.

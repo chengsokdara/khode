@@ -61,8 +61,11 @@ internal/agent/      conversation machinery
   context.go           AGENTS.md/CLAUDE.md project context for the system prompt
   approve.go           Approver interface + Bridge carrying tool/plan questions
   subagent.go          subagent kind catalog: general-purpose / explore / context-gatherer
-                       / plan — per-kind toolset (read-only kinds get read/glob/grep),
-                       system section, and report cap
+                       / plan / code-reviewer — per-kind toolset (read-only kinds get
+                       read/glob/grep), system section, and report cap
+  useragents.go        user-defined kinds from ~/.khode/agents/*.md (frontmatter +
+                       body): LoadUserAgents replaces the user catalog, allowlist
+                       registries, KindInfos/KindNames for the schema and /agents
   task.go              subagent task tool (subagent_type + description + prompt; fresh
                        in-memory session, progress feed to the UI, report back)
   plan.go              plan tool: present a plan, approval switches to accept-edits
@@ -78,6 +81,8 @@ internal/ui/         Bubble Tea app
   perm.go              approval dialog (diff preview) + plan dialog
   picker.go            session picker overlay
   settings.go          /settings overlay: keys, provider, model, mode, MCP, hooks
+  agents.go            /agents overlay: subagent kinds (built-in + ~/.khode/agents)
+                       with toolset badges, detail block, and r reload
   welcome.go           first-run walkthrough: intro → provider → key → ready
   click.go             mouse click targets: regions recorded at render time,
                        hit-tested on press; chips synthesize their key
@@ -142,7 +147,11 @@ and never put them in `config.json` — that file must stay shareable.
 Subagent knobs: `gather_context` (default on) runs the read-only
 context-gatherer on the first prompt of a fresh session; `subagent_model`
 (empty = main model) runs task subagents and the gatherer on a
-faster/cheaper model. The `icons` knob picks the glyph pack the UI draws
+faster/cheaper model. User-defined subagent kinds load from
+`~/.khode/agents/*.md` (one markdown file per kind: frontmatter `name`,
+`description`, optional `tools` allowlist and `model` pin; the body is
+the kind's system-prompt section) — `/agents` lists and reloads them.
+The `icons` knob picks the glyph pack the UI draws
 (`auto` = safe Unicode, `nerd` = Nerd Font icons needing a patched font,
 `ascii` = plain punctuation) — every glyph the chat renders comes from
 `internal/ui/icons.go`, never a literal. All are `/settings` rows.

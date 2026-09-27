@@ -137,6 +137,7 @@ type Model struct {
 	settings    *settings    // configuration overlay; nil when closed
 	toolsPanel  *toolsPanel  // /tools overlay; nil when closed
 	mcpPanel    *mcpPanel    // /mcp overlay; nil when closed
+	agentsPanel *agentsPanel // /agents overlay; nil when closed
 	welcome     *welcome     // first-run walkthrough; nil when closed
 	popup       *cmdPopup    // slash-command completion above the input; nil when hidden
 	modePick    *modePicker  // /mode chooser above the input; nil when closed
@@ -399,14 +400,15 @@ func isFinalAnswer(msgs []llm.Message, idx int) bool {
 func (m *Model) registerTaskTool() {
 	modeFn := func() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
 	m.tools.Register(agent.NewTaskTool(agent.SubagentConfig{
-		Provider:  m.provider,
-		Workdir:   m.workdir,
-		Model:     m.cfg.Model,
-		SubModel:  m.cfg.SubModel,
-		MaxTokens: func() int { return m.cfg.MaxTokens },
-		Mode:      modeFn,
-		Approver:  m.approvals,
-		Hooks:     func() *hooks.Runner { return hooks.New(m.cfg.Hooks, m.workdir) },
+		Provider:   m.provider,
+		Workdir:    m.workdir,
+		Model:      m.cfg.Model,
+		SubModel:   m.cfg.SubModel,
+		MaxTokens:  func() int { return m.cfg.MaxTokens },
+		Mode:       modeFn,
+		Approver:   m.approvals,
+		ToolSource: func() *tools.Registry { return m.tools },
+		Hooks:      func() *hooks.Runner { return hooks.New(m.cfg.Hooks, m.workdir) },
 		Progress: func(p agent.SubagentProgress) {
 			// Best-effort feed: drop a line rather than stall the child.
 			select {
@@ -649,6 +651,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mcpPanel != nil {
 		return m, m.mcpPanelKey(msg)
 	}
+	if m.agentsPanel != nil {
+		return m, m.agentsKey(msg)
+	}
 	if m.picker != nil {
 		return m, m.pickerKey(msg)
 	}
@@ -741,6 +746,8 @@ func (m Model) View() tea.View {
 		content = m.toolsView()
 	} else if m.mcpPanel != nil {
 		content = m.mcpPanelView()
+	} else if m.agentsPanel != nil {
+		content = m.agentsView()
 	} else if m.picker != nil {
 		content = m.pickerView()
 	} else if m.modelPick != nil {
@@ -1726,6 +1733,9 @@ func (m *Model) command(input string) tea.Cmd {
 
 	case "/mcp":
 		m.openMCPPanel()
+
+	case "/agents":
+		m.openAgentsPanel()
 
 	case "/login":
 		return m.openDeviceLogin()
