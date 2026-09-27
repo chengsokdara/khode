@@ -733,6 +733,7 @@ adminApp.get('/providers', async (c) => {
       timeoutMs: providers.timeoutMs,
       enabled: providers.enabled,
       autoSync: providers.autoSync,
+      freeTier: providers.freeTier,
       createdAt: providers.createdAt,
       modelCount: count(models.id),
     })
@@ -753,6 +754,7 @@ adminApp.get('/providers', async (c) => {
           timeoutMs: r.timeoutMs,
           enabled: r.enabled,
           autoSync: r.autoSync,
+          freeTier: r.freeTier,
         },
         r.modelCount,
       ),

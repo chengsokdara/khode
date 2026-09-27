@@ -2632,6 +2632,12 @@ const mock = await startMockUpstream();
     provTier.status === 201 && provTier.body?.free_tier === true && provTier.body?.auto_sync === true,
     JSON.stringify(provTier.body),
   );
+  const tierInList = ((await j('/api/admin/providers')).body ?? []).find((p) => p.id === provTier.body?.id);
+  check(
+    'free_tier survives the providers LIST select (flag visible in the table DTO)',
+    tierInList?.free_tier === true && tierInList?.auto_sync === true,
+    JSON.stringify(tierInList),
+  );
   const sync6 = await j('/api/admin/models/sync', { method: 'POST' });
   const sr6 = (sync6.body?.results ?? []).find((r) => r.provider_id === provTier.body?.id);
   check(
