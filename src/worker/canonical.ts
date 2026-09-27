@@ -31,12 +31,30 @@ export interface CanonicalToolCall {
   arguments: string;
 }
 
+/**
+ * One ordered content part. Set on a message only when the source content
+ * mixed text and images (or carried several images) — see
+ * CanonicalMessage.contentParts.
+ */
+export type CanonicalContentPart = { type: 'text'; text: string } | { type: 'image'; image: CanonicalImage };
+
 export interface CanonicalMessage {
   role: CanonicalRole;
   /** Folded plain text content (multi-part text arrays are joined with '\n'). */
   content: string;
   /** Images attached to this message (vision); emitted after the folded text in translated requests. */
   images?: CanonicalImage[];
+  /**
+   * Order-preserving content parts, present ONLY when the source message
+   * mixed text and images (or had several images) — there position is
+   * information ("compare fig 1 [img] with fig 2 [img]"), while text-only
+   * multi-part content keeps the historical `content` fold so ordinary
+   * requests stay byte-identical. Adapters emit these IN ORDER when present
+   * (else the legacy content-then-images order). Because every contentParts
+   * message carries an image, the M11 cache eligibility gate (no images)
+   * already excludes them — cache keys never see this field.
+   */
+  contentParts?: CanonicalContentPart[];
   /** Assistant tool invocations (role 'assistant'). */
   toolCalls?: CanonicalToolCall[];
   /** Tool result binding (role 'tool'): the tool-call id this message answers. */

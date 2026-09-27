@@ -76,11 +76,14 @@ function turnFor(m: CanonicalMessage, system: SystemPart[]): Turn | null {
     const result: AnthropicBlock = { type: 'tool_result', tool_use_id: m.toolCallId };
     // P1: a marked tool_result block is a valid cache breakpoint.
     if (m.cacheControl) result.cache_control = m.cacheControl;
-    const images = m.images ?? [];
-    if (images.length) {
-      const parts: AnthropicBlock[] = [];
-      if (m.content) parts.push({ type: 'text', text: m.content });
-      parts.push(...images.map(imageBlock));
+    // Order-preserving content when the source mixed text and images (or
+    // stacked images); legacy folded shape otherwise.
+    const parts: AnthropicBlock[] = m.contentParts?.length
+      ? m.contentParts.map((p) => (p.type === 'text' ? { type: 'text', text: p.text } : imageBlock(p.image)))
+      : m.images?.length
+        ? [...(m.content ? [{ type: 'text', text: m.content }] : []), ...m.images.map(imageBlock)]
+        : [];
+    if (parts.length) {
       result.content = parts;
     } else if (m.content) {
       result.content = m.content;
@@ -96,11 +99,21 @@ function turnFor(m: CanonicalMessage, system: SystemPart[]): Turn | null {
   } else if (m.reasoning?.text) {
     blocks.push({ type: 'thinking', thinking: m.reasoning.text, ...(m.reasoning.signature ? { signature: m.reasoning.signature } : {}) });
   }
-  if (m.content) {
-    blocks.push({ type: 'text', text: m.content, ...(m.cacheControl ? { cache_control: m.cacheControl } : {}) });
-  }
-  if (m.role === 'user') {
-    for (const img of m.images ?? []) blocks.push(imageBlock(img));
+  if (m.contentParts?.length) {
+    // Order-preserving emission — the source mixed text and images (or stacked
+    // images) and their positions are information. Assistant image parts are
+    // dropped (the API only allows images in user turns — existing rule).
+    for (const part of m.contentParts) {
+      if (part.type === 'text') blocks.push({ type: 'text', text: part.text });
+      else if (m.role === 'user') blocks.push(imageBlock(part.image));
+    }
+  } else {
+    if (m.content) {
+      blocks.push({ type: 'text', text: m.content, ...(m.cacheControl ? { cache_control: m.cacheControl } : {}) });
+    }
+    if (m.role === 'user') {
+      for (const img of m.images ?? []) blocks.push(imageBlock(img));
+    }
   }
   for (const tc of m.toolCalls ?? []) {
     let input: unknown = {};
@@ -111,8 +124,9 @@ function turnFor(m: CanonicalMessage, system: SystemPart[]): Turn | null {
     }
     blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input });
   }
-  // P1: a marked message with no text (images/tool calls only) still gets its
-  // breakpoint — it lands on the turn's last block, which the API allows.
+  // P1: a marked message whose text block didn't already carry the marker (no
+  // text, or ordered parts) puts its breakpoint on the turn's LAST block — the
+  // documented "mark the last block" convention, which the API allows.
   if (m.cacheControl && !m.content && blocks.length > 0) {
     blocks[blocks.length - 1].cache_control = m.cacheControl;
   }

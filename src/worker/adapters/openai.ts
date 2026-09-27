@@ -8,7 +8,7 @@
 // in dialects/*; the shared invoke/timeout/credential plumbing in adapters/base.
 import type { Env } from '../env';
 import { joinAdapterUrl } from '../env';
-import type { CanonicalChatRequest, CanonicalEmbeddingsRequest, CanonicalImage, CanonicalMessage } from '../canonical';
+import type { CanonicalChatRequest, CanonicalContentPart, CanonicalEmbeddingsRequest, CanonicalImage, CanonicalMessage } from '../canonical';
 import type { RoutingCandidate } from '../routing';
 import { decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
 
@@ -20,9 +20,17 @@ function imageUrlPart(img: CanonicalImage): Record<string, unknown> {
   return { type: 'image_url', image_url: img.detail ? { url: img.url, detail: img.detail } : { url: img.url } };
 }
 
+/** One ordered canonical part → one openai content part (source order preserved). */
+function openAiContentPart(part: CanonicalContentPart): Record<string, unknown> {
+  return part.type === 'text' ? { type: 'text', text: part.text } : imageUrlPart(part.image);
+}
+
 /** One canonical message → one openai wire message (string or part-array content). */
 function toOpenAiMessage(m: CanonicalMessage): Record<string, unknown> {
   if (m.role === 'tool') {
+    if (m.contentParts?.length) {
+      return { ...m.extra, role: 'tool', tool_call_id: m.toolCallId, content: m.contentParts.map(openAiContentPart) };
+    }
     const images = m.images ?? [];
     const content = images.length
       ? [...(m.content ? [{ type: 'text', text: m.content }] : []), ...images.map(imageUrlPart)]
@@ -40,6 +48,11 @@ function toOpenAiMessage(m: CanonicalMessage): Record<string, unknown> {
         function: { name: tc.name, arguments: tc.arguments },
       })),
     };
+  }
+  if (m.contentParts?.length) {
+    // Order-preserving emission — the source mixed text and images (or stacked
+    // images) and their positions are information.
+    return { ...m.extra, role: m.role, content: m.contentParts.map(openAiContentPart) };
   }
   if (m.images?.length) {
     const parts: Record<string, unknown>[] = [];

@@ -125,6 +125,18 @@
                 "url": "data:image/png;base64,AAA"
               }
             ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "22C"
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "data:image/png;base64,AAA"
+                }
+              }
+            ],
             "extra": {}
           },
           {
@@ -281,6 +293,18 @@
             "images": [
               {
                 "url": "https://example.com/cat.jpg"
+              }
+            ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "look"
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "https://example.com/cat.jpg"
+                }
               }
             ],
             "extra": {}

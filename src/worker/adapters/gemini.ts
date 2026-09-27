@@ -21,7 +21,7 @@
 // existing openai→anthropic / openai→responses translators then consume).
 import type { Env } from '../env';
 import { joinAdapterUrl } from '../env';
-import type { CanonicalChatRequest, CanonicalEmbeddingsRequest, CanonicalImage, CanonicalMessage } from '../canonical';
+import type { CanonicalChatRequest, CanonicalEmbeddingsRequest, CanonicalImage, CanonicalMessage, CanonicalToolCall } from '../canonical';
 import type { RoutingCandidate } from '../routing';
 import { ASSISTANT_FIRST_SPACER, UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
 import { EFFORT_BUDGETS } from '../dialects/options';
@@ -67,22 +67,43 @@ function partsFor(m: CanonicalMessage, functionNameById: Map<string, string>): R
       response = { result: m.content };
     }
     const parts: Record<string, unknown>[] = [{ functionResponse: { name, response } }];
-    for (const img of m.images ?? []) parts.push(imagePart(img));
+    // Ordered image parts when the source mixed text and images; the folded
+    // shape otherwise. Text parts stay inside the functionResponse object.
+    if (m.contentParts?.length) {
+      for (const part of m.contentParts) {
+        if (part.type === 'image') parts.push(imagePart(part.image));
+      }
+    } else {
+      for (const img of m.images ?? []) parts.push(imagePart(img));
+    }
     return parts;
   }
   const parts: Record<string, unknown>[] = [];
-  if (m.content) parts.push({ text: m.content });
-  for (const tc of m.toolCalls ?? []) {
-    let args: unknown = {};
-    try {
-      args = tc.arguments.trim() ? JSON.parse(tc.arguments) : {};
-    } catch {
-      args = {}; // defensive: parsers only admit JSON-encoded arguments
+  if (m.contentParts?.length) {
+    // Order-preserving emission — the source mixed text and images (or
+    // stacked images) and their positions are information.
+    for (const part of m.contentParts) {
+      if (part.type === 'text') parts.push({ text: part.text });
+      else parts.push(imagePart(part.image));
     }
-    parts.push({ functionCall: { name: tc.name, args } });
+    for (const tc of m.toolCalls ?? []) parts.push(...functionCallParts(tc));
+  } else {
+    if (m.content) parts.push({ text: m.content });
+    for (const tc of m.toolCalls ?? []) parts.push(...functionCallParts(tc));
+    for (const img of m.images ?? []) parts.push(imagePart(img));
   }
-  for (const img of m.images ?? []) parts.push(imagePart(img));
   return parts.length ? parts : null;
+}
+
+/** One canonical tool call → a Gemini functionCall part (object args). */
+function functionCallParts(tc: CanonicalToolCall): Record<string, unknown>[] {
+  let args: unknown = {};
+  try {
+    args = tc.arguments.trim() ? JSON.parse(tc.arguments) : {};
+  } catch {
+    args = {}; // defensive: parsers only admit JSON-encoded arguments
+  }
+  return [{ functionCall: { name: tc.name, args } }];
 }
 
 /**

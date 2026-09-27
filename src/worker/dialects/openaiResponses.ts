@@ -15,7 +15,7 @@
 // reasoning fail with an explicit 400 pointer — never silently mis-shaped.
 // Errors use the OpenAI error envelope (shared with the chat dialect;
 // rendered by routes/gateway.ts via openAiError).
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalResponseFormat, CanonicalRole, CanonicalToolCall } from '../canonical';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalContentPart, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalResponseFormat, CanonicalRole, CanonicalToolCall } from '../canonical';
 import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, responseFormatOption, toolChoiceOption, toolDefsOption } from './options';
 import { toolInputToArguments } from './openaiChat';
 import { translateSseStream, type SseOut } from './sse';
@@ -34,10 +34,14 @@ function parseErr(message: string, param?: string | null, code?: string | null):
   return { ok: false, status: 400, message, param: param ?? null, code: code ?? null };
 }
 
-/** Folds a Responses message content-part array into text + images. */
-function foldContentParts(parts: unknown, param: string): { val: { text: string; images: CanonicalImage[] } } | { err: ResponsesParse } {
+/** Folds a Responses message content-part array into text + images, keeping
+ * the ordered parts when the source mixed text and images (or stacked images)
+ * — see CanonicalMessage.contentParts. */
+function foldContentParts(parts: unknown, param: string): { val: { text: string; images: CanonicalImage[]; parts?: CanonicalContentPart[] } } | { err: ResponsesParse } {
   let text = '';
   const images: CanonicalImage[] = [];
+  const ordered: CanonicalContentPart[] = [];
+  let textCount = 0;
   for (const [j, raw] of (parts as unknown[]).entries()) {
     const pParam = `${param}[${j}]`;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -47,18 +51,26 @@ function foldContentParts(parts: unknown, param: string): { val: { text: string;
     if (part.type === 'input_text' || part.type === 'output_text') {
       if (typeof part.text !== 'string') return { err: parseErr(`${pParam}.text must be a string`, param) };
       text += (text ? '\n' : '') + part.text;
+      textCount++;
+      ordered.push({ type: 'text', text: part.text });
     } else if (part.type === 'refusal') {
       if (typeof part.refusal !== 'string') return { err: parseErr(`${pParam}.refusal must be a string`, param) };
       text += (text ? '\n' : '') + part.refusal;
+      textCount++;
+      ordered.push({ type: 'text', text: part.refusal });
     } else if (part.type === 'input_image') {
       const img = imageOption(part.image_url, `${pParam}.image_url`);
       if (img.err) return { err: parseErr(img.err, param) };
-      if (img.val) images.push(img.val);
+      if (img.val) {
+        images.push(img.val);
+        ordered.push({ type: 'image', image: img.val });
+      }
     } else {
       return { err: parseErr(`Unsupported content part type '${String(part.type)}'`, param) };
     }
   }
-  return { val: { text, images } };
+  const mixed = (textCount > 0 && images.length > 0) || images.length > 1;
+  return { val: { text, images, ...(mixed ? { parts: ordered } : {}) } };
 }
 
 /**
@@ -218,6 +230,7 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
       }
       let content: string;
       const images: CanonicalImage[] = [];
+      let parts: CanonicalContentPart[] | undefined;
       if (typeof item.content === 'string') {
         if (item.content.length === 0) return parseErr(`${param}.content must not be empty`, `${param}.content`);
         content = item.content;
@@ -226,6 +239,7 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
         if ('err' in folded) return folded.err;
         content = folded.val.text;
         images.push(...folded.val.images);
+        parts = folded.val.parts;
       } else {
         return parseErr(`${param}.content must be a string or a non-empty content-part array`, `${param}.content`);
       }
@@ -233,6 +247,7 @@ export async function parseOpenAiResponsesRequest(reader: { json: () => Promise<
         role: item.role as CanonicalRole,
         content,
         ...(images.length ? { images } : {}),
+        ...(parts ? { contentParts: parts } : {}),
         extra: {},
       });
     }

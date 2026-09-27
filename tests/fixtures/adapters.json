@@ -2002,5 +2002,126 @@
       },
       "timeoutMs": 60000
     }
+  },
+  {
+    "adapter": "openai",
+    "name": "contentParts → ordered content array (interleaved text/images keep source order)",
+    "cand": {
+      "model": {
+        "upstreamModel": "gpt-5"
+      },
+      "provider": {
+        "baseUrl": "https://api.example.com/v1",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "openai"
+        ]
+      },
+      "baseUrl": "https://api.example.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Compare fig 1:\nwith fig 2:",
+          "contentParts": [
+            { "type": "text", "text": "Compare fig 1:" },
+            { "type": "image", "image": { "url": "https://example.com/fig1.png" } },
+            { "type": "text", "text": "with fig 2:" },
+            { "type": "image", "image": { "url": "https://example.com/fig2.png" } }
+          ],
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.example.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "Compare fig 1:" },
+              { "type": "image_url", "image_url": { "url": "https://example.com/fig1.png" } },
+              { "type": "text", "text": "with fig 2:" },
+              { "type": "image_url", "image_url": { "url": "https://example.com/fig2.png" } }
+            ]
+          }
+        ],
+        "stream": false
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "contentParts → ordered blocks (interleaved text/images keep source order)",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Compare fig 1:\nwith fig 2:",
+          "contentParts": [
+            { "type": "text", "text": "Compare fig 1:" },
+            { "type": "image", "image": { "url": "data:image/png;base64,AAA" } },
+            { "type": "text", "text": "with fig 2:" },
+            { "type": "image", "image": { "url": "https://example.com/fig2.png" } }
+          ],
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "Compare fig 1:" },
+              { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AAA" } },
+              { "type": "text", "text": "with fig 2:" },
+              { "type": "image", "source": { "type": "url", "url": "https://example.com/fig2.png" } }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false
+      },
+      "timeoutMs": 60000
+    }
   }
 ]

@@ -162,6 +162,25 @@
                 "url": "https://example.com/cat.jpg"
               }
             ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "What is in this picture?"
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "data:image/png;base64,AAA",
+                  "detail": "low"
+                }
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ],
             "extra": {}
           },
           {
@@ -720,6 +739,53 @@
       "message": "response_format.type must be 'json_object', 'json_schema'",
       "param": "response_format",
       "code": null
+    }
+  },
+  {
+    "name": "interleaved text/image content keeps its order in contentParts (folded content still populated)",
+    "body": {
+      "model": "glm-5.3-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            { "type": "text", "text": "Compare fig 1:" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/fig1.png" } },
+            { "type": "text", "text": "with fig 2:" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/fig2.png" } }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "glm-5.3-flash",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Compare fig 1:\nwith fig 2:",
+            "images": [
+              { "url": "https://example.com/fig1.png" },
+              { "url": "https://example.com/fig2.png" }
+            ],
+            "contentParts": [
+              { "type": "text", "text": "Compare fig 1:" },
+              { "type": "image", "image": { "url": "https://example.com/fig1.png" } },
+              { "type": "text", "text": "with fig 2:" },
+              { "type": "image", "image": { "url": "https://example.com/fig2.png" } }
+            ],
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
     }
   }
 ]

@@ -127,6 +127,18 @@
                 "url": "https://example.com/cat.jpg"
               }
             ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "No."
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ],
             "extra": {}
           }
         ],

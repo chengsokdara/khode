@@ -1174,5 +1174,59 @@
     },
     "error": "misconfig",
     "messageContains": "unreadable"
+  },
+  {
+    "name": "contentParts → ordered parts (interleaved text/images keep source order)",
+    "adapter": "gemini",
+    "apiKeyPlain": "sk-gem-mock",
+    "cand": {
+      "model": {
+        "upstreamModel": "gemini-2.5-flash"
+      },
+      "provider": {
+        "name": "Gemini (smoke)",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+      },
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Compare fig 1:\nwith fig 2:",
+          "contentParts": [
+            { "type": "text", "text": "Compare fig 1:" },
+            { "type": "image", "image": { "url": "https://example.com/fig1.png" } },
+            { "type": "text", "text": "with fig 2:" },
+            { "type": "image", "image": { "url": "https://example.com/fig2.png" } }
+          ],
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              { "text": "Compare fig 1:" },
+              { "fileData": { "mimeType": "image/png", "fileUri": "https://example.com/fig1.png" } },
+              { "text": "with fig 2:" },
+              { "fileData": { "mimeType": "image/png", "fileUri": "https://example.com/fig2.png" } }
+            ]
+          }
+        ]
+      },
+      "timeoutMs": 60000
+    }
   }
 ]

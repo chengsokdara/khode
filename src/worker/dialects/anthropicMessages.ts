@@ -6,7 +6,7 @@
 // anthropic messages/events (tool_calls → tool_use blocks included). The
 // reverse direction (anthropic → openai shapes) lives in dialects/openaiChat.ts.
 // Extended thinking remains rejected with an explicit pointer.
-import type { CanonicalCacheControl, CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolCall } from '../canonical';
+import type { CanonicalCacheControl, CanonicalChatOptions, CanonicalChatRequest, CanonicalContentPart, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolCall } from '../canonical';
 import { boolOption, cacheControlOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
 import { translateSseStream } from './sse';
 
@@ -145,12 +145,14 @@ function imageFromBlock(block: Record<string, unknown>, param: string): { val?: 
 function foldToolResultContent(
   content: unknown,
   param: string,
-): { val: { text: string; images: CanonicalImage[] } } | { err: string } {
+): { val: { text: string; images: CanonicalImage[]; parts?: CanonicalContentPart[] } } | { err: string } {
   if (content === undefined || content === null) return { val: { text: '', images: [] } };
   if (typeof content === 'string') return { val: { text: content, images: [] } };
   if (!Array.isArray(content)) return { err: `${param}.content must be a string or a content-block array` };
   let text = '';
   const images: CanonicalImage[] = [];
+  const ordered: CanonicalContentPart[] = [];
+  let textCount = 0;
   for (const [j, raw] of content.entries()) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return { err: `${param}.content[${j}] must be an object` };
@@ -159,15 +161,21 @@ function foldToolResultContent(
     if (block.type === 'text') {
       if (typeof block.text !== 'string') return { err: `${param}.content[${j}].text must be a string` };
       text += (text ? '\n' : '') + block.text;
+      textCount++;
+      ordered.push({ type: 'text', text: block.text });
     } else if (block.type === 'image') {
       const img = imageFromBlock(block, `${param}.content[${j}]`);
       if (img.err) return { err: img.err };
-      if (img.val) images.push(img.val);
+      if (img.val) {
+        images.push(img.val);
+        ordered.push({ type: 'image', image: img.val });
+      }
     } else {
       return { err: `${param}.content[${j}]: unsupported tool_result block type '${String(block.type)}'` };
     }
   }
-  return { val: { text, images } };
+  const mixed = (textCount > 0 && images.length > 0) || images.length > 1;
+  return { val: { text, images, ...(mixed ? { parts: ordered } : {}) } };
 }
 
 interface ParsedTurn {
@@ -191,6 +199,11 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
   let text = '';
   const images: CanonicalImage[] = [];
   const toolCalls: CanonicalToolCall[] = [];
+  // Order-preserving text/image parts (mixed text+images or several images —
+  // see CanonicalMessage.contentParts); thinking and tool_use blocks have
+  // their own canonical slots and never join this list.
+  const ordered: CanonicalContentPart[] = [];
+  let textCount = 0;
   // M17: thinking/redacted_thinking blocks accumulate onto the turn's message.
   let pendingReasoning: CanonicalReasoningContent | undefined;
   // P1: anthropic cache markers fold onto the turn's message (last marked
@@ -198,11 +211,13 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
   let turnCache: CanonicalCacheControl | undefined;
 
   const pushTurn = (): void => {
+    const mixed = (textCount > 0 && images.length > 0) || images.length > 1;
     if (text || images.length || (msg.role === 'assistant' && toolCalls.length) || pendingReasoning) {
       out.push({
         role: msg.role as 'user' | 'assistant',
         content: text,
         ...(images.length ? { images } : {}),
+        ...(mixed ? { contentParts: ordered } : {}),
         ...(toolCalls.length ? { toolCalls } : {}),
         ...(pendingReasoning ? { reasoning: pendingReasoning } : {}),
         ...(turnCache ? { cacheControl: turnCache } : {}),
@@ -232,6 +247,8 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
         return { err: parseErr(`${pParam}.text must be a non-empty string`, param) };
       }
       text += (text ? '\n' : '') + block.text;
+      textCount++;
+      ordered.push({ type: 'text', text: block.text });
       const cc = cacheControlOption(block.cache_control, `${pParam}.cache_control`);
       if (cc.err) return { err: parseErr(cc.err, param) };
       if (cc.val) turnCache = cc.val;
@@ -244,7 +261,10 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
       if (cc.val) turnCache = cc.val;
       const img = imageFromBlock(block, pParam);
       if (img.err) return { err: parseErr(img.err, param) };
-      if (img.val) images.push(img.val);
+      if (img.val) {
+        images.push(img.val);
+        ordered.push({ type: 'image', image: img.val });
+      }
     } else if (block.type === 'tool_use') {
       if (msg.role !== 'assistant') {
         return { err: parseErr(`${pParam}: 'tool_use' blocks are only valid in assistant messages`, param) };
@@ -279,6 +299,7 @@ function parseAnthropicTurn(rawMsg: unknown, param: string): { val: ParsedTurn }
         content: folded.val.text,
         toolCallId: block.tool_use_id,
         ...(folded.val.images.length ? { images: folded.val.images } : {}),
+        ...(folded.val.parts ? { contentParts: folded.val.parts } : {}),
         ...(cc.val ? { cacheControl: cc.val } : {}),
         ...(block.is_error === true ? { extra: { is_error: true } } : { extra: {} }),
       });

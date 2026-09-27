@@ -1162,6 +1162,50 @@ const mock = await startMockUpstream();
     JSON.stringify(lastReq.body?.messages),
   );
 
+  // Intra-message order: interleaved text/image parts keep their source order
+  // on every upstream dialect (the canonical fold used to move images after text).
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-claude',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'fig1:' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+        { type: 'text', text: 'fig2:' },
+      ],
+    }],
+  }));
+  const antOrder = lastReq.body?.messages?.[0]?.content ?? [];
+  check(
+    'chat → anthropic upstream: interleaved content keeps source block order',
+    antOrder.length === 3
+      && antOrder[0]?.type === 'text' && antOrder[0]?.text === 'fig1:'
+      && antOrder[1]?.type === 'image'
+      && antOrder[2]?.type === 'text' && antOrder[2]?.text === 'fig2:',
+    JSON.stringify(antOrder),
+  );
+
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-chat',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'fig1:' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+        { type: 'text', text: 'fig2:' },
+      ],
+    }],
+  }));
+  const openaiOrder = lastReq.body?.messages?.[0]?.content ?? [];
+  check(
+    'chat → openai upstream: interleaved content keeps source part order',
+    openaiOrder.length === 3
+      && openaiOrder[0]?.type === 'text' && openaiOrder[0]?.text === 'fig1:'
+      && openaiOrder[1]?.type === 'image_url'
+      && openaiOrder[2]?.type === 'text' && openaiOrder[2]?.text === 'fig2:',
+    JSON.stringify(openaiOrder),
+  );
+
   const openaiAnth429 = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-claude-429', messages: [{ role: 'user', content: 'hi' }] }));
   check(
     'chat → anthropic upstream 429 mapped into openai envelope',
@@ -1886,6 +1930,28 @@ const mock = await startMockUpstream();
       && lastReq.body?.generationConfig?.candidateCount === 2
       && gemN.body?.usage?.completion_tokens === 8,
     JSON.stringify({ upstreamGenConfig: lastReq.body?.generationConfig, body: gemN.body }),
+  );
+
+  // Intra-message order on the gemini dialect too: interleaved parts in source order.
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-gemini',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'fig1:' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+        { type: 'text', text: 'fig2:' },
+      ],
+    }],
+  }));
+  const gemOrder = lastReq.body?.contents?.[0]?.parts ?? [];
+  check(
+    'M12 chat → gemini upstream: interleaved content keeps source part order',
+    gemOrder.length === 3
+      && gemOrder[0]?.text === 'fig1:'
+      && gemOrder[1]?.inlineData?.data === 'AAA'
+      && gemOrder[2]?.text === 'fig2:',
+    JSON.stringify(gemOrder),
   );
 
   // -- responses client → gemini upstream ------------------------------------

@@ -4,7 +4,7 @@
 // error JSON shape, mapping upstream failures into that shape, and the M4
 // cross-dialect half that translates anthropic messages/streams into openai
 // completions/chunks (the reverse lives in dialects/anthropicMessages.ts).
-import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalResponseFormat, CanonicalRole, CanonicalToolCall } from '../canonical';
+import type { CanonicalChatOptions, CanonicalChatRequest, CanonicalContentPart, CanonicalImage, CanonicalMessage, CanonicalReasoning, CanonicalReasoningContent, CanonicalResponseFormat, CanonicalRole, CanonicalToolCall } from '../canonical';
 import { boolOption, canonicalReasoning, canonicalReasoningContent, floatOption, imageOption, intOption, reasoningEffortOption, responseFormatOption, stopOption, toolChoiceOption, toolDefsOption } from './options';
 import { translateSseStream } from './sse';
 
@@ -60,11 +60,20 @@ function parseErr(message: string, param?: string | null, code?: string | null):
 interface FoldedContent {
   text: string;
   images: CanonicalImage[];
+  /** Order-preserving parts when the source mixed text and images (or had several images) — see CanonicalMessage.contentParts. */
+  parts?: CanonicalContentPart[];
+}
+
+/** The order-preserving rule: position is information only when text and images mix, or images stack. */
+function orderedParts(textCount: number, images: CanonicalImage[], ordered: CanonicalContentPart[]): CanonicalContentPart[] | undefined {
+  return (textCount > 0 && images.length > 0) || images.length > 1 ? ordered : undefined;
 }
 
 function parseContentParts(parts: unknown, param: string): { val: FoldedContent } | { err: ChatParse } {
   let content = '';
   const images: CanonicalImage[] = [];
+  const ordered: CanonicalContentPart[] = [];
+  let textCount = 0;
   for (const [j, raw] of (parts as unknown[]).entries()) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return { err: parseErr(`${param}[${j}] must be an object`, param) };
@@ -74,15 +83,20 @@ function parseContentParts(parts: unknown, param: string): { val: FoldedContent 
     if (type === 'text') {
       if (typeof part.text !== 'string') return { err: parseErr(`${param}[${j}].text must be a string`, param) };
       content += (content ? '\n' : '') + part.text;
+      textCount++;
+      ordered.push({ type: 'text', text: part.text });
     } else if (type === 'image_url' || type === 'input_image') {
       const img = imageOption(part.image_url, `${param}[${j}].image_url`);
       if (img.err) return { err: parseErr(img.err, param) };
-      if (img.val) images.push(img.val);
+      if (img.val) {
+        images.push(img.val);
+        ordered.push({ type: 'image', image: img.val });
+      }
     } else {
       return { err: parseErr(`Unsupported content part type '${String(type)}'`, param) };
     }
   }
-  return { val: { text: content, images } };
+  return { val: { text: content, images, ...(orderedParts(textCount, images, ordered) ? { parts: ordered } : {}) } };
 }
 
 /** Parses one openai `tool_calls[]` entry onto the canonical form. */
@@ -182,6 +196,7 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
       }
       let content = '';
       const images: CanonicalImage[] = [];
+      let parts: CanonicalContentPart[] | undefined;
       if (typeof msg.content === 'string') {
         content = msg.content;
       } else if (Array.isArray(msg.content) && msg.content.length > 0) {
@@ -189,17 +204,26 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
         if ('err' in folded) return folded.err;
         content = folded.val.text;
         images.push(...folded.val.images);
+        parts = folded.val.parts;
       } else if (msg.content !== null && msg.content !== undefined) {
         return parseErr(`${param}.content must be a string, a content-part array or null`, `${param}.content`);
       }
       const { role, content: _c, tool_call_id: _tid, tool_calls: _tc, function_call: _fc, ...msgExtra } = msg;
-      messages.push({ role: 'tool', content, toolCallId: msg.tool_call_id, ...(images.length ? { images } : {}), extra: msgExtra });
+      messages.push({
+        role: 'tool',
+        content,
+        toolCallId: msg.tool_call_id,
+        ...(images.length ? { images } : {}),
+        ...(parts ? { contentParts: parts } : {}),
+        extra: msgExtra,
+      });
       continue;
     }
 
     const cv = msg.content;
     let content: string;
     const images: CanonicalImage[] = [];
+    let parts: CanonicalContentPart[] | undefined;
     if (typeof cv === 'string') {
       content = cv;
     } else if (Array.isArray(cv) && cv.length > 0) {
@@ -207,6 +231,7 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
       if ('err' in folded) return folded.err;
       content = folded.val.text;
       images.push(...folded.val.images);
+      parts = folded.val.parts;
     } else if ((cv === null || cv === undefined) && toolCalls) {
       content = ''; // assistant tool-call messages may carry no text
     } else {
@@ -227,6 +252,7 @@ export async function parseOpenAiChatRequest(reader: { json: () => Promise<unkno
       role: role as CanonicalRole,
       content,
       ...(images.length ? { images } : {}),
+      ...(parts ? { contentParts: parts } : {}),
       ...(toolCalls ? { toolCalls } : {}),
       ...(reasoning ? { reasoning } : {}),
       extra: msgExtra,
