@@ -436,13 +436,21 @@ export function toolInputToArguments(input: unknown): string {
  * `message.tool_calls` (arguments re-encoded as a JSON string); M17 thinking
  * blocks fold into `message.reasoning_content` (DeepSeek/GLM convention).
  * `model` is the caller-facing model (the requested slug).
+ *
+ * M18 structured-output emulation (`opts.structuredOutput`): the request
+ * carried responseFormat, so a returned tool_use block is the forced synthetic
+ * tool's JSON input — unwrapped into message content (first block wins) with
+ * finish_reason 'stop', never surfaced as tool_calls.
  */
 export function anthropicMessageToOpenAiCompletion(
   payload: Record<string, unknown>,
   model: string,
+  opts: { structuredOutput?: boolean } = {},
 ): Record<string, unknown> {
+  const structured = opts.structuredOutput === true;
   const blocks = Array.isArray(payload.content) ? (payload.content as Record<string, unknown>[]) : [];
   let text = '';
+  let structuredJson = '';
   let reasoning = '';
   const toolCalls: Record<string, unknown>[] = [];
   for (const block of blocks) {
@@ -452,20 +460,29 @@ export function anthropicMessageToOpenAiCompletion(
     } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
       reasoning += (reasoning ? '\n' : '') + block.thinking;
     } else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
-      toolCalls.push({
-        id: block.id,
-        type: 'function',
-        function: { name: block.name, arguments: toolInputToArguments(block.input) },
-      });
+      if (structured) {
+        if (!structuredJson) structuredJson = toolInputToArguments(block.input);
+      } else {
+        toolCalls.push({
+          id: block.id,
+          type: 'function',
+          function: { name: block.name, arguments: toolInputToArguments(block.input) },
+        });
+      }
     }
     // redacted_thinking blocks carry no client-visible text — dropped here
   }
-  const message: Record<string, unknown> = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+  const message: Record<string, unknown> = {
+    role: 'assistant',
+    content: structured && structuredJson ? structuredJson : text || (toolCalls.length ? null : ''),
+  };
   if (reasoning) message.reasoning_content = reasoning;
   if (toolCalls.length) message.tool_calls = toolCalls;
   const usage = (payload.usage ?? {}) as Record<string, unknown>;
   const promptTokens = toCount(usage.input_tokens);
   const completionTokens = toCount(usage.output_tokens);
+  let finishReason = mapAnthropicStopReasonToFinish(payload.stop_reason);
+  if (structured && finishReason === 'tool_calls') finishReason = 'stop';
   return {
     id: typeof payload.id === 'string' ? `chatcmpl-${payload.id}` : 'chatcmpl-khateway',
     object: 'chat.completion',
@@ -475,7 +492,7 @@ export function anthropicMessageToOpenAiCompletion(
       {
         index: 0,
         message,
-        finish_reason: mapAnthropicStopReasonToFinish(payload.stop_reason),
+        finish_reason: finishReason,
       },
     ],
     usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
@@ -490,6 +507,14 @@ export interface AnthropicToOpenAiStreamOptions {
    * on the finish chunk (openai's own include_usage contract).
    */
   includeUsage?: boolean;
+  /**
+   * M18 structured-output emulation: the request carried responseFormat, so a
+   * streamed tool_use block is the forced synthetic tool's JSON input — its
+   * `input_json_delta` fragments stream as content deltas (exactly how openai
+   * streams json_schema output) and stop_reason 'tool_use' maps to finish
+   * 'stop'. Never surfaced as tool_calls.
+   */
+  structuredOutput?: boolean;
 }
 
 /**
@@ -516,6 +541,9 @@ export function transformAnthropicSseToOpenAi(
     const toolIndexByBlock = new Map<number, number>();
     let nextToolIndex = 0;
     const includeUsage = opts.includeUsage === true;
+    // M18 structured-output emulation: tool_use blocks are the synthetic
+    // tool's JSON answer — read as content, never as tool_calls.
+    const structured = opts.structuredOutput === true;
 
     const chunk = (delta: Record<string, unknown>, finish: string | null, withUsage = false): string => {
       const body: Record<string, unknown> = {
@@ -583,7 +611,7 @@ export function transformAnthropicSseToOpenAi(
           }
           case 'content_block_start': {
             const block = (payload.content_block ?? {}) as Record<string, unknown>;
-            if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+            if (!structured && block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
               const blockIndex = typeof payload.index === 'number' ? payload.index : toolIndexByBlock.size;
               const toolIndex = nextToolIndex++;
               toolIndexByBlock.set(blockIndex, toolIndex);
@@ -609,10 +637,17 @@ export function transformAnthropicSseToOpenAi(
               emitStart();
               out.enqueue(chunk({ reasoning_content: delta.thinking }, null));
             } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && delta.partial_json) {
-              const toolIndex = toolIndexByBlock.get(typeof payload.index === 'number' ? payload.index : -1);
-              if (toolIndex !== undefined) {
+              if (structured) {
+                // M18 emulation: the synthetic tool's JSON arguments stream as
+                // content — exactly how openai streams json_schema output.
                 emitStart();
-                out.enqueue(chunk({ tool_calls: [{ index: toolIndex, function: { arguments: delta.partial_json } }] }, null));
+                out.enqueue(chunk({ content: delta.partial_json }, null));
+              } else {
+                const toolIndex = toolIndexByBlock.get(typeof payload.index === 'number' ? payload.index : -1);
+                if (toolIndex !== undefined) {
+                  emitStart();
+                  out.enqueue(chunk({ tool_calls: [{ index: toolIndex, function: { arguments: delta.partial_json } }] }, null));
+                }
               }
             }
             // signature_delta rides nothing client-visible
@@ -620,7 +655,10 @@ export function transformAnthropicSseToOpenAi(
           }
           case 'message_delta': {
             const delta = (payload.delta ?? {}) as Record<string, unknown>;
-            if (typeof delta.stop_reason === 'string') finishReason = mapAnthropicStopReasonToFinish(delta.stop_reason);
+            if (typeof delta.stop_reason === 'string') {
+              finishReason = mapAnthropicStopReasonToFinish(delta.stop_reason);
+              if (structured && finishReason === 'tool_calls') finishReason = 'stop';
+            }
             const usage = (payload.usage ?? {}) as Record<string, unknown>;
             completionTokens = toCount(usage.output_tokens);
             break;

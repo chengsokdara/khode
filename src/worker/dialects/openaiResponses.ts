@@ -437,8 +437,18 @@ export function openAiCompletionToResponse(payload: Record<string, unknown>, mod
  * function_call output items; M17 thinking blocks become a reasoning output
  * item leading the message. `model` is the caller-facing model (the
  * requested slug).
+ *
+ * M18 structured-output emulation (`opts.structuredOutput`): the request
+ * carried responseFormat, so a returned tool_use block is the forced synthetic
+ * tool's JSON input — unwrapped into the message item's output_text, never a
+ * function_call item.
  */
-export function anthropicMessageToResponse(payload: Record<string, unknown>, model: string): Record<string, unknown> {
+export function anthropicMessageToResponse(
+  payload: Record<string, unknown>,
+  model: string,
+  opts: { structuredOutput?: boolean } = {},
+): Record<string, unknown> {
+  const structured = opts.structuredOutput === true;
   const blocks = Array.isArray(payload.content) ? (payload.content as Record<string, unknown>[]) : [];
   let text = '';
   let reasoning = '';
@@ -450,15 +460,19 @@ export function anthropicMessageToResponse(payload: Record<string, unknown>, mod
     } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
       reasoning += (reasoning ? '\n' : '') + block.thinking;
     } else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
-      callItems.push(
-        functionCallItem(
-          functionCallItemId(block.id),
-          block.id,
-          block.name,
-          toolInputToArguments(block.input),
-          'completed',
-        ),
-      );
+      if (structured) {
+        if (!text) text = toolInputToArguments(block.input);
+      } else {
+        callItems.push(
+          functionCallItem(
+            functionCallItemId(block.id),
+            block.id,
+            block.name,
+            toolInputToArguments(block.input),
+            'completed',
+          ),
+        );
+      }
     }
     // redacted_thinking blocks carry no client-visible text — dropped here
   }
@@ -862,14 +876,26 @@ export function transformOpenAiSseToResponses(src: ReadableStream<Uint8Array>, m
  * Translates an anthropic Messages SSE stream into a Responses event stream
  * (client-side dialect: responses). input_tokens are captured from
  * message_start, output_tokens from message_delta.
+ *
+ * M18 structured-output emulation (`opts.structuredOutput`): the request
+ * carried responseFormat, so a streamed tool_use block is the forced synthetic
+ * tool's JSON input — its `input_json_delta` fragments stream as the message
+ * item's output_text deltas, never function_call events.
  */
-export function transformAnthropicSseToResponses(src: ReadableStream<Uint8Array>, model: string): ReadableStream<Uint8Array> {
+export function transformAnthropicSseToResponses(
+  src: ReadableStream<Uint8Array>,
+  model: string,
+  opts: { structuredOutput?: boolean } = {},
+): ReadableStream<Uint8Array> {
   return translateSseStream(src, (out) => {
     const stream = makeResponsesStream(out, model);
     const usage = { input_tokens: 0, output_tokens: 0 };
     let status: StatusOutcome = { status: 'completed', reason: null };
     // anthropic content-block index → tool call id (input_json_delta omits it)
     const callIdByBlock = new Map<number, string>();
+    // M18 structured-output emulation: tool_use blocks are the synthetic
+    // tool's JSON answer — read as message text, never as function_call items.
+    const structured = opts.structuredOutput === true;
 
     return {
       onEvent(ev) {
@@ -890,7 +916,7 @@ export function transformAnthropicSseToResponses(src: ReadableStream<Uint8Array>
           }
           case 'content_block_start': {
             const block = (payload.content_block ?? {}) as Record<string, unknown>;
-            if (block.type === 'tool_use' && typeof block.id === 'string' && block.id) {
+            if (!structured && block.type === 'tool_use' && typeof block.id === 'string' && block.id) {
               const blockIndex = typeof payload.index === 'number' ? payload.index : callIdByBlock.size;
               callIdByBlock.set(blockIndex, block.id);
               stream.addToolCall(block.id, typeof block.name === 'string' ? block.name : '');
@@ -905,8 +931,12 @@ export function transformAnthropicSseToResponses(src: ReadableStream<Uint8Array>
               // M17: anthropic thinking → reasoning summary deltas.
               stream.reasoningDelta(delta.thinking);
             } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && delta.partial_json) {
-              const callId = callIdByBlock.get(typeof payload.index === 'number' ? payload.index : -1);
-              if (callId) stream.toolDelta(callId, delta.partial_json);
+              if (structured) {
+                stream.delta(delta.partial_json);
+              } else {
+                const callId = callIdByBlock.get(typeof payload.index === 'number' ? payload.index : -1);
+                if (callId) stream.toolDelta(callId, delta.partial_json);
+              }
             }
             // thinking_delta arrives with the later reasoning work
             break;

@@ -1,6 +1,6 @@
 # ROADMAP.md — Khateway roadmap
 
-Last updated: 2026-09-19 (session 20). STATUS.md keeps live state only and
+Last updated: 2026-09-27 (anthropic json_schema emulation done — struck from the queue). STATUS.md keeps live state only and
 points here.
 
 ## Where we are
@@ -120,5 +120,7 @@ Still queued: signup captcha (needs a Turnstile-style service + account/keys —
 an external-dependency decision); key-scoped spend alerts (needs a
 notification channel; no email sender on Workers); content-aware admin
 test-connection (z.ai "200 with auth-error body" blind spot); optional
-auth-failure logging; intra-message order + `n>1`/assistant-first support;
-anthropic json_schema tool emulation (the M18 upgrade path).
+auth-failure logging; intra-message order + `n>1`/assistant-first support.
+DONE 2026-09-27: anthropic json_schema tool emulation (the M18 upgrade path —
+structured outputs are now a hard guarantee on anthropic upstreams; see
+STATUS.md).

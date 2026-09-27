@@ -572,5 +572,119 @@
         "total_tokens": 10
       }
     }
+  },
+  {
+    "translator": "anthropicToOpenAi",
+    "name": "M18 structured output: synthetic tool_use unwrapped to content (wins over text) + finish stop",
+    "payload": {
+      "id": "msg_01ABC",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "text",
+          "text": "prose"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "structured_output",
+          "input": {
+            "city": "Paris"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 8
+      }
+    },
+    "model": "struct-mock",
+    "opts": {
+      "structuredOutput": true
+    },
+    "expected": {
+      "id": "chatcmpl-msg_01ABC",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "struct-mock",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"city\":\"Paris\"}"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "total_tokens": 20
+      }
+    }
+  },
+  {
+    "translator": "anthropicToResponse",
+    "name": "M18 structured output: synthetic tool_use unwrapped to an output_text message item",
+    "payload": {
+      "id": "msg_01ABC",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "structured_output",
+          "input": {
+            "city": "Paris"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 8
+      }
+    },
+    "model": "struct-mock",
+    "opts": {
+      "structuredOutput": true
+    },
+    "expected": {
+      "id": "resp_01ABC",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "completed",
+      "model": "struct-mock",
+      "output": [
+        {
+          "type": "message",
+          "id": "msg_01ABC",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "{\"city\":\"Paris\"}",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "incomplete_details": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20
+      }
+    }
   }
 ]

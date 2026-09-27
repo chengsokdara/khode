@@ -15,7 +15,7 @@ import { joinAdapterUrl } from '../env';
 import type { CanonicalCacheControl, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolChoice } from '../canonical';
 import type { RoutingCandidate } from '../routing';
 import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
-import { EFFORT_BUDGETS } from '../dialects/options';
+import { EFFORT_BUDGETS, anthropicStructuredOutputTool } from '../dialects/options';
 
 /** Wire value Khateway sends unless the provider overrides it via default_headers. */
 export const ANTHROPIC_VERSION = '2023-06-01';
@@ -203,10 +203,15 @@ export async function buildAnthropicMessagesRequest(
   }
   // NOTE: remaining client extras are openai-dialect fields (frequency_penalty,
   // seed, …) that the Messages API would reject — dropped deliberately.
-  // M18: the Messages dialect has no native JSON mode — a best-effort system
-  // directive stands in (documented: not a hard guarantee; the upgrade path
-  // is single-tool emulation, deliberately not built yet).
-  if (req.responseFormat) {
+  // M18: the Messages dialect has no native JSON mode. When structured-output
+  // emulation applies (no client tools, no thinking), the request becomes a
+  // FORCED SINGLE TOOL — under tool_choice {type:'tool'} the API guarantees a
+  // tool_use block, the same hard guarantee openai's json_schema gives — and
+  // the anthropic-upstream translators unwrap its input back into client
+  // content. Everything else falls back to the best-effort system directive
+  // (documented: not a hard guarantee).
+  const structuredTool = anthropicStructuredOutputTool(req);
+  if (req.responseFormat && !structuredTool) {
     const directive =
       req.responseFormat.type === 'json_schema'
         ? `Respond with ONLY a JSON object (no prose, no code fences) conforming exactly to this JSON schema:\n${JSON.stringify(req.responseFormat.schema)}`
@@ -232,7 +237,18 @@ export async function buildAnthropicMessagesRequest(
   }
   if (o.stop !== undefined && o.stop !== null && o.stop.length > 0) body.stop_sequences = o.stop;
 
-  if (o.tools?.length) {
+  if (structuredTool) {
+    // M18 structured-output emulation: one synthetic tool, forced choice —
+    // the response's tool_use input is the JSON answer (unwrapped client-side).
+    body.tools = [
+      {
+        name: structuredTool.name,
+        description: structuredTool.description,
+        input_schema: structuredTool.inputSchema,
+      },
+    ];
+    body.tool_choice = { type: 'tool', name: structuredTool.name };
+  } else if (o.tools?.length) {
     // tool_choice 'none' means "offer nothing" — the Messages dialect has no
     // none choice, so the tools are omitted from the request entirely.
     if (o.toolChoice !== 'none') {

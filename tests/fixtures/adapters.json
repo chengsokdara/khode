@@ -1,7 +1,7 @@
 [
   {
     "adapter": "openai",
-    "name": "minimal: no key \u2192 no auth header; defaults for timeout",
+    "name": "minimal: no key → no auth header; defaults for timeout",
     "cand": {
       "model": {
         "upstreamModel": "gpt-5"
@@ -299,7 +299,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "minimal: system folding, default max_tokens 4096, no key \u2192 no x-api-key",
+    "name": "minimal: system folding, default max_tokens 4096, no key → no x-api-key",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5",
@@ -724,7 +724,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "error: undecryptable stored key \u2192 UpstreamMisconfigError",
+    "name": "error: undecryptable stored key → UpstreamMisconfigError",
     "error": "misconfig",
     "messageContains": "unreadable",
     "cand": {
@@ -920,7 +920,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "M17: canonical reasoning budget \u2192 thinking param (budget clamped below max_tokens)",
+    "name": "M17: canonical reasoning budget → thinking param (budget clamped below max_tokens)",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5"
@@ -983,7 +983,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "M17: canonical reasoning effort low \u2192 budget 1024; temperature dropped while thinking",
+    "name": "M17: canonical reasoning effort low → budget 1024; temperature dropped while thinking",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5"
@@ -1047,7 +1047,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "M17: assistant history reasoning \u2192 thinking block (with signature) leading the turn",
+    "name": "M17: assistant history reasoning → thinking block (with signature) leading the turn",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5"
@@ -1140,7 +1140,7 @@
   },
   {
     "adapter": "gemini",
-    "name": "M17: canonical reasoning effort medium \u2192 thinkingBudget 8192 + includeThoughts",
+    "name": "M17: canonical reasoning effort medium → thinkingBudget 8192 + includeThoughts",
     "cand": {
       "model": {
         "upstreamModel": "gemini-2.5-flash"
@@ -1194,7 +1194,7 @@
   },
   {
     "adapter": "openai",
-    "name": "M17: canonical reasoning effort \u2192 reasoning_effort re-emitted; message reasoning dropped from history",
+    "name": "M17: canonical reasoning effort → reasoning_effort re-emitted; message reasoning dropped from history",
     "cand": {
       "model": {
         "upstreamModel": "gpt-5"
@@ -1323,7 +1323,7 @@
   },
   {
     "adapter": "gemini",
-    "name": "M18: response_format json_schema \u2192 responseMimeType + cleaned responseSchema",
+    "name": "M18: response_format json_schema → responseMimeType + cleaned responseSchema",
     "cand": {
       "model": {
         "upstreamModel": "gemini-2.5-flash"
@@ -1413,7 +1413,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "M18: response_format json_object \u2192 best-effort JSON system directive",
+    "name": "M18: response_format json_object → forced structured-output tool (default schema)",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5"
@@ -1460,7 +1460,19 @@
         "model": "claude-sonnet-4-5",
         "max_tokens": 4096,
         "stream": false,
-        "system": "Respond with ONLY a valid JSON object (no prose, no code fences)."
+        "tools": [
+          {
+            "name": "structured_output",
+            "description": "Emit the response as a single JSON object conforming to the input schema. No prose, no code fences.",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "tool",
+          "name": "structured_output"
+        }
       },
       "timeoutMs": 60000
     }
@@ -1619,6 +1631,241 @@
         ],
         "tool_choice": {
           "type": "auto"
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M18: response_format json_schema → forced structured-output tool (declared name sanitized, schema verbatim)",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "responseFormat": {
+        "type": "json_schema",
+        "name": "My Step!",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "answer": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "answer"
+          ]
+        }
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "tools": [
+          {
+            "name": "My_Step_",
+            "description": "Emit the response as a single JSON object conforming to the input schema. No prose, no code fences.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "answer": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "answer"
+              ]
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "tool",
+          "name": "My_Step_"
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M18: response_format + client tools → best-effort directive fallback (no forced tool)",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "responseFormat": {
+        "type": "json_object"
+      },
+      "options": {
+        "tools": [
+          {
+            "name": "get_weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "system": "Respond with ONLY a valid JSON object (no prose, no code fences).",
+        "tools": [
+          {
+            "name": "get_weather",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "auto"
+        }
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "M18: response_format + reasoning → directive fallback (extended thinking forbids forced tool_choice)",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5"
+      },
+      "provider": {
+        "name": "Anthropic (smoke)",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "responseFormat": {
+        "type": "json_schema",
+        "name": "s",
+        "schema": {
+          "type": "object"
+        }
+      },
+      "reasoning": {
+        "effort": "low"
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false,
+        "system": "Respond with ONLY a JSON object (no prose, no code fences) conforming exactly to this JSON schema:\n{\"type\":\"object\"}",
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 1024
         }
       },
       "timeoutMs": 60000

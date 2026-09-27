@@ -6,7 +6,7 @@
 // all three dialect parsers — they normalize each dialect's wire shape onto
 // the canonical form (src/worker/canonical.ts).
 
-import type { CanonicalCacheControl, CanonicalImage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
+import type { CanonicalCacheControl, CanonicalChatRequest, CanonicalImage, CanonicalReasoning, CanonicalReasoningContent, CanonicalToolChoice, CanonicalToolDef } from '../canonical';
 
 export type OptResult = { err?: string; val?: number | null };
 
@@ -99,6 +99,62 @@ export function responseFormatOption(
     };
   }
   return { err: `${param}.type must be 'json_object', 'json_schema'${shape === 'responses' ? " or 'text'" : ''}` };
+}
+
+// ---------------------------------------- M18+ anthropic structured-output emulation
+
+/** The fixed fallback name for the synthetic structured-output tool. */
+export const STRUCTURED_OUTPUT_TOOL_NAME = 'structured_output';
+
+const STRUCTURED_OUTPUT_TOOL_DESCRIPTION =
+  'Emit the response as a single JSON object conforming to the input schema. No prose, no code fences.';
+
+/** The synthetic tool a responseFormat request becomes on the anthropic wire. */
+export interface AnthropicStructuredTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+/**
+ * Structured outputs on ANTHROPIC upstreams ride a forced single tool — under
+ * `tool_choice: {type:'tool'}` the Messages API prefills the assistant turn,
+ * guaranteeing a tool_use block, which is the same hard guarantee openai's
+ * json_schema gives. The synthetic tool never reaches the client: the
+ * anthropic-upstream translators unwrap its input back into message content
+ * (dialects/openaiChat.ts + openaiResponses.ts, keyed on the meta flag this
+ * helper's non-null result stamps). Returns null (→ the best-effort system
+ * directive stays) when emulation cannot apply:
+ * - the request carries no responseFormat;
+ * - the client declared its own tools (forcing the synthetic tool would break
+ *   the client's tool loop);
+ * - reasoning/thinking is requested — the Messages API rejects forced
+ *   tool_choice while extended thinking is enabled (conservative even when
+ *   the adapter's clamp would drop the budget — this helper cannot see
+ *   max_tokens).
+ * The tool is injected ONLY at adapter level; the canonical request (and thus
+ * the M11 cache key) never carries it.
+ */
+export function anthropicStructuredOutputTool(
+  req: Pick<CanonicalChatRequest, 'responseFormat' | 'reasoning' | 'options'>,
+): AnthropicStructuredTool | null {
+  if (!req.responseFormat) return null;
+  if (req.options.tools && req.options.tools.length > 0) return null;
+  if (req.reasoning) return null;
+  return {
+    name: structuredOutputToolName(req.responseFormat.name),
+    description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
+    inputSchema:
+      req.responseFormat.type === 'json_schema' && req.responseFormat.schema
+        ? req.responseFormat.schema
+        : { type: 'object' },
+  };
+}
+
+/** Sanitizes the declared schema name onto the Messages tool-name alphabet (`[a-zA-Z0-9_-]{1,64}`). */
+function structuredOutputToolName(name: string | undefined): string {
+  const cleaned = (name ?? '').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 64);
+  return cleaned || STRUCTURED_OUTPUT_TOOL_NAME;
 }
 
 export function floatOption(v: unknown, param: string, lo: number, hi: number): OptResult {

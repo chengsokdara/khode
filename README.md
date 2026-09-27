@@ -177,7 +177,7 @@ npm run deploy
 | M15 ✅ | Pre-launch hardening: atomic webhook credit, log indexes + bounded sums, validation ordering, error scrub — and the real deploy |
 | M16 ✅ | OpenRouter parity: /v1/models pricing + supported_parameters, /api/v1 key/credit APIs, legacy /v1/completions, attribution headers, x-ratelimit headers, SSE keep-alives |
 | M17 ✅ | Reasoning/thinking end-to-end: anthropic thinking, openai reasoning_effort/reasoning_content, responses reasoning — translated across the full matrix |
-| M18 ✅ | Structured outputs / JSON mode: response_format + text.format translated to openai, gemini (responseMimeType/responseSchema) and anthropic upstreams |
+| M18 ✅ | Structured outputs / JSON mode: response_format + text.format translated to openai, gemini (responseMimeType/responseSchema) and anthropic upstreams — on anthropic via a forced synthetic tool (hard guarantee); requests with client tools or thinking fall back to a best-effort JSON system directive |
 
 **MVP complete + M8–M18: public foundations, orgs, rate limiting, semantic cache, native Gemini, embeddings, playground, hardening + real deploy, OpenRouter parity, reasoning, structured outputs.**
 See [`STATUS.md`](STATUS.md) for the verification baseline and

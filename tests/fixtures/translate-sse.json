@@ -1967,5 +1967,411 @@
         }
       }
     ]
+  },
+  {
+    "translator": "anthropicToOpenAi",
+    "name": "M18 structured output: synthetic tool_use input_json_delta streams as content + finish stop",
+    "model": "struct-mock",
+    "inputEvents": [
+      {
+        "event": "message_start",
+        "data": {
+          "type": "message_start",
+          "message": {
+            "id": "msg_01S",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "usage": {
+              "input_tokens": 9,
+              "output_tokens": 0
+            }
+          }
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 0,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "structured_output",
+            "input": {}
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"city\":"
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "\"Paris\"}"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 0
+        }
+      },
+      {
+        "event": "message_delta",
+        "data": {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "tool_use",
+            "stop_sequence": null
+          },
+          "usage": {
+            "output_tokens": 7
+          }
+        }
+      },
+      {
+        "event": "message_stop",
+        "data": {
+          "type": "message_stop"
+        }
+      }
+    ],
+    "opts": {
+      "structuredOutput": true
+    },
+    "expected": [
+      {
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "struct-mock",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "struct-mock",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "{\"city\":"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "struct-mock",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "\"Paris\"}"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "id": "chatcmpl-msg_01S",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "struct-mock",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 9,
+            "completion_tokens": 7,
+            "total_tokens": 16
+          }
+        }
+      },
+      {
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "translator": "anthropicToResponses",
+    "name": "M18 structured output: synthetic tool_use input_json_delta streams as output_text deltas",
+    "model": "struct-mock",
+    "inputEvents": [
+      {
+        "event": "message_start",
+        "data": {
+          "type": "message_start",
+          "message": {
+            "id": "msg_01S",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "usage": {
+              "input_tokens": 9,
+              "output_tokens": 0
+            }
+          }
+        }
+      },
+      {
+        "event": "content_block_start",
+        "data": {
+          "type": "content_block_start",
+          "index": 0,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "structured_output",
+            "input": {}
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"city\":"
+          }
+        }
+      },
+      {
+        "event": "content_block_delta",
+        "data": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "\"Paris\"}"
+          }
+        }
+      },
+      {
+        "event": "content_block_stop",
+        "data": {
+          "type": "content_block_stop",
+          "index": 0
+        }
+      },
+      {
+        "event": "message_delta",
+        "data": {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "tool_use",
+            "stop_sequence": null
+          },
+          "usage": {
+            "output_tokens": 7
+          }
+        }
+      },
+      {
+        "event": "message_stop",
+        "data": {
+          "type": "message_stop"
+        }
+      }
+    ],
+    "opts": {
+      "structuredOutput": true
+    },
+    "expected": [
+      {
+        "event": "response.created",
+        "data": {
+          "type": "response.created",
+          "sequence_number": 0,
+          "response": {
+            "id": "resp_01S",
+            "object": "response",
+            "created_at": "<now>",
+            "status": "in_progress",
+            "model": "struct-mock",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "usage": null
+          }
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": {
+          "type": "response.output_item.added",
+          "sequence_number": 1,
+          "output_index": 0,
+          "item": {
+            "type": "message",
+            "id": "msg_01S",
+            "status": "in_progress",
+            "role": "assistant",
+            "content": []
+          }
+        }
+      },
+      {
+        "event": "response.content_part.added",
+        "data": {
+          "type": "response.content_part.added",
+          "sequence_number": 2,
+          "item_id": "msg_01S",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "",
+            "annotations": []
+          }
+        }
+      },
+      {
+        "event": "response.output_text.delta",
+        "data": {
+          "type": "response.output_text.delta",
+          "sequence_number": 3,
+          "item_id": "msg_01S",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "{\"city\":"
+        }
+      },
+      {
+        "event": "response.output_text.delta",
+        "data": {
+          "type": "response.output_text.delta",
+          "sequence_number": 4,
+          "item_id": "msg_01S",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "\"Paris\"}"
+        }
+      },
+      {
+        "event": "response.output_text.done",
+        "data": {
+          "type": "response.output_text.done",
+          "sequence_number": 5,
+          "item_id": "msg_01S",
+          "output_index": 0,
+          "content_index": 0,
+          "text": "{\"city\":\"Paris\"}"
+        }
+      },
+      {
+        "event": "response.content_part.done",
+        "data": {
+          "type": "response.content_part.done",
+          "sequence_number": 6,
+          "item_id": "msg_01S",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "{\"city\":\"Paris\"}",
+            "annotations": []
+          }
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": {
+          "type": "response.output_item.done",
+          "sequence_number": 7,
+          "output_index": 0,
+          "item": {
+            "type": "message",
+            "id": "msg_01S",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"city\":\"Paris\"}",
+                "annotations": []
+              }
+            ]
+          }
+        }
+      },
+      {
+        "event": "response.completed",
+        "data": {
+          "type": "response.completed",
+          "sequence_number": 8,
+          "response": {
+            "id": "resp_01S",
+            "object": "response",
+            "created_at": "<now>",
+            "status": "completed",
+            "model": "struct-mock",
+            "output": [
+              {
+                "type": "message",
+                "id": "msg_01S",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "{\"city\":\"Paris\"}",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "usage": {
+              "input_tokens": 9,
+              "output_tokens": 7,
+              "total_tokens": 16
+            }
+          }
+        }
+      }
+    ]
   }
 ]

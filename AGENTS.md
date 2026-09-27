@@ -79,8 +79,11 @@ for anthropic and dropped for openai/gemini upstreams. **M18 done** —
 structured outputs / JSON mode: canonical `responseFormat` from openai chat
 `response_format` + responses `text.format`, re-emitted verbatim to openai
 upstreams, mapped to gemini `responseMimeType`+`responseSchema` (schema
-cleaned to the OpenAPI subset), best-effort system JSON directive on
-anthropic (documented non-guarantee); cache keys include reasoning +
+cleaned to the OpenAPI subset), and on anthropic the 2026-09-27 UPGRADE: a
+FORCED synthetic structured-output tool (`tool_choice {type:'tool'}` — the
+API guarantees the tool_use block) whose input the anthropic-upstream
+translators unwrap back into content; requests with client tools or thinking
+keep the best-effort system directive fallback; cache keys include reasoning +
 responseFormat only when present.
 **Social sign-in done (2026-09-24)** — portal login offers "Continue with
 Google / GitHub" (pure OAuth 2.0 on fetch, no SDKs; `oauth_identities` +
@@ -366,7 +369,7 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             zeros, no-dup rerun, dropout disable, reappear re-enable, manual-slug
                             guard, /__scheduled → triggered_by=cron, auto_sync toggle-off,
                             free_tier whole-listing import + flag-off revert + LIST-select pin)
-                            — 236 checks as of 2026-09-27
+                            — 245 checks as of 2026-09-27
 scripts/add-free-providers.mjs — `npm run seed:free`: idempotent seeder for 9 free-model
                             vendors (OpenRouter, Gemini AI Studio, Pollinations, GitHub Models,
                             Groq, Cerebras, Mistral, SambaNova, NVIDIA NIM) — matches by NAME,
@@ -819,6 +822,26 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   tool_result blocks, tool defs); openai/gemini adapters drop them. Cache keys
   include `cacheControl` only when present (pre-P1 entries stay valid).
   `cache_control` is on the anthropic `supported_parameters` list.
+- **Structured outputs on anthropic upstreams (M18 upgrade, 2026-09-27)**:
+  `anthropicStructuredOutputTool(req)` (dialects/options.ts) returns the
+  synthetic tool (`name` = sanitized `responseFormat.name` or sentinel
+  `structured_output`, `input_schema` = the schema, json_object →
+  `{type:'object'}`) when ALL hold: responseFormat present, NO client tools,
+  NO reasoning (the Messages API rejects forced `tool_choice` while extended
+  thinking is on). The anthropic adapter then injects it with
+  `tool_choice: {type:'tool'}` (API prefill guarantees the tool_use block —
+  the same hard guarantee as openai json_schema) and SKIPS the old system
+  directive; any other case keeps the directive fallback verbatim. The tool
+  never reaches the client: the gateway stamps `ChatMeta.structuredOutput`
+  and the four anthropic-upstream translators read tool_use as CONTENT —
+  JSON: first tool_use input → message content / output_text (finish/status
+  stop|completed); SSE: `input_json_delta` fragments stream as content /
+  output_text deltas, stop_reason tool_use → finish stop. The usage watcher
+  tee stays on the RAW anthropic stream (billing unchanged); the synthetic
+  tool exists only at adapter level, so M11 cache keys are untouched, and
+  `serveCachedResponse` re-derives the flag from the request so cached raw
+  payloads replay unwrapped. Same-dialect passthrough never sees it (the
+  anthropic client face cannot produce responseFormat) and gemini is native.
 - **Spend-cap reservation (P4)**: capped keys (`spend_limit_usd`) park an
   ESTIMATED in-flight cost in the DO while a request runs —
   `reserveSpendCap` (post-routing: the estimate needs the resolved model's

@@ -124,7 +124,9 @@ export interface CanonicalChatOptions {
  * M18: structured-output / JSON-mode control, normalized from the openai chat
  * `response_format` param and the responses `text.format` param. Adapters map
  * it per target dialect (openai re-emits verbatim; gemini responseMimeType +
- * responseSchema; anthropic a best-effort system directive).
+ * responseSchema; anthropic a FORCED synthetic structured-output tool — the
+ * `anthropicStructuredOutputTool` helper in dialects/options.ts decides
+ * emulation vs the best-effort system directive fallback).
  */
 export interface CanonicalResponseFormat {
   type: 'json_object' | 'json_schema';

@@ -75,6 +75,7 @@ import { buildGeminiEmbeddingsRequest, buildGeminiGenerateContentRequest } from 
 import { costUsd, usageFromJsonBody, watchUpstreamJsonUsage, watchUpstreamSseUsage, type TokenUsage } from '../dialects/usage';
 import { geminiCompletionToOpenAi, geminiEmbeddingsToOpenAi, geminiErrorToOpenAi, transformGeminiSseToOpenAi } from '../dialects/gemini';
 import { parseOpenAiEmbeddingsRequest } from '../dialects/openaiEmbeddings';
+import { anthropicStructuredOutputTool } from '../dialects/options';
 import {
   completionFromChatCompletion,
   parseOpenAiCompletionsRequest,
@@ -332,6 +333,8 @@ interface ChatMeta {
   attempts: number;
   /** Client asked for openai stream_options.include_usage (openai chat dialect only). */
   streamIncludeUsage?: boolean;
+  /** M18: structured-output emulation active on an anthropic upstream — the translators unwrap the synthetic tool's tool_use block into content. */
+  structuredOutput?: boolean;
   /** M11: set only when the request was cache-eligible (header reporting). */
   cacheState?: 'hit' | 'miss';
   /** M16: OpenAI-style success-path x-ratelimit-* headers from the binding bucket. */
@@ -646,7 +649,7 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
       draft.usageWatch = { upstream: meta.upstream, stream: toWatch, sse: true };
       const stream =
         meta.upstream === 'anthropic'
-          ? transformAnthropicSseToResponses(toClient, meta.requested)
+          ? transformAnthropicSseToResponses(toClient, meta.requested, { structuredOutput: meta.structuredOutput === true })
           : transformOpenAiSseToResponses(toClient, meta.requested);
       return new Response(withSseKeepAlive(stream), { status: 200, headers: { ...headers, 'content-type': 'text/event-stream' } });
     }
@@ -658,7 +661,7 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
     draft.usage = usageFromJsonBody(meta.upstream, payload);
     const body =
       meta.upstream === 'anthropic'
-        ? anthropicMessageToResponse(payload, meta.requested)
+        ? anthropicMessageToResponse(payload, meta.requested, { structuredOutput: meta.structuredOutput === true })
         : openAiCompletionToResponse(payload, meta.requested);
     return Response.json(body, { status: 200, headers });
   }
@@ -670,7 +673,10 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
       draft.usageWatch = { upstream: meta.upstream, stream: toWatch, sse: true };
       return new Response(
         withSseKeepAlive(
-          transformAnthropicSseToOpenAi(toClient, meta.requested, { includeUsage: meta.streamIncludeUsage === true }),
+          transformAnthropicSseToOpenAi(toClient, meta.requested, {
+            includeUsage: meta.streamIncludeUsage === true,
+            structuredOutput: meta.structuredOutput === true,
+          }),
         ),
         {
           status: 200,
@@ -684,7 +690,10 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
       return errorJson('openai', 502, openAiError(502, draft.error, { code: 'upstream_invalid_response' }), headers);
     }
     draft.usage = usageFromJsonBody(meta.upstream, payload);
-    return Response.json(anthropicMessageToOpenAiCompletion(payload, meta.requested), { status: 200, headers });
+    return Response.json(
+      anthropicMessageToOpenAiCompletion(payload, meta.requested, { structuredOutput: meta.structuredOutput === true }),
+      { status: 200, headers },
+    );
   }
 
   // openai-compatible upstream → anthropic client
@@ -718,7 +727,7 @@ async function respondTranslated(res: Response, meta: ChatMeta, draft: LogDraft)
 async function serveCachedResponse(
   entry: { providerId: string | null; providerName: string; upstreamModel: string; upstream: string; payload: string },
   dialect: ClientDialect,
-  parsed: { model: string },
+  parsed: { model: string; request: CanonicalChatRequest },
   resolved: { candidate: RoutingCandidate },
   t0: number,
   draft: LogDraft,
@@ -746,6 +755,10 @@ async function serveCachedResponse(
     upstream,
     attempts: 1,
     cacheState: 'hit',
+    // M18: a cached anthropic payload produced under structured-output
+    // emulation stores the raw tool_use block — replay must unwrap it exactly
+    // like a fresh response did (same helper the live path keyed the flag on).
+    structuredOutput: upstream === 'anthropic' && anthropicStructuredOutputTool(parsed.request) !== null,
     rateHeaders,
   };
   draft.providerId = entry.providerId;
@@ -1151,6 +1164,9 @@ async function chatPipeline(
           upstream,
           attempts,
           streamIncludeUsage: parsed.request.streamIncludeUsage,
+          // M18: structured-output emulation is an anthropic-upstream property
+          // (the synthetic forced tool + the translators' unwrap flag).
+          structuredOutput: upstream === 'anthropic' && anthropicStructuredOutputTool(parsed.request) !== null,
           rateHeaders,
         };
         // The last candidate tried owns the log row (matches the last-failure-wins mapping).

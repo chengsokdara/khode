@@ -20,9 +20,13 @@ describe('json response translation (golden)', () => {
   for (const case_ of loadFixtures('translate-json.json')) {
     const translate = translators[case_.translator as keyof typeof translators];
     it(`${case_.translator}: ${case_.name as string}`, () => {
+      // Optional per-translator options ride in `opts` (e.g. the M18
+      // structured-output unwrap flag for the anthropic-upstream translators).
+      const opts = (case_.opts ?? {}) as Record<string, unknown>;
       const result = translate(
         case_.payload as Record<string, unknown>,
         case_.model as string,
+        opts,
       ) as Record<string, unknown>;
       expect(freezeTimestamps(result)).toEqual(case_.expected);
     });

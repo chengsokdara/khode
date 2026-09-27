@@ -59,7 +59,7 @@ const j = async (path, opts = {}) => {
 const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)', 'Free Sync Mock (smoke)', 'Free Tier Mock (smoke)'];
 const SLUGS = [
   'mock-chat', 'mock-chat-429', 'mock-chat-401', 'mock-chat-500', 'mock-chat-500t', 'mock-claude', 'mock-claude-429',
-  'mock-tools', 'mock-claude-tools',
+  'mock-tools', 'mock-claude-tools', 'mock-claude-structured',
   'mock-dual', 'mock-dual-n', 'mock-dual-first-assistant', 'mock-dual-bare',
   'mock-fb-500', 'mock-fb-429', 'mock-fb-anthropic', 'mock-fb-dead', 'mock-fb-401',
   'mock-log-json', 'mock-log-stream',
@@ -209,6 +209,36 @@ function startMockUpstream() {
               stop_reason: 'tool_use',
               stop_sequence: null,
               usage: { input_tokens: 7, output_tokens: 5 },
+            }),
+          );
+        }
+        if (model === 'claude-structured') {
+          // M18 structured-output face: the request arrives with the FORCED
+          // synthetic tool, so the answer is a bare tool_use block (no text)
+          // whose input is the JSON payload (streamed as input_json_delta).
+          const toolUse = { type: 'tool_use', id: 'toolu_s', name: body.tool_choice?.name ?? 'structured_output', input: { city: 'Paris' } };
+          if (body.stream) {
+            res.writeHead(200, { 'content-type': 'text/event-stream' });
+            res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: 'msg_struct', type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 9, output_tokens: 0 } } })}\n\n`);
+            res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: toolUse })}\n\n`);
+            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"city"' } })}\n\n`);
+            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: ':"Paris"}' } })}\n\n`);
+            res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
+            res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 6 } })}\n\n`);
+            res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+            return res.end();
+          }
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end(
+            JSON.stringify({
+              id: 'msg_struct',
+              type: 'message',
+              role: 'assistant',
+              model,
+              content: [toolUse],
+              stop_reason: 'tool_use',
+              stop_sequence: null,
+              usage: { input_tokens: 9, output_tokens: 6 },
             }),
           );
         }
@@ -535,6 +565,7 @@ const mock = await startMockUpstream();
     ['mock-claude-429', 'claude-429', provAnthropic.body.id],
     ['mock-tools', 'mock-tools', prov.body.id],
     ['mock-claude-tools', 'claude-tools', provAnthropic.body.id],
+    ['mock-claude-structured', 'claude-structured', provAnthropic.body.id],
     ['mock-dual', 'mock-chat', provDual.body.id],
     ['mock-dual-n', 'claude-mock', provDual.body.id],
     ['mock-dual-first-assistant', 'claude-mock', provDual.body.id],
@@ -2382,16 +2413,20 @@ const mock = await startMockUpstream();
   }));
   check('M18 openai→openai: response_format re-emitted verbatim', JSON.stringify(lastReq.body?.response_format) === '{"type":"json_object"}', JSON.stringify(lastReq.body?.response_format));
 
-  // openai client json_schema × anthropic upstream: system JSON directive
+  // openai client json_schema × anthropic upstream: FORCED structured-output
+  // tool (the M18 upgrade — a hard guarantee, not the old system directive).
   await fetchOrPost('/v1/chat/completions', JSON.stringify({
     model: 'mock-claude', max_tokens: 512,
     response_format: { type: 'json_schema', json_schema: { name: 's', schema: { type: 'object' } } },
     messages: [{ role: 'user', content: 'hi' }],
   }));
   check(
-    'M18 openai→anthropic: json_schema becomes a JSON-only system directive',
-    typeof lastReq.body?.system === 'string' && lastReq.body.system.startsWith('Respond with ONLY a JSON object') && lastReq.body.system.includes('"type":"object"'),
-    String(lastReq.body?.system)?.slice(0, 160),
+    'M18 openai→anthropic: json_schema becomes a forced structured-output tool',
+    Array.isArray(lastReq.body?.tools) && lastReq.body.tools.length === 1 && lastReq.body.tools[0].name === 's'
+      && JSON.stringify(lastReq.body.tools[0].input_schema) === '{"type":"object"}'
+      && JSON.stringify(lastReq.body.tool_choice) === '{"type":"tool","name":"s"}'
+      && lastReq.body.system === undefined,
+    JSON.stringify({ tools: lastReq.body?.tools, tool_choice: lastReq.body?.tool_choice, system: lastReq.body?.system }),
   );
 
   // openai client json_schema × gemini upstream: responseMimeType + responseSchema
@@ -2421,6 +2456,141 @@ const mock = await startMockUpstream();
     m18bad.status === 400 && /response_format.type/.test(m18bad.body?.error?.message ?? ''),
     JSON.stringify(m18bad.body),
   );
+
+  // -- M18 structured-output emulation end-to-end (anthropic upstream) ------
+  // The mock claude-structured face answers the forced synthetic tool with a
+  // bare tool_use block; every client face must see JSON content, not tools.
+  const structSchema = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] };
+  const structBody = {
+    model: 'mock-claude-structured',
+    response_format: { type: 'json_schema', json_schema: { name: 'weather', schema: structSchema } },
+  };
+
+  // openai client, JSON: the NAMED synthetic tool rides the request…
+  const structJson = await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    ...structBody, messages: [{ role: 'user', content: 'What city?' }],
+  }));
+  check(
+    'M18 emulation: named forced tool reaches the anthropic upstream',
+    Array.isArray(lastReq.body?.tools) && lastReq.body.tools[0]?.name === 'weather'
+      && JSON.stringify(lastReq.body.tools[0].input_schema) === JSON.stringify(structSchema)
+      && JSON.stringify(lastReq.body.tool_choice) === '{"type":"tool","name":"weather"}',
+    JSON.stringify({ tools: lastReq.body?.tools, tool_choice: lastReq.body?.tool_choice }),
+  );
+  check(
+    'M18 emulation: openai client sees JSON content + finish stop (no tool_calls)',
+    structJson.status === 200
+      && structJson.body?.choices?.[0]?.message?.content === '{"city":"Paris"}'
+      && structJson.body?.choices?.[0]?.message?.tool_calls === undefined
+      && structJson.body?.choices?.[0]?.finish_reason === 'stop',
+    JSON.stringify(structJson.body),
+  );
+
+  // openai client, SSE: the tool input streams as content deltas + finish stop.
+  const structStream = await fetch(base + '/v1/chat/completions', {
+    method: 'POST',
+    headers: v1Headers(),
+    body: JSON.stringify({ ...structBody, stream: true, messages: [{ role: 'user', content: 'What city?' }] }),
+  });
+  const structStreamText = await structStream.text();
+  const structStreamChunks = parseDataLines(structStreamText);
+  const structStreamContent = structStreamChunks.map((c) => c.choices?.[0]?.delta?.content ?? '').join('');
+  check(
+    'M18 emulation: openai client stream = content deltas of the JSON + finish stop',
+    structStream.status === 200
+      && structStreamContent === '{"city":"Paris"}'
+      && structStreamChunks.every((c) => c.choices?.[0]?.delta?.tool_calls === undefined)
+      && structStreamChunks[structStreamChunks.length - 1]?.choices?.[0]?.finish_reason === 'stop',
+    structStreamText.slice(0, 240),
+  );
+
+  // responses client, JSON: an output_text message item, never function_call.
+  const structResp = await fetchOrPost('/v1/responses', JSON.stringify({
+    model: 'mock-claude-structured', input: 'What city?',
+    text: { format: { type: 'json_schema', name: 'weather', schema: structSchema } },
+  }));
+  check(
+    'M18 emulation: responses client sees an output_text message item (no function_call)',
+    structResp.status === 200
+      && structResp.body?.status === 'completed'
+      && structResp.body?.output?.[0]?.type === 'message'
+      && structResp.body?.output?.[0]?.content?.[0]?.type === 'output_text'
+      && structResp.body?.output?.[0]?.content?.[0]?.text === '{"city":"Paris"}'
+      && structResp.body.output.every((i) => i.type !== 'function_call'),
+    JSON.stringify(structResp.body),
+  );
+
+  // responses client, SSE: output_text.delta events carry the JSON.
+  const structRespStream = await fetch(base + '/v1/responses', {
+    method: 'POST',
+    headers: v1Headers(),
+    body: JSON.stringify({
+      model: 'mock-claude-structured', input: 'What city?', stream: true,
+      text: { format: { type: 'json_schema', name: 'weather', schema: structSchema } },
+    }),
+  });
+  const structRespText = await structRespStream.text();
+  const structRespDeltas = parseSseEvents(structRespText, 'response.output_text.delta').map((e) => e.delta).join('');
+  check(
+    'M18 emulation: responses client stream = output_text.delta events of the JSON',
+    structRespStream.status === 200
+      && structRespDeltas === '{"city":"Paris"}'
+      && parseSseEvents(structRespText, 'response.function_call_arguments.delta').length === 0,
+    structRespText.slice(0, 240),
+  );
+
+  // Fallback guard 1: client tools present → the directive stands in and the
+  // client's own tools ride untouched (no synthetic tool, no forced choice).
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-claude', max_tokens: 512,
+    response_format: { type: 'json_object' },
+    tools: [{ type: 'function', function: { name: 'get_weather', parameters: { type: 'object' } } }],
+    messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M18 emulation fallback: response_format + client tools keeps directive + client tools',
+    typeof lastReq.body?.system === 'string' && lastReq.body.system.startsWith('Respond with ONLY')
+      && Array.isArray(lastReq.body?.tools) && lastReq.body.tools.length === 1 && lastReq.body.tools[0]?.name === 'get_weather'
+      && JSON.stringify(lastReq.body.tool_choice) === '{"type":"auto"}',
+    JSON.stringify({ system: lastReq.body?.system, tools: lastReq.body?.tools, tool_choice: lastReq.body?.tool_choice }),
+  );
+
+  // Fallback guard 2: thinking requested → directive (the Messages API
+  // forbids forced tool_choice while extended thinking is enabled).
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({
+    model: 'mock-claude', max_tokens: 4096,
+    response_format: { type: 'json_object' },
+    reasoning_effort: 'low',
+    messages: [{ role: 'user', content: 'hi' }],
+  }));
+  check(
+    'M18 emulation fallback: response_format + reasoning keeps directive + thinking, no tools',
+    typeof lastReq.body?.system === 'string' && lastReq.body.system.startsWith('Respond with ONLY')
+      && lastReq.body.tools === undefined
+      && JSON.stringify(lastReq.body.thinking) === '{"type":"enabled","budget_tokens":1024}',
+    JSON.stringify({ system: lastReq.body?.system, tools: lastReq.body?.tools, thinking: lastReq.body?.thinking }),
+  );
+
+  // Cache replay: a stored anthropic payload (raw tool_use block) must replay
+  // unwrapped — the second identical call hits and still serves JSON content.
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_enabled: 'on' }) });
+  const structModelRow = (await j('/api/admin/models')).body?.find((m) => m.slug === 'mock-claude-structured');
+  const structCacheFlag = await j(`/api/admin/models/${structModelRow?.id}`, { method: 'PATCH', body: JSON.stringify({ cache_enabled: true }) });
+  check('M18 emulation cache setup: model opt-in + master on', structCacheFlag.status === 200 && structCacheFlag.body?.cache_enabled === true, JSON.stringify(structCacheFlag.body));
+  await new Promise((r) => setTimeout(r, 5300)); // settings snapshot cache (5 s)
+  const structMiss = await fetchOrPost('/v1/chat/completions', JSON.stringify({ ...structBody, messages: [{ role: 'user', content: 'Cache me' }] }));
+  await new Promise((r) => setTimeout(r, 1600)); // the cache store rides waitUntil
+  const structHit = await fetchOrPost('/v1/chat/completions', JSON.stringify({ ...structBody, messages: [{ role: 'user', content: 'Cache me' }] }));
+  check(
+    'M18 emulation cache: miss → hit with the payload replayed unwrapped',
+    structMiss.headers?.get('x-khateway-cache') === 'MISS' && structHit.headers?.get('x-khateway-cache') === 'HIT'
+      && structHit.body?.choices?.[0]?.message?.content === '{"city":"Paris"}'
+      && structHit.body?.choices?.[0]?.finish_reason === 'stop',
+    `miss=${structMiss.headers?.get('x-khateway-cache')} hit=${structHit.headers?.get('x-khateway-cache')} ${JSON.stringify(structHit.body)}`,
+  );
+  // restore neutral state (master off + flush the emulation entry)
+  await j('/api/admin/cache/flush', { method: 'POST' });
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ cache_enabled: 'off' }) });
 
   // ==================================================================
   // M16 — OpenRouter client-parity pack: /v1/models pricing +

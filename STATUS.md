@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-27 (whole-API free-tier flag + free-provider seeder DEPLOYED — version 518fc56f)
+Last updated: 2026-09-27 (anthropic structured-output emulation — the M18 upgrade path deployed, version d49a02f0)
 
 ## How to use this file
 
@@ -11,6 +11,57 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **Anthropic structured-output emulation ✅ complete + DEPLOYED (2026-09-27)**
+  — user picked it from the queue ("What should we do next?" → the M18
+  contract's named upgrade path). `response_format`/`text.format` on an
+  ANTHROPIC upstream is now a HARD guarantee instead of the best-effort
+  system directive. Shipped:
+  - **Mechanism**: `anthropicStructuredOutputTool(req)` (pure helper in
+    `dialects/options.ts`) builds the synthetic tool (name = sanitized
+    `responseFormat.name` → `^[a-zA-Z0-9_-]{1,64}$`, else sentinel
+    `structured_output`; input_schema = the schema, json_object →
+    `{type:'object'}`; fixed description). Emulation activates only when:
+    responseFormat present AND no client tools AND no reasoning — the
+    Messages API rejects forced `tool_choice` while extended thinking is on
+    (verified against platform.claude.com + AWS Bedrock docs), and forcing
+    would break a client's tool loop. Other cases keep the old directive
+    verbatim (it is now the fallback-only path).
+  - **Request side** (`adapters/anthropic.ts`): emulation → injects
+    `tools: [synthetic]` + `tool_choice: {type:'tool', name}` and skips the
+    directive. The tool exists ONLY at adapter level — the canonical request
+    and M11 cache keys are untouched (responseFormat already rode the key
+    since M18).
+  - **Response side** ("under emulation, tool_use blocks are read as
+    content"): gateway stamps `ChatMeta.structuredOutput` per adapter attempt
+    and `serveCachedResponse` re-derives it from the request, so cached raw
+    anthropic payloads replay unwrapped. Four translators learned the flag:
+    `anthropicMessageToOpenAiCompletion` (first tool_use input → content,
+    wins over text; finish `stop`), `transformAnthropicSseToOpenAi`
+    (`input_json_delta` fragments → content deltas — how openai streams
+    json_schema; stop_reason tool_use → finish stop),
+    `anthropicMessageToResponse` (tool_use input → output_text message item,
+    never a function_call), `transformAnthropicSseToResponses` (fragments →
+    output_text.delta events). The usage-watcher tee stays on the RAW
+    anthropic stream — billing unchanged. Same-dialect passthrough never sees
+    it (the anthropic client face cannot produce responseFormat); gemini is
+    native (responseMimeType).
+  - Verified: `npm run check` clean; **382/382** offline tests (+7 goldens:
+    adapters — json_object forced-tool case (rewritten), json_schema named/
+    sanitized tool, client-tools directive fallback, reasoning directive
+    fallback; translate-json ×2 + translate-sse ×2 structured-unwrap cases;
+    the translate-json runner now passes fixture `opts`); **smoke_gateway
+    245/245** (+9: forced-tool request assert with NO system field; named
+    tool end-to-end through the openai face (JSON + stream); responses face
+    output_text item (JSON) + output_text.delta events (SSE); client-tools +
+    reasoning fallback cells; cache miss→HIT with the payload replayed
+    unwrapped); admin smoke, m8 45, m9 75, m10 33, m11, m14, device, oauth
+    ALL PASS; build clean. Smoke-iteration catch: my first responses cell
+    asserted `content[0].output_text` — the part's field is `text` (the
+    golden fixtures had it right); product code was correct, cell fixed.
+  - **DEPLOYED ✅ (2026-09-27, version d49a02f0-79bc-49bd-a711-2484f3d80dd2)**
+    via `npm run deploy` — worker only, SPA bundle unchanged. Live checks
+    green: /health ok; /api/admin/providers → 401 unauth; keyless /v1 → 401
+    strict-keys envelope.
 - **Whole-API free-tier flag + free-provider seeder ✅ complete + DEPLOYED
   (2026-09-27)** — user committed the feature themselves (05bf120) after
   building on the free-models auto-sync; this session verified it live, found

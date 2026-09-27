@@ -1,9 +1,34 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-27 (free-tier flag + seeder DEPLOYED — version 518fc56f)
+Last updated: 2026-09-27 (anthropic structured-output emulation DEPLOYED — version d49a02f0)
 
 ## Cross-session facts
 
+- **Anthropic structured-output emulation (2026-09-27)** — the M18 contract's
+  named upgrade path, now BUILT: `response_format`/`text.format` on an
+  anthropic upstream is a hard guarantee via a FORCED synthetic tool.
+  `anthropicStructuredOutputTool(req)` (dialects/options.ts) activates ONLY
+  when: responseFormat present AND no client tools AND no reasoning — the
+  Messages API rejects forced `tool_choice` while extended thinking is on
+  (verified against platform.claude.com + AWS Bedrock docs), and forcing
+  would break a client's tool loop; those cases keep the old best-effort
+  system directive (now fallback-only). Tool name = `responseFormat.name`
+  sanitized to `^[a-zA-Z0-9_-]{1,64}$`, else sentinel `structured_output`;
+  json_object gets `{type:'object'}`. The tool exists ONLY at adapter level
+  (canonical request + M11 cache keys untouched; responseFormat already rode
+  the cache key since M18). Response side: `ChatMeta.structuredOutput` (also
+  re-derived inside `serveCachedResponse` so cached raw anthropic payloads
+  replay unwrapped) drives the four anthropic-upstream translators to read
+  tool_use as CONTENT — input → message content / output_text (wins over
+  text), `input_json_delta` fragments stream as content deltas (exactly how
+  openai streams json_schema), stop_reason tool_use → finish stop /
+  completed; never tool_calls/function_call. Usage tee stays on the RAW
+  anthropic stream (billing unchanged). Same-dialect passthrough unaffected
+  (the anthropic client face cannot produce responseFormat); gemini native.
+  Counts: offline 382 (+7), smoke_gateway 245 (+9). DEPLOYED 2026-09-27
+  (version d49a02f0). Smoke-iteration catch: the Responses message part's
+  text field is `text`, not `output_text` — the smoke cell (not the product)
+  had it wrong.
 - **Whole-API free-tier flag + free-provider seeder (2026-09-27)** —
   `providers.free_tier` (migration 0014): whole-API free tiers (Groq, GitHub
   Models, Pollinations, Cerebras, SambaNova, Mistral, NVIDIA NIM — listings
@@ -469,10 +494,21 @@ UI/UX. In plan mode the MVP was walked through together; user approved with:
     recursive cleaner (keeps type/format/description/nullable/enum/maxItems/
     minItems/properties/required/items/propertyOrdering; lowercases type;
     drops $schema/additionalProperties/etc.) — json_object sends the MIME
-    type only. Anthropic: BEST-EFFORT system directive ("Respond with ONLY a
-    JSON object…"; json_schema embeds the schema) — documented as not a hard
-    guarantee; the upgrade path is single-tool emulation (forced tool_choice
-    + response-side unwrapping), a deliberate cut this session.
+    type only. Anthropic (UPGRADED 2026-09-27 — the named upgrade path is
+    now BUILT, no longer a deliberate cut; see the cross-session facts entry
+    at the top): when the request has responseFormat and NO client tools and
+    NO reasoning, the adapter injects ONE synthetic tool
+    (`anthropicStructuredOutputTool` in dialects/options.ts) with FORCED
+    `tool_choice {type:'tool'}` — the Messages API prefills the assistant
+    turn, guaranteeing a tool_use block (same hard guarantee as openai
+    json_schema). The directive ("Respond with ONLY a JSON object…") is now
+    the FALLBACK for client-tools-present and reasoning-present requests
+    (forced tool_choice is incompatible with extended thinking). Response
+    side: `ChatMeta.structuredOutput` drives the four anthropic-upstream
+    translators to read tool_use as CONTENT (input → content/output_text;
+    `input_json_delta` fragments stream as content deltas; stop_reason
+    tool_use → finish stop|completed) — never tool_calls. The synthetic tool
+    never reaches the client and never enters the canonical request.
   - **Cache**: reasoning + responseFormat ride cacheKeyInput ONLY when
     present (spread) — never add unconditional fields to the projection; it
     would invalidate every stored entry.
