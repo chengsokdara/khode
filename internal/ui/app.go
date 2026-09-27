@@ -165,15 +165,13 @@ type Model struct {
 	diffCalls map[string]diffChange
 
 	// taskProgress carries one-line subagent activity from the task
-	// tool's Exec (running on the agent goroutine) into Update; the
-	// sender drops lines rather than block the child. activeTask indexes
-	// the in-flight task call block (-1 when none) and activeTaskID its
-	// call id, so progress lands on the right line and clears at the
-	// result. Tool calls execute sequentially, so at most one task runs
-	// at a time.
+	// tool's Exec (running on agent goroutines) into Update; the sender
+	// drops lines rather than block the child. activeTasks maps each
+	// in-flight task's parent call id to its call block index — parallel
+	// read-only children (an explore fan-out) run side by side, each
+	// upserting its own nested line.
 	taskProgress chan agent.SubagentProgress
-	activeTask   int
-	activeTaskID string
+	activeTasks  map[string]int
 
 	// gather holds the first-prompt context-gatherer phase: on a fresh
 	// session the UI runs a read-only subagent before the first real
@@ -283,7 +281,6 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 		partialThink: new(strings.Builder),
 		approvals:    agent.NewBridge(),
 		taskProgress: make(chan agent.SubagentProgress, 64),
-		activeTask:   -1,
 	}
 
 	m.registerTaskTool()
@@ -514,13 +511,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishStream()
 
 	case taskProgressMsg:
-		if m.activeTask < 0 || m.activeTask >= len(m.messages) {
+		idx, ok := m.activeTasks[msg.CallID]
+		if !ok || idx < 0 || idx >= len(m.messages) {
 			return m, m.pump()
 		}
-		blk := m.messages[m.activeTask]
+		blk := m.messages[idx]
 		blk.subLine = fmt.Sprintf("%s · %s · %d calls", msg.Kind, msg.Activity, msg.Calls)
 		blk.rendered = "" // drop the block cache so the line re-renders
-		m.messages[m.activeTask] = blk
+		m.messages[idx] = blk
 		return m, m.pump()
 
 	case compactDoneMsg:
@@ -1142,23 +1140,26 @@ func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {
 		})
 		if e.Name == "task" {
 			// The child reports through the progress feed while it runs;
-			// sequential execution means at most one task is in flight.
-			m.activeTask = len(m.messages) - 1
-			m.activeTaskID = e.ID
+			// read-only children may run side by side, so every in-flight
+			// call id maps to its own call block.
+			if m.activeTasks == nil {
+				m.activeTasks = make(map[string]int)
+			}
+			m.activeTasks[e.ID] = len(m.messages) - 1
 		}
 		return tea.Batch(m.pump(), m.flush())
 
 	case llm.ToolResultEvent:
-		if e.CallID == m.activeTaskID {
+		if idx, ok := m.activeTasks[e.CallID]; ok {
 			// The report block itself is the finished feedback: drop the
 			// live activity line.
-			if m.activeTask >= 0 && m.activeTask < len(m.messages) {
-				blk := m.messages[m.activeTask]
+			if idx >= 0 && idx < len(m.messages) {
+				blk := m.messages[idx]
 				blk.subLine = ""
 				blk.rendered = ""
-				m.messages[m.activeTask] = blk
+				m.messages[idx] = blk
 			}
-			m.activeTask, m.activeTaskID = -1, ""
+			delete(m.activeTasks, e.CallID)
 		}
 		if e.Name == "todo" && !e.IsError {
 			m.upsertTodoPanel(m.todoList())
@@ -1387,7 +1388,7 @@ func (m *Model) finishStream() tea.Cmd {
 	m.phase = ""
 	m.events = nil
 	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0
-	m.activeTask, m.activeTaskID = -1, ""
+	m.activeTasks = nil
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil

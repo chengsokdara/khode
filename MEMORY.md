@@ -23,6 +23,26 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
+- **Parallel read-only fan-out (2026-09-27):** `executeCalls` splits
+  the round into maximal runs of parallelizable calls
+  (`RiskRead` + no `ExclusiveTool` veto) and runs each run as a group
+  bounded at `maxParallelCalls` (8); risky calls and group boundaries
+  stay strictly ordered. Results append + emit in CALL order as each
+  slot's turn comes up (`execParallel` waits slot-by-slot on done
+  channels), so the transcript, the UI's per-call pairing, and
+  replay are byte-identical to sequential execution — only the
+  wall-clock changes. `TaskTool.Exclusive(args)` parses `subagent_type`
+  and vetoes unless `kindIsReadOnly` (built-in read-only kinds or an
+  all-read user allowlist), so only children that cannot mutate or ask
+  ever run side by side. `SubagentProgress` gained `CallID`, filled
+  from a context value the loop stamps in `execCall`
+  (`callIDContextKey` — tools don't otherwise know their call id), and
+  the UI's `activeTasks map[string]int` tracks every in-flight task
+  call block so parallel children upsert independent nested lines.
+  fakeai is now ThreadingHTTPServer (single-threaded served concurrent
+  children serially) and the selftest script polls for `● ready`
+  between prompts — enter is swallowed mid-stream, so a prompt sent
+  while a turn runs silently queues in the input.
 - **User-defined agents (2026-09-27):** the subagent kind catalog is
   open to user files. `agent.LoadUserAgents(config.AgentsDir())`
   (startup, main.go; reload with `r` in /agents) replaces the
@@ -130,6 +150,11 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-27 | Parallel execution groups CONSECUTIVE read-only calls and emits results in call order (slot-by-slot ordered drain); it does not reorder or interleave with risky calls | per-call pairing, transcript order, and the diff/todo replay logic must stay byte-identical to sequential; concurrency is a wall-clock win, not an ordering change — and group boundaries keep writes gated and dialogs one-at-a-time |
+| 2026-09-27 | `tools.ExclusiveTool` vetoes parallelism per call; TaskTool allows only `kindIsReadOnly` children to fan out | concurrency safety is the tool's own knowledge (state, spawned children) — the loop cannot infer it; only all-read children are provably safe to run side by side (no mutation, no approval dialog) |
+| 2026-09-27 | The task tool's progress carries the parent call id read from a context value stamped in `execCall` (`callIDContextKey`), not a wider Tool interface | the Tool contract stays `Exec(ctx, args)`; context is the narrowest channel for per-invocation data and direct Exec callers (tests) simply carry no id |
+| 2026-09-27 | The UI tracks in-flight tasks in `activeTasks map[string]int` (call id → block index) instead of one active task | parallel children each own a call block and upsert independent nested activity lines; id-keyed routing also survives out-of-order progress between siblings |
+| 2026-09-27 | fakeai routes subagent rounds by transcript shape (`"role":"tool"` present → report round) and the fan-out by a once-only prompt marker; the server is threaded | concurrent children consume responses in nondeterministic order, so per-child scripted rounds must be schedule-independent; a single-threaded HTTP server serialized the children and faked the timing |
 | 2026-09-27 | User agent files refuse built-in names instead of shadowing them; loading REPLACES the user set (not a merge), filename order, first file wins a duplicate name | a user file silently overriding `explore`'s behavior would be a support nightmare, and replace-semantics makes reload (and tests) predictable; duplicates would otherwise depend on map iteration order |
 | 2026-09-27 | User-kind tool allowlists build per-spawn registries: fresh built-in constructor instances + MCP tools borrowed from the main registry via `SubagentConfig.ToolSource`; `task`/`plan` never resolve | sharing main-registry tool instances would leak the user's /tools session toggles into subagents (and vice versa), while MCP tools are stateless client wrappers that must be shared; recursion stays impossible by construction |
 | 2026-09-27 | The task schema's `subagent_type` enum and description are generated from the live catalog (`KindNames`/`kindSummary`), and a kind's `model` frontmatter pin beats the global `subagent_model` | the model can only call kinds it can see, so user agents must be advertised; an explicit per-kind pin expresses "this agent runs on X" more precisely than a global cheap-model default |

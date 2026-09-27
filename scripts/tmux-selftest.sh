@@ -8,9 +8,12 @@
 #   tmux -L khv attach -t main            # poke at the session yourself
 #   tmux -L khv kill-server               # clean up when done
 #
-# The fake server (fakeai.py) replays a fixed scenario per prompt:
-# round 1 thinking + prose + a 27-line write call, round 2 an edit
-# call, round 3 a closing answer. Every new prompt replays it again.
+# The fake server (fakeai.py) routes by request body: the first prompt
+# replays thinking + prose + a 27-line write call, an edit call, and a
+# closing answer; "now survey the repo" fires one task(explore) call;
+# "fan out two explore searches now" fires TWO task(explore) calls in
+# one round (parallel read-only fan-out). Children grep, then report
+# after a ~3s hold so the live activity lines are readable in captures.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -57,16 +60,45 @@ echo "=== SGR capture of the diff rows (what the terminal paints) ==="
 tmux -L khv capture-pane -e -p -t main | grep -E "EDITED|48;5" | cat -v | head -6
 echo
 
+# wait_ready polls the frame until the status line is back to ready, so
+# the next scenario's prompt can never land mid-stream (enter is
+# swallowed while a turn runs).
+wait_ready() {
+  for _ in $(seq 1 60); do
+    if tmux -L khv capture-pane -p -t main | grep -q "● ready"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "timeout waiting for ready" >&2
+}
+
 # Task scenario: round 4 calls task(explore); the subagent's live
-# activity line is held ~1s by the fake server, so a mid-flight capture
+# activity line is held ~3s by the fake server, so a mid-flight capture
 # catches it before the report block replaces it.
+wait_ready
 tmux -L khv send-keys -t main "now survey the repo" Enter
 sleep 1.7
 echo "=== mid-flight subagent capture (live activity line expected) ==="
 tmux -L khv capture-pane -p -t main | grep -E "task|⎿" || true
-sleep 3
+wait_ready
 echo
 echo "=== final capture after the task report lands ==="
 tmux -L khv capture-pane -p -t main | tail -14
+echo
+
+# Fan-out scenario: the fan-out prompt fires a round with TWO
+# task(explore) calls; khode runs them side by side, so both call
+# blocks carry their own live activity line at the same time (children
+# are held ~3s by the fake server).
+wait_ready
+tmux -L khv send-keys -t main "fan out two explore searches now" Enter
+sleep 2.0
+echo "=== mid-flight fan-out capture (two live subagent lines expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "task|⎿" || true
+wait_ready
+echo
+echo "=== final capture after both fan-out reports land ==="
+tmux -L khv capture-pane -p -t main | tail -16
 echo
 echo "session left running: tmux -L khv attach -t main · cleanup: tmux -L khv kill-server"

@@ -10,6 +10,28 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Parallel read-only fan-out (2026-09-27):** the agent loop executes
+consecutive read-only calls of a round as one parallel group (bounded
+at 8 concurrent), while risky calls and group boundaries keep strict
+call order — the transcript and the UI see results in exactly the order
+the model issued them, with per-call pairing unchanged. A
+`tools.ExclusiveTool` veto exempts a call per invocation: the task tool
+vetoes for any child that could mutate (general-purpose, unknown kinds,
+user kinds with non-read allowlists) and allows the all-read kinds, so
+a parent can fan out multiple explore/gatherer/plan/code-reviewer
+children in one round. Each child's progress line now carries the
+parent's call id (riding Exec's context, no Tool-interface change), and
+the UI tracks every in-flight task call block by id in a map — each
+parallel child upserts its own nested `⎿ kind · activity · N calls`
+line. MCP read tools parallelize safely (the client multiplexes request
+ids under a write mutex), the todo tool's list is mutex-guarded, and a
+canceled turn still appends "interrupted by user" for every parallel
+slot. Pinned by race-detector tests (parallel timing with generous
+margins, ordered results, mixed read/write rounds, two-child fan-out,
+per-call progress ids, cancel drain) and the tmux harness's new
+two-explorer scenario: both call blocks carried live `⎿ explore · grep`
+lines simultaneously and the turn finished in one child-hold, not two.
+
 **User-defined agents (2026-09-27):** the subagent catalog is open — one
 markdown file per kind in `~/.khode/agents/` (frontmatter `name`,
 `description`, optional `tools:` allowlist, optional `model:` pin; the
@@ -878,6 +900,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-27 | Parallel read-only fan-out: consecutive read-only calls run as a bounded parallel group with call-ordered results; all-read task children spawn side by side with per-call progress ids and per-block live activity lines (`tools.ExclusiveTool` veto) | (this commit) |
 | 2026-09-27 | User-defined agents: `~/.khode/agents/*.md` (frontmatter + body) join the task catalog with tool allowlists and model pins; `code-reviewer` built-in; `/agents` overview dialog with live reload (`r`) | (this commit) |
 | 2026-09-26 | Tool results and diffs hang directly under their `⏺` call lines (pair-aware viewport spacing) instead of two blank rows below | (this commit) |
 | 2026-09-26 | Traveling-shimmer header rule while the agent works + streaming-cursor wrap fix (cursor hugs the text; kills the thin-bar/thick-bar artifact) | (this commit) |

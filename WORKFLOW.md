@@ -65,21 +65,19 @@ Never attach the user's tmux server, never write the real
 ### The fake model (`scripts/fakeai.py`)
 
 A dependency-free OpenAI-protocol SSE server on `127.0.0.1:19731` that
-replays one scripted scenario per prompt, in rounds:
-
-1. thinking (`reasoning_content`) + prose + a `write` call creating a
-   27-line file (diff exceeds the 20-line chat cap);
-2. an `edit` call on that file (both diff bands, old/new gutter
-   numbers);
-3. the closing answer.
-
-Every new prompt replays the scenario (the round counter resets with
-the server, which the script restarts per run). Extend it when a
-feature needs other shapes: more rounds, other tools, error results,
-parallel tool calls, `<think>`-tag content, malformed tool arguments
-(khode must reject them gracefully). It is plain stdlib Python —
-`httptest`-style fixtures in Go would not exercise the real binary
-end to end.
+routes by request body: the first prompt replays thinking + prose + a
+`write` call creating a 27-line file (diff exceeds the 20-line chat
+cap), then an `edit` call, then a closing answer; "now survey the repo"
+fires a `task(explore)` call; "fan out two explore searches now" fires
+TWO `task(explore)` calls in one round (the parallel read-only
+fan-out). Task children grep, then report after a ~3s hold so the live
+subagent activity lines are readable in captured frames. The server is
+threaded so concurrent children are served truly concurrently. Extend
+it when a feature needs other shapes: more rounds, other tools, error
+results, parallel tool calls, `<think>`-tag content, malformed tool
+arguments (khode must reject them gracefully). It is plain stdlib
+Python — `httptest`-style fixtures in Go would not exercise the real
+binary end to end.
 
 ### Gotchas learned the hard way
 

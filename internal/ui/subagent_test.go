@@ -26,7 +26,7 @@ func driveTaskWithProgress(t *testing.T) Model {
 	}}})
 	m = next.(Model)
 
-	next, _ = m.Update(taskProgressMsg{Kind: "explore", Activity: "grep TODO", Calls: 2})
+	next, _ = m.Update(taskProgressMsg{CallID: "t1", Kind: "explore", Activity: "grep TODO", Calls: 2})
 	m = next.(Model)
 	return m
 }
@@ -34,8 +34,8 @@ func driveTaskWithProgress(t *testing.T) Model {
 func TestTaskProgressLineRendersWhileRunning(t *testing.T) {
 	m := driveTaskWithProgress(t)
 
-	if m.activeTaskID != "t1" {
-		t.Fatalf("activeTaskID = %q", m.activeTaskID)
+	if _, ok := m.activeTasks["t1"]; !ok {
+		t.Fatalf("activeTasks = %v, want t1 tracked", m.activeTasks)
 	}
 	var blk string
 	for i, msg := range m.messages {
@@ -56,8 +56,8 @@ func TestTaskProgressLineClearsOnResult(t *testing.T) {
 	}})
 	m = next.(Model)
 
-	if m.activeTaskID != "" || m.activeTask != -1 {
-		t.Fatalf("active task not cleared: %d %q", m.activeTask, m.activeTaskID)
+	if len(m.activeTasks) != 0 {
+		t.Fatalf("active task not cleared: %v", m.activeTasks)
 	}
 	for i, msg := range m.messages {
 		if msg.kind == kindToolCall {
@@ -78,10 +78,52 @@ func TestTaskProgressWithoutActiveTaskIsIgnored(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
 	before := len(m.messages)
-	next, _ = m.Update(taskProgressMsg{Kind: "explore", Activity: "grep x", Calls: 1})
+	next, _ = m.Update(taskProgressMsg{CallID: "gone", Kind: "explore", Activity: "grep x", Calls: 1})
 	m = next.(Model)
 	if len(m.messages) != before {
 		t.Fatalf("stale progress appended a block")
+	}
+}
+
+func TestParallelTaskProgressRoutesByCallID(t *testing.T) {
+	// An explore fan-out: two task calls in flight side by side, each
+	// child's progress upserting its own call block's nested line.
+	m := newTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	m.streaming = true
+
+	call := func(id, desc string) {
+		t.Helper()
+		next, _ = m.Update(streamEventMsg{ev: llm.ToolCallEvent{ToolCall: llm.ToolCall{
+			ID: id, Name: "task",
+			Input: json.RawMessage(`{"prompt":"sweep","description":"` + desc + `","subagent_type":"explore"}`),
+		}}})
+		m = next.(Model)
+	}
+	call("t1", "map packages")
+	call("t2", "list files")
+
+	next, _ = m.Update(taskProgressMsg{CallID: "t2", Kind: "explore", Activity: "glob **/*.go", Calls: 1})
+	m = next.(Model)
+	next, _ = m.Update(taskProgressMsg{CallID: "t1", Kind: "explore", Activity: "grep package", Calls: 3})
+	m = next.(Model)
+
+	blocks := map[string]string{}
+	for i, msg := range m.messages {
+		if msg.kind == kindToolCall {
+			for _, desc := range []string{"map packages", "list files"} {
+				if strings.Contains(msg.raw, desc) {
+					blocks[desc] = ansiStrip(m.block(i, 100))
+				}
+			}
+		}
+	}
+	if !strings.Contains(blocks["map packages"], "grep package · 3 calls") {
+		t.Errorf("t1 block = %q", blocks["map packages"])
+	}
+	if !strings.Contains(blocks["list files"], "glob **/*.go · 1 calls") {
+		t.Errorf("t2 block = %q", blocks["list files"])
 	}
 }
 

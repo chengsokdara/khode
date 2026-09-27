@@ -229,24 +229,12 @@ func KindInfos() []KindInfo {
 	defer userKindMu.RUnlock()
 	infos := make([]KindInfo, 0, len(subagentKinds)+len(userKinds))
 	add := func(k SubagentKind, s kindSpec, builtin bool) {
-		ro := s.ReadOnly
-		if !ro && len(s.Tools) > 0 {
-			// An allowlist of only read tools behaves read-only: plan
-			// mode holds and no approval dialog can fire.
-			ro = true
-			for _, t := range s.Tools {
-				if t != "read" && t != "glob" && t != "grep" {
-					ro = false
-					break
-				}
-			}
-		}
 		infos = append(infos, KindInfo{
 			Name:        string(k),
 			Label:       s.Label,
 			Description: s.Description,
 			Tools:       effectiveTools(s),
-			ReadOnly:    ro,
+			ReadOnly:    kindIsReadOnly(s),
 			Builtin:     builtin,
 		})
 	}

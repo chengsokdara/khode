@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Scripted OpenAI-protocol server. Requests are routed by body:
 "# Context gatherer" (the UI's first-prompt sweep) gets a brief after a
-hold, "# Subagent" (a task subagent) gets a grep call then a report, and
-everything else is the outer conversation: rounds replay write → edit →
-answer, then a task(explore) call, then the closing answer. The holds
+hold, "# Subagent" (a task subagent) gets a grep call on its first
+request and a report on its second, and everything else is the outer
+conversation: rounds replay write → edit → answer, then a task(explore)
+call, then a two-child task fan-out, then the closing answer. The holds
 keep the live "gathering context" / subagent activity lines readable in
-the captured frames."""
+the captured frames. Threaded so parallel children are served truly
+concurrently."""
 import json
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 19731
 FILE_LINES = [f"line {i}: hello from the fake model" for i in range(1, 26)] + ["", "trailing after a blank"]
@@ -27,7 +29,7 @@ def sse(self, chunks):
 
 class H(BaseHTTPRequestHandler):
     outer = 0
-    sub_reported = False
+    fanout_sent = False
     def log_message(self, *a):
         pass
     def do_GET(self):
@@ -59,9 +61,17 @@ class H(BaseHTTPRequestHandler):
             return
 
         if b"# Subagent" in body:
-            # A task subagent: first a grep call, then the final report.
-            if not H.sub_reported:
-                H.sub_reported = True
+            # A task subagent: first request gets a grep call, the
+            # second (its transcript now carries a tool result) gets the
+            # final report, held so the live activity line is readable.
+            if b'"role":"tool"' in body:
+                time.sleep(3.0)  # keep the live activity line readable
+                sse(self, [
+                    chunk({"content": "Report: one Go package lives in cmd/khode; hello.txt holds the sample file."}),
+                    chunk({}, finish="stop"),
+                    chunk({}, usage={"prompt_tokens": 1100, "completion_tokens": 40}),
+                ])
+            else:
                 ga = json.dumps({"pattern": "package "})
                 sse(self, [
                     chunk({"role": "assistant"}),
@@ -69,13 +79,6 @@ class H(BaseHTTPRequestHandler):
                                            "function": {"name": "grep", "arguments": ga}}]}),
                     chunk({}, finish="tool_calls"),
                     chunk({}, usage={"prompt_tokens": 900, "completion_tokens": 30}),
-                ])
-            else:
-                time.sleep(3.0)  # keep the live activity line readable
-                sse(self, [
-                    chunk({"content": "Report: one Go package lives in cmd/khode; hello.txt holds the sample file."}),
-                    chunk({}, finish="stop"),
-                    chunk({}, usage={"prompt_tokens": 1100, "completion_tokens": 40}),
                 ])
             return
 
@@ -92,6 +95,38 @@ class H(BaseHTTPRequestHandler):
                 chunk({}, finish="tool_calls"),
                 chunk({}, usage={"prompt_tokens": 4200, "completion_tokens": 50}),
             ])
+        elif H.outer >= 5:
+            # A read-only fan-out, fired once by the prompt that asks for
+            # it: TWO task(explore) calls in one round, so khode runs
+            # them side by side and each task call line carries its own
+            # live activity. The turn's continuation (the same prompt in
+            # history, plus the tool results) gets the closing answer.
+            if b"fan out" in body and not H.fanout_sent:
+                H.fanout_sent = True
+                ta1 = json.dumps({"prompt": "map the go packages",
+                                  "subagent_type": "explore",
+                                  "description": "map packages"})
+                ta2 = json.dumps({"prompt": "describe the sample file",
+                                  "subagent_type": "explore",
+                                  "description": "describe sample"})
+                sse(self, [
+                    chunk({"role": "assistant"}),
+                    chunk({"content": "Fanning out two explorers."}),
+                    chunk({"tool_calls": [
+                        {"index": 0, "id": "call_5a", "type": "function",
+                         "function": {"name": "task", "arguments": ta1}},
+                        {"index": 1, "id": "call_5b", "type": "function",
+                         "function": {"name": "task", "arguments": ta2}},
+                    ]}),
+                    chunk({}, finish="tool_calls"),
+                    chunk({}, usage={"prompt_tokens": 4400, "completion_tokens": 50}),
+                ])
+            else:
+                sse(self, [
+                    chunk({"content": "Both explore agents report: one Go package in cmd/khode, sample file on disk."}),
+                    chunk({}, finish="stop"),
+                    chunk({}, usage={"prompt_tokens": 4800, "completion_tokens": 60}),
+                ])
         elif H.outer == 2:
             ea = json.dumps({"path": "hello.txt",
                              "old_string": "line 5: hello from the fake model",
@@ -127,11 +162,5 @@ class H(BaseHTTPRequestHandler):
                 chunk({}, finish="tool_calls"),
                 chunk({}, usage={"prompt_tokens": 1200, "completion_tokens": 300}),
             ])
-        else:
-            sse(self, [
-                chunk({"content": "The explore agent reports: one Go package in cmd/khode, sample file on disk."}),
-                chunk({}, finish="stop"),
-                chunk({}, usage={"prompt_tokens": 4800, "completion_tokens": 60}),
-            ])
 
-HTTPServer(("127.0.0.1", PORT), H).serve_forever()
+ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

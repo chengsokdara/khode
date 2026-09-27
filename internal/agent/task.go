@@ -24,8 +24,10 @@ import (
 const maxTaskResult = 16 << 10
 
 // SubagentProgress is one line of a running subagent's activity,
-// forwarded to the UI while the child works.
+// forwarded to the UI while the child works. CallID is the parent's
+// task call id, so parallel children feed separate lines.
 type SubagentProgress struct {
+	CallID   string // the parent's task tool call id
 	Kind     string // the profile label ("general", "explore", "gather", "plan")
 	Activity string // the child's latest tool call, e.g. "read internal/llm/loop.go"
 	Calls    int    // child tool calls so far
@@ -165,6 +167,7 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 			calls++
 			if t.cfg.Progress != nil {
 				t.cfg.Progress(SubagentProgress{
+					CallID:   callIDFromContext(ctx),
 					Kind:     spec.Label,
 					Activity: progressLine(e.Name, e.Input),
 					Calls:    calls,
@@ -182,6 +185,26 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 		return "(the subagent finished without a report)", nil
 	}
 	return clipTaskResult(out, spec.ReportCap), nil
+}
+
+// callIDFromContext returns the parent loop's running tool call id; a
+// task Exec driven directly (tests, no loop) carries none.
+func callIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(callIDContextKey{}).(string)
+	return id
+}
+
+// Exclusive implements tools.ExclusiveTool: only all-read children may
+// run side by side with their siblings (they cannot mutate and never
+// raise an approval dialog), any child that could mutate runs alone.
+// Unknown kinds normalize to general-purpose, which is exclusive.
+func (t *TaskTool) Exclusive(args json.RawMessage) bool {
+	var a struct {
+		SubagentType string `json:"subagent_type"`
+	}
+	_ = json.Unmarshal(args, &a)
+	_, spec := normalizeKind(a.SubagentType)
+	return !kindIsReadOnly(spec)
 }
 
 // subagentSystem keeps the project context (AGENTS.md guidance applies

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"khode/internal/llm"
@@ -12,8 +13,11 @@ import (
 )
 
 // fakeProvider replays scripted event lists, one per Stream call, and
-// records every request it receives.
+// records every request it receives. Safe for concurrent Stream calls:
+// parallel read-only execution and task fan-outs hit it from several
+// goroutines at once.
 type fakeProvider struct {
+	mu        sync.Mutex
 	responses [][]llm.Event
 	requests  []llm.Request
 }
@@ -21,12 +25,15 @@ type fakeProvider struct {
 func (f *fakeProvider) Name() string { return "fake" }
 
 func (f *fakeProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	if len(f.responses) == 0 {
+		f.mu.Unlock()
 		return nil, fmt.Errorf("no scripted response for call %d", len(f.requests))
 	}
 	resp := f.responses[0]
 	f.responses = f.responses[1:]
+	f.mu.Unlock()
 
 	ch := make(chan llm.Event, len(resp)+1)
 	for _, ev := range resp {

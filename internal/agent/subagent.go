@@ -135,6 +135,25 @@ does; the parent already has it.`,
 	},
 }
 
+// kindIsReadOnly reports whether every tool a kind can call is
+// read-only: the built-in read-only kinds, and user kinds whose
+// allowlist names only the read trio. Drives the /agents badge and the
+// task tool's exclusivity — only all-read children may run side by side.
+func kindIsReadOnly(s kindSpec) bool {
+	if s.ReadOnly {
+		return true
+	}
+	if len(s.Tools) == 0 {
+		return false
+	}
+	for _, t := range s.Tools {
+		if t != "read" && t != "glob" && t != "grep" {
+			return false
+		}
+	}
+	return true
+}
+
 // normalizeKind resolves a model-supplied subagent_type; empty or
 // unknown names fall back to the general-purpose profile.
 func normalizeKind(s string) (SubagentKind, kindSpec) {

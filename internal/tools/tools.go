@@ -40,6 +40,16 @@ type RiskClassifier interface {
 	Risk() perm.Risk
 }
 
+// ExclusiveTool is implemented by read-classified tools that must
+// nevertheless run alone in their round: the agent loop executes
+// consecutive read-only calls as one parallel group, and a tool that
+// carries state or spawns children vetoes that per call. args is the
+// raw call input so the decision can depend on the invocation (the
+// task tool's subagent kind).
+type ExclusiveTool interface {
+	Exclusive(args json.RawMessage) bool
+}
+
 // Registry holds the tools available to the agent, keyed by name. It is
 // safe for concurrent use: the agent loop reads it from its goroutine
 // while the settings overlay adds and removes MCP servers at runtime.

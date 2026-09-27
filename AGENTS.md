@@ -56,7 +56,9 @@ internal/hooks/      user lifecycle hooks around tool calls (pre_tool veto, post
 internal/agent/      conversation machinery
   session.go           JSONL transcript (source of truth for LLM history)
   loop.go              agent loop: stream → gated tool calls → results → stream
-                       (Runner.Preface writes a <task-context> brief ahead of the turn)
+                       (consecutive read-only calls run as one bounded parallel
+                       group, results in call order; Runner.Preface writes a
+                       <task-context> brief ahead of the turn)
   compact.go           context compaction: summarize near the token window
   context.go           AGENTS.md/CLAUDE.md project context for the system prompt
   approve.go           Approver interface + Bridge carrying tool/plan questions

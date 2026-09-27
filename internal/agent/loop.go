@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"khode/internal/debug"
 	"khode/internal/hooks"
@@ -55,6 +56,12 @@ type Runner struct {
 }
 
 const taskContextOpen = "<task-context>"
+
+// callIDContextKey carries the running tool call's id through Exec's
+// context: stateful tools (the task tool's progress feed) correlate
+// their activity to the parent call without widening the Tool
+// interface.
+type callIDContextKey struct{}
 
 // Run appends the user turn and drives the loop, forwarding stream events
 // on the returned channel. The channel carries zero or more
@@ -187,26 +194,111 @@ func sanitizeToolInput(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
-// executeCalls runs each requested tool in order, appending one result
-// message per call — even on cancellation, so the transcript never ends
-// with an unanswered tool call (providers reject that pairing).
+// maxParallelCalls bounds how many read-only calls of one round run at
+// once, so a runaway model cannot fork into a hundred concurrent greps.
+const maxParallelCalls = 8
+
+// executeCalls runs the round's requested tool calls, appending one
+// result message per call — even on cancellation, so the transcript
+// never ends with an unanswered tool call (providers reject that
+// pairing). Consecutive read-only calls that are safe to run side by
+// side execute as one parallel group; everything else (and every group
+// boundary) keeps strict call order, so the transcript and the UI see
+// results in exactly the order the model issued them.
 func (r *Runner) executeCalls(ctx context.Context, calls []llm.ToolCall, out chan<- llm.Event) error {
-	for _, c := range calls {
-		output, execErr := r.execCall(ctx, c)
-		res := llm.ToolResult{CallID: c.ID, IsError: execErr != nil}
-		switch {
-		case execErr == nil:
-			res.Content = output
-		case errors.Is(execErr, context.Canceled):
-			res.Content = "interrupted by user"
-		default:
-			res.Content = execErr.Error()
+	for i := 0; i < len(calls); {
+		j := i + 1
+		if r.parallelizable(calls[i]) {
+			for j < len(calls) && r.parallelizable(calls[j]) {
+				j++
+			}
+			if err := r.execParallel(ctx, calls[i:j], out); err != nil {
+				return err
+			}
+		} else {
+			output, execErr := r.execCall(ctx, calls[i])
+			if err := r.emitResult(calls[i], output, execErr, out); err != nil {
+				return err
+			}
 		}
-		if err := r.Session.Append(llm.Message{Role: llm.RoleTool, ToolResult: &res}); err != nil {
-			return fmt.Errorf("appending tool result: %w", err)
-		}
-		out <- llm.ToolResultEvent{CallID: c.ID, Name: c.Name, Output: res.Content, IsError: res.IsError}
+		i = j
 	}
+	return nil
+}
+
+// parallelizable reports whether a call may run concurrently with its
+// read-only siblings: read risk class and no ExclusiveTool veto — a
+// mutating-capable task child vetoes, an explore child does not.
+func (r *Runner) parallelizable(c llm.ToolCall) bool {
+	if r.Tools.RiskOf(c.Name) != perm.RiskRead {
+		return false
+	}
+	tool, ok := r.Tools.Get(c.Name)
+	if !ok {
+		return false
+	}
+	if ex, ok := tool.(tools.ExclusiveTool); ok && ex.Exclusive(c.Input) {
+		return false
+	}
+	return true
+}
+
+// execParallel runs one maximal group of read-only calls concurrently
+// (bounded by maxParallelCalls) and appends + emits their results in
+// call order as each slot's turn comes up, so per-call pairing and
+// transcript order match sequential execution exactly.
+func (r *Runner) execParallel(ctx context.Context, group []llm.ToolCall, out chan<- llm.Event) error {
+	type slot struct {
+		call   llm.ToolCall
+		done   chan struct{}
+		output string
+		err    error
+	}
+	slots := make([]slot, len(group))
+	sem := make(chan struct{}, min(maxParallelCalls, len(group)))
+	var wg sync.WaitGroup
+	debug.Printf("parallel group: %d read-only calls", len(group))
+	for i := range slots {
+		slots[i].call = group[i]
+		slots[i].done = make(chan struct{})
+		wg.Add(1)
+		go func(s *slot) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			defer close(s.done)
+			s.output, s.err = r.execCall(ctx, s.call)
+		}(&slots[i])
+	}
+	for i := range slots {
+		// execCall checks the context first and every tool honors it, so
+		// a canceled turn drains promptly — each call still gets its
+		// "interrupted by user" result appended.
+		<-slots[i].done
+		if err := r.emitResult(slots[i].call, slots[i].output, slots[i].err, out); err != nil {
+			return err
+		}
+	}
+	wg.Wait()
+	return nil
+}
+
+// emitResult shapes one exec outcome into the transcript's tool result
+// message and the UI's result event.
+func (r *Runner) emitResult(c llm.ToolCall, output string, execErr error, out chan<- llm.Event) error {
+	res := llm.ToolResult{CallID: c.ID, IsError: execErr != nil}
+	switch {
+	case execErr == nil:
+		res.Content = output
+	case errors.Is(execErr, context.Canceled):
+		res.Content = "interrupted by user"
+	default:
+		res.Content = execErr.Error()
+	}
+	if err := r.Session.Append(llm.Message{Role: llm.RoleTool, ToolResult: &res}); err != nil {
+		return fmt.Errorf("appending tool result: %w", err)
+	}
+	out <- llm.ToolResultEvent{CallID: c.ID, Name: c.Name, Output: res.Content, IsError: res.IsError}
 	return nil
 }
 
@@ -214,6 +306,7 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	ctx = context.WithValue(ctx, callIDContextKey{}, c.ID)
 	tool, ok := r.Tools.Get(c.Name)
 	if !ok {
 		return "", fmt.Errorf("unknown tool %q", c.Name)
