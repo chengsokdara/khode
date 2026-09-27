@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-27 (anthropic structured-output emulation — the M18 upgrade path deployed, version d49a02f0)
+Last updated: 2026-09-27 (n>1 / assistant-first / intra-message order — the last translation-matrix gap, deployed)
 
 ## How to use this file
 
@@ -10,6 +10,73 @@ where the milestone plan lives, "Recent changes" for history (newest first).
 If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
+
+- **n>1 / assistant-first / intra-message order ✅ complete + DEPLOYED
+  (2026-09-27)** — user picked the last translation-matrix gap from the queue
+  ("What should we do next?"). Four commits, each with goldens + smoke cells
+  and a full sweep green between:
+  - **Assistant-first (0aad4ce)**: the Messages API and Gemini generateContent
+    both require user-first histories — assistant-first conversations now get
+    ONE spacer user turn prepended (`ASSISTANT_FIRST_SPACER = ' '` in
+    adapters/base.ts, applied after the merge passes in both adapters). The
+    leading assistant turn stays in place, so a lone assistant message still
+    lands LAST = the API's documented prefill rule ("the response continues
+    from the final assistant message") — no special case needed. Adapter-level
+    only: canonical + cache keys untouched.
+  - **Gemini n>1 native (217f6f0)**: `options.n` maps onto
+    `generationConfig.candidateCount` (wire fact verified 2026-09-27; "doesn't
+    work for Gemini 1.0 family"). `geminiCompletionToOpenAi` fans EVERY
+    candidate onto openai choices (candidate.index wins, per-candidate finish
+    reasons); `transformGeminiSseToOpenAi` tracks per-candidate state and emits
+    index-tagged chunks — single-candidate streams byte-identical.
+    usageMetadata totals ACROSS candidates (Google semantics) → usage/log/cost
+    need no multiplication.
+  - **Anthropic n>1 fan-out (f522224)**: the Messages API has no multi-choice
+    param, so n>1 fans out into n CONCURRENT identical invocations
+    (`invokeAnthropicFanOut`) merged into openai-shaped choices
+    (`respondAnthropicFanOut`) — reachable only from the openai chat face (the
+    only parser reading n). All-or-nothing: any leg failing reports a
+    synthetic UpstreamOutcome so the EXISTING machinery applies (P3 same-
+    upstream retry re-runs every leg; chain walk falls through; client 4xx
+    surfaces). JSON merges per-leg translators' choices + summed usage; SSE
+    interleaves per-leg streams with re-indexed choices, strips per-leg usage,
+    and closes with ONE fan-out-total usage-only chunk that the tee watcher
+    logs. Usage follows "missing usage never debits": only when EVERY leg
+    reported (partial sums would under-bill). `estimateChatCostUsd` (P4
+    reservation) scales input AND output by n. The anthropic adapter's n>1
+    throw is GONE — n never reaches the body. 'n' joined the anthropic +
+    gemini `supported_parameters` lists.
+  - **Intra-message order (6fa07e4)**: canonical `contentParts`
+    (`CanonicalContentPart` = text | image) set by all three parsers ONLY when
+    the source mixed text and images (or stacked several images) — text-only
+    multi-part keeps the historical fold, ordinary requests byte-identical.
+    All three adapters emit contentParts IN ORDER (openai content array /
+    anthropic blocks / gemini parts); legacy content+images path untouched.
+    Because every contentParts message carries an image, the M11 eligibility
+    gate already excludes them — cache keys need NO change.
+  - Consequence: with assistant-first translatable and n>1 handled natively
+    (gemini) or by fan-out (anthropic), the same-candidate adapter retry has
+    NO face-reachable trigger left — the loop and the 400
+    `untranslatable_request` mapping remain as safety nets, pinned by the
+    still-reachable system-only case against an anthropic-only provider.
+  - Verified: `npm run check` clean; **389/389** offline tests (+7: spacer
+    build cases ×2 anthropic + ×1 gemini, candidateCount build, multi-
+    candidate JSON/SSE normalize, n-never-reaches-body, interleaved parse +
+    ordered-block builds ×3, minus removed error cases); **smoke_gateway
+    256/256** (+11 net: assistant-first success cells ×4 incl. prefill +
+    anthropic face, system-only 400, gemini n=2 JSON+stream, anthropic
+    fan-out JSON+stream with log rows asserting summed usage 14/10 and 14/22,
+    interleaved-order cells ×3; the dual-provider retry cell was retired —
+    see the consequence above); admin smoke, m8 45, m9 75, m10 33, m11, m14,
+    device, oauth ALL PASS. One transient cron-cell failure (real free-
+    provider sync latency from the seeded vendors) re-ran green.
+  - **DEPLOYED ✅ (2026-09-27, version 3f98c49a-3f2c-4254-bfd0-04ad8418b17b)**
+    via `npm run deploy` — worker only, no migrations. Live checks: /health
+    ok; keyless /v1 → 401 strict envelope; /api/admin/providers → 401.
+    (No functional remote check of the new paths: prod has no
+    anthropic/gemini-adapter provider with a working key — the gemini vendor
+    is keyless — so the mock-based smoke coverage is the verification, the
+    same stance as M12/M13.)
 
 - **Anthropic structured-output emulation ✅ complete + DEPLOYED (2026-09-27)**
   — user picked it from the queue ("What should we do next?" → the M18

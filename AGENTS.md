@@ -85,6 +85,16 @@ API guarantees the tool_use block) whose input the anthropic-upstream
 translators unwrap back into content; requests with client tools or thinking
 keep the best-effort system directive fallback; cache keys include reasoning +
 responseFormat only when present.
+**Translation-matrix completion done (2026-09-27)** — the last untranslatable
+cells are gone: `n>1` is native on gemini (`generationConfig.candidateCount`,
+candidates fanned onto openai choices) and gateway-level CONCURRENT FAN-OUT on
+anthropic (n identical invocations merged into openai choices, usage summed
+across legs — only from the openai chat face, the only parser reading `n`);
+assistant-first histories get a spacer user turn prepended by both adapters
+(a lone assistant message lands last = anthropic's native prefill); multi-part
+messages that MIX text and images keep source order via canonical
+`contentParts` (additive — pure-text folding unchanged, cache keys untouched).
+System-only conversations remain the one explicit 400 `untranslatable_request`.
 **Social sign-in done (2026-09-24)** — portal login offers "Continue with
 Google / GitHub" (pure OAuth 2.0 on fetch, no SDKs; `oauth_identities` +
 nullable `users.password_hash`); email/password stays as the fallback and
@@ -127,6 +137,8 @@ src/worker/
 │                     client API key generate/verify (sha-256 lookup; M7),
 │                     user sessions + portalAuth middleware (M8; cookie khateway_user)
 ├── canonical.ts    — types-only canonical chat request (the dialects/adapters contract)
+│                     (+ CanonicalContentPart / contentParts: order-preserving text|image
+│                      parts, set ONLY when a source message mixed text and images)
 ├── routing.ts      — `model` slug / `provider/slug` pin → (model, provider) candidate (+pricing, fallback chain);
 │                     exports SLUG_RE (the one platform slug alphabet, shared by CRUD/import/sync)
 ├── discovery.ts    — upstream model discovery lifted out of routes/admin.ts: listUpstreamModelsForAdapter
@@ -225,6 +237,7 @@ src/worker/
 │                              logs; M12 adds gemini usageMetadata — thoughts bill as output)
 ├── adapters/
 │   ├── base.ts      — shared adapter plumbing: key decrypt, header merge, invoke w/ header-timeout
+│   │                 (+ ASSISTANT_FIRST_SPACER — the synthetic user turn both adapters prepend)
 │   ├── openai.ts    — openai-compatible upstream: canonical → /chat/completions request
 │   │                 (+ M13 buildOpenAiEmbeddingsRequest → /embeddings)
 │   ├── anthropic.ts — anthropic upstream: canonical → /v1/messages request (system folding, etc.)
@@ -369,7 +382,11 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             zeros, no-dup rerun, dropout disable, reappear re-enable, manual-slug
                             guard, /__scheduled → triggered_by=cron, auto_sync toggle-off,
                             free_tier whole-listing import + flag-off revert + LIST-select pin)
-                            — 245 checks as of 2026-09-27
+                            + the 2026-09-27 matrix-completion cells (assistant-first spacer
+                            + prefill on anthropic/gemini, system-only 400, gemini n=2
+                            candidateCount JSON+stream, anthropic n=2 fan-out JSON+stream
+                            with summed-usage log rows, interleaved content order ×3)
+                            — 256 checks as of 2026-09-27
 scripts/add-free-providers.mjs — `npm run seed:free`: idempotent seeder for 9 free-model
                             vendors (OpenRouter, Gemini AI Studio, Pollinations, GitHub Models,
                             Groq, Cerebras, Mistral, SambaNova, NVIDIA NIM) — matches by NAME,
@@ -532,8 +549,11 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   like OpenRouter/LiteLLM/AI Gateway — ONE provider row, one shared base URL).
   The gateway picks the adapter per request (client-dialect match first) and
   retries the SAME provider through its other adapter when the first pick
-  cannot express the request (e.g. `n>1`, assistant-first) before consuming
-  any fallback. `joinAdapterUrl`  strips a trailing `/v1` for anthropic paths
+  cannot express the request before consuming any fallback (since the 2026-09-27
+  matrix completion NO client-face-reachable case throws
+  UnsupportedTranslationError — system-only conversations are the one explicit
+  400; the retry loop remains as a safety net for future canonical widening).
+  `joinAdapterUrl`  strips a trailing `/v1` for anthropic paths
   and inserts `/v1` for openai paths on bare origins — one base URL serves
   both adapters whether the user pasted it with or without `/v1` (pinned by                        tests/worker/join-adapter-url.test.ts; the provider-form presets in
                         `src/shared/vendor-urls.ts` satisfy the same rule).
@@ -722,8 +742,12 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   `fileData` (https), `reasoning_effort` extras →
   `generationConfig.thinkingConfig.thinkingBudget` (minimal 0 / low 1024 /
   medium 8192 / high 24576; `thinking.budget_tokens` clamped 0–32768).
-  Assistant-first and n>1 are rejected `untranslatable_request` (dual-adapter
-  providers retry). Responses (`dialects/gemini.ts`) NORMALIZE onto openai
+  Assistant-first conversations get a spacer user turn prepended (see the
+  translation-matrix note above); n>1 maps NATIVELY onto
+  `generationConfig.candidateCount` (2026-09-27; every candidate fans onto an
+  openai choice via candidate.index in the normalizers, usageMetadata totals
+  ACROSS candidates so usage/cost never multiply). Responses
+  (`dialects/gemini.ts`) NORMALIZE onto openai
   chat shapes — `geminiCompletionToOpenAi` + `transformGeminiSseToOpenAi`
   (tool_calls with synthesized `call_gemini_<n>` ids, finish_reason
   `tool_calls` when calls are present, promptFeedback blocks → content_filter)

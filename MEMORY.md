@@ -1,9 +1,61 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-27 (anthropic structured-output emulation DEPLOYED — version d49a02f0)
+Last updated: 2026-09-27 (n>1 / assistant-first / intra-message order shipped + deployed)
 
 ## Cross-session facts
 
+- **n>1 / assistant-first / intra-message order (2026-09-27)** — the last
+  translation-matrix gap, closed in 4 commits (0aad4ce / 217f6f0 / f522224 /
+  6fa07e4). Contracts, do not regress:
+  - **Assistant-first**: BOTH adapters (anthropic + gemini) prepend ONE
+    synthetic user turn (`ASSISTANT_FIRST_SPACER = ' '`, adapters/base.ts —
+    change there only if an upstream ever rejects whitespace text) AFTER their
+    merge passes. Because the leading assistant turn stays in place, a lone
+    assistant message lands last = Anthropic's documented PREFILL rule — the
+    "continue" semantics survive with no special case. Adapter-level only;
+    canonical + cache keys untouched.
+  - **n>1 on gemini = native** `generationConfig.candidateCount` (verified
+    2026-09-27 against ai.google.dev; "doesn't work for Gemini 1.0 family" — a
+    refusing model surfaces honestly as client 4xx). Candidates fan onto
+    openai choices via candidate.index; usageMetadata totals ACROSS
+    candidates — never multiply usage/cost for gemini.
+  - **n>1 on anthropic = gateway-level fan-out** (`invokeAnthropicFanOut` +
+    `respondAnthropicFanOut` in routes/gateway.ts): n concurrent identical
+    invocations merged into openai choices. Reachable ONLY from the openai
+    chat face (the only parser reading n — responses drops it, the anthropic
+    face has no n, /v1/completions rejects n>1), so the merged payload is
+    always openai-dialect. ALL-OR-NOTHING: any leg failing reports a synthetic
+    UpstreamOutcome so the P3 same-upstream retry re-runs every leg and the
+    chain walk falls through unchanged; successful legs are accepted loss.
+    Usage = sum across legs, and ONLY when every leg reported (partial sums
+    under-bill — the "missing usage never debits" rule wins). The SSE merge
+    strips per-leg usage and closes with ONE fan-out-total usage-only chunk
+    (openai include_usage shape, emitted even when the client didn't ask —
+    harmless, and what the tee watcher logs). `estimateChatCostUsd` scales
+    input AND output by n (fan-out re-sends the prompt per leg). The anthropic
+    adapter's body is n-blind (golden-pinned).
+  - **Intra-message order**: `CanonicalMessage.contentParts`
+    (text|image parts) is set by all three parsers ONLY when the source
+    content MIXED text and images or stacked several images — text-only
+    multi-part keeps the historical fold, so ordinary requests stay byte-
+    identical and NO cache key changed (images are cache-ineligible, so
+    contentParts never reaches a key; keep that property). Adapters emit
+    contentParts in source order when present; the legacy content+images path
+    remains for old goldens and hand-built canonicals. Assistant image parts
+    stay dropped on anthropic (API rule); the P1 cache-marker "last block"
+    convention applies to ordered blocks.
+  - **Consequence**: the same-candidate adapter retry
+    (`UnsupportedTranslationError` → other adapter) has NO face-reachable
+    trigger left — the loop + the 400 `untranslatable_request` mapping remain
+    as safety nets, pinned by the system-only conversation against an
+    anthropic-only provider. If a new adapter or parser widens the canonical
+    vocabulary, untranslatable cases will become reachable again.
+  - Counts: offline 389, smoke_gateway 256 (the old dual-provider retry cell
+    and the two 400-untranslatable cells are gone — replaced by success
+    cells). 'n' is on the anthropic + gemini `supported_parameters` lists.
+  - Transient smoke flake to expect: the cron `__scheduled` cell can time out
+    when the SEEDED real free vendors (OpenRouter/NVIDIA) answer slowly —
+    it polls the persisted sync summary for 10 s; re-run before debugging.
 - **Anthropic structured-output emulation (2026-09-27)** — the M18 contract's
   named upgrade path, now BUILT: `response_format`/`text.format` on an
   anthropic upstream is a hard guarantee via a FORCED synthetic tool.

@@ -120,7 +120,12 @@ Still queued: signup captcha (needs a Turnstile-style service + account/keys —
 an external-dependency decision); key-scoped spend alerts (needs a
 notification channel; no email sender on Workers); content-aware admin
 test-connection (z.ai "200 with auth-error body" blind spot); optional
-auth-failure logging; intra-message order + `n>1`/assistant-first support.
+auth-failure logging.
 DONE 2026-09-27: anthropic json_schema tool emulation (the M18 upgrade path —
 structured outputs are now a hard guarantee on anthropic upstreams; see
-STATUS.md).
+STATUS.md). DONE 2026-09-27: `n>1` (native candidateCount on gemini,
+concurrent fan-out merged into choices on anthropic), assistant-first
+histories (spacer user turn; lone assistant message = native prefill) and
+intra-message content order (canonical `contentParts`) — the translation
+matrix no longer has an untranslatable cell reachable from any client face
+(system-only conversations remain the one explicit 400; see STATUS.md).
