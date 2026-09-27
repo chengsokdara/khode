@@ -61,11 +61,23 @@ If something is claimed ✅ but not verified, it says so.
     unchanged — the SPA with the switch was already live). Live checks green:
     /health ok; /api/admin/providers + GET/POST /api/admin/models/sync → 401
     unauth; served bundle == local build (index-BgZBha-L.js).
-  - **REMAINING (operator-only)**: set the vendors' API keys (env vars in the
-    script header) and re-run `npm run seed:free -- --base
-    https://khateway.chengsokdara.workers.dev --password '<admin>'` against
-    prod so their catalogs import; remote currently has no auto_sync
-    providers (first cron runs are no-ops until then).
+  - **PROD SEEDED ✅ (2026-09-27, right after deploy)**: `npm run seed:free
+    -- --base https://khateway.chengsokdara.workers.dev` (admin password from
+    `.dev.vars`; `GITHUB_TOKEN` = the machine's gh CLI token — the only
+    vendor credential present on this machine). All 9 vendors created with
+    auto_sync on (the 7 whole-API tiers free_tier=true), first sync imported
+    **111 free models** (OpenRouter 21 verified-$0, Pollinations 1,
+    SambaNova 7, NVIDIA NIM 82 — all pricing 0/0, sync-owned). The
+    pre-existing KiosAPI provider untouched. Still keyless and failing their
+    sync line (harmless — per-provider try/catch) until keys are set:
+    Gemini (403), Groq/Cerebras/Mistral (401). **GitHub Models is blocked on
+    GitHub's side**: `models.github.ai` answers `200 text/plain "OK"` to
+    EVERY method/path (verified with + without auth, POST chat included,
+    from two different networks; docs still name it the base URL —
+    placeholder host or regional gating). Its provider row is seeded with
+    the gh token; when GitHub's API serves, the daily cron picks it up with
+    zero action. The gh token also lacks the `models` scope — a real PAT is
+    the better credential once the host works.
 - **Free-models auto-sync ✅ complete + DEPLOYED (2026-09-25)** — user:
   "update the models list on a regular basis … only
   import or update model that is free." Approved decisions: daily period,

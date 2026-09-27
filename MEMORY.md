@@ -25,9 +25,15 @@ Last updated: 2026-09-27 (free-tier flag + seeder DEPLOYED — version 518fc56f)
   column, and smoke the LIST shape, not just create-echo. DEPLOYED
   2026-09-27 (version 518fc56f; migration 0014 was applied remote by the
   user beforehand — verify with pragma before assuming). Counts: offline
-  375, smoke_gateway 236. Operator next: set vendor keys + re-run seeder
-  against prod (no auto_sync provider exists remotely yet — cron is a no-op
-  until one does).
+  375, smoke_gateway 236. PROD SEEDED same day: all 9 vendors live with
+  auto_sync on, 111 free models imported (OpenRouter 21 verified-$0,
+  Pollinations 1, SambaNova 7, NVIDIA 82 — their /models listings are
+  public, no key needed to SYNC, only to CALL). Missing keys keep Gemini/
+  Groq/Cerebras/Mistral failing their sync line until set. GitHub Models is
+  blocked UPSTREAM: models.github.ai answers 200 "OK" text/plain to every
+  method/path (two networks, auth'd or not — placeholder host), so its
+  seeded row just errors daily until GitHub serves the API; a PAT with the
+  `models` scope beats the gh CLI token when it does.
 - **Free-models auto-sync (2026-09-25)** — keeps the catalog fresh with FREE
   upstream models; the module is `src/worker/models-sync.ts` + the cron entry
   in index.ts (`export default { fetch: app.fetch, scheduled }` — the repo's
