@@ -3,6 +3,9 @@
 // POST /api/admin/models/sync. Per-provider opt-in (providers.auto_sync).
 //
 // Free detection (verified data beats naming):
+//   - providers.free_tier → every listing entry counts as free (whole-API free
+//     tiers like Groq/GitHub Models/Pollinations: no pricing, no `:free` ids,
+//     yet $0 — rate-limited);
 //   - gemini adapter  → every generateContent entry counts as free (Google's
 //     $0 tier; the listing carries no pricing at all);
 //   - pricing present → free iff BOTH per-1M prices are exactly 0 (OpenRouter
@@ -53,8 +56,8 @@ export function syncSlugForId(id: string): string | null {
 // ---------------------------------------------------------------- pure logic
 
 /** Is this discovered upstream model free? See module comment for the rules. */
-export function isFreeUpstreamModel(m: UpstreamModel, adapter: Adapter): boolean {
-  if (adapter === 'gemini') return true;
+export function isFreeUpstreamModel(m: UpstreamModel, adapter: Adapter, providerFreeTier = false): boolean {
+  if (providerFreeTier || adapter === 'gemini') return true;
   if (m.pricingInput != null && m.pricingOutput != null) {
     return m.pricingInput === 0 && m.pricingOutput === 0;
   }
@@ -67,12 +70,15 @@ export function isFreeUpstreamModel(m: UpstreamModel, adapter: Adapter): boolean
  * wins — adapter declaration order is the provider's preference, same as the
  * gateway adapter pick order.
  */
-export function selectSyncEntries(listings: { adapter: Adapter; models: UpstreamModel[] }[]): UpstreamModel[] {
+export function selectSyncEntries(
+  listings: { adapter: Adapter; models: UpstreamModel[] }[],
+  providerFreeTier = false,
+): UpstreamModel[] {
   const seen = new Set<string>();
   const out: UpstreamModel[] = [];
   for (const { adapter, models: listing } of listings) {
     for (const m of listing) {
-      if (!isFreeUpstreamModel(m, adapter)) continue;
+      if (!isFreeUpstreamModel(m, adapter, providerFreeTier)) continue;
       const slug = syncSlugForId(m.id);
       const key = slug ?? m.id;
       if (seen.has(key)) continue;
@@ -216,7 +222,7 @@ async function syncProvider(env: Env, p: ProviderRow, existing: SyncExistingMode
     return { ...base, error: base.adapter_errors.join('; ') || 'no usable adapters' };
   }
 
-  const all = selectSyncEntries(listings);
+  const all = selectSyncEntries(listings, p.freeTier === true);
   const skipped = all
     .slice(SYNC_MAX_MODELS_PER_PROVIDER)
     .map((m) => ({ id: m.id, reason: `free-model sync cap (${SYNC_MAX_MODELS_PER_PROVIDER}) reached` }));

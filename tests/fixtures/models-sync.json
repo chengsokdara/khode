@@ -56,6 +56,22 @@
     "expected": true
   },
   {
+    "name": "free_tier provider makes a pricing-less plain id free (Groq-style listing)",
+    "suite": "free",
+    "adapter": "openai",
+    "providerFreeTier": true,
+    "model": { "id": "llama-3.3-70b-versatile", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 32768, "pricingInput": null, "pricingOutput": null },
+    "expected": true
+  },
+  {
+    "name": "free_tier flag wins even over priced entries (whole-API tier; never set on OpenRouter)",
+    "suite": "free",
+    "adapter": "openai",
+    "providerFreeTier": true,
+    "model": { "id": "some/model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 2.5, "pricingOutput": 10 },
+    "expected": true
+  },
+  {
     "name": "mixed openai listing keeps only the verified/suffixed free ids",
     "suite": "select",
     "listings": [
@@ -90,6 +106,21 @@
       }
     ],
     "expectedIds": ["shared/model", "gemini-only"]
+  },
+  {
+    "name": "free_tier provider imports the whole pricing-less listing",
+    "suite": "select",
+    "providerFreeTier": true,
+    "listings": [
+      {
+        "adapter": "openai",
+        "models": [
+          { "id": "llama-3.3-70b-versatile", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 32768, "pricingInput": null, "pricingOutput": null },
+          { "id": "openai/gpt-oss-120b", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 32768, "pricingInput": null, "pricingOutput": null }
+        ]
+      }
+    ],
+    "expectedIds": ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
   },
   {
     "name": "first adapter wins on free-id collisions",

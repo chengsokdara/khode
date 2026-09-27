@@ -169,6 +169,7 @@ function providerDto(
     timeoutMs?: number | null;
     enabled?: boolean;
     autoSync?: boolean | null;
+    freeTier?: boolean | null;
   },
   modelCount = 0,
 ) {
@@ -185,6 +186,7 @@ function providerDto(
     timeout_ms: r.timeoutMs,
     enabled: Boolean(r.enabled),
     auto_sync: Boolean(r.autoSync ?? false),
+    free_tier: Boolean(r.freeTier ?? false),
     model_count: modelCount,
   };
 }
@@ -821,6 +823,7 @@ adminApp.post('/providers', async (c) => {
     timeoutMs,
     enabled: body.enabled !== false,
     autoSync: body.auto_sync === true,
+    freeTier: body.free_tier === true,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -874,6 +877,10 @@ adminApp.patch('/providers/:id', async (c) => {
   if (body.auto_sync !== undefined) {
     if (typeof body.auto_sync !== 'boolean') return c.json(apiErr('auto_sync must be a boolean'), 400);
     patch.autoSync = body.auto_sync;
+  }
+  if (body.free_tier !== undefined) {
+    if (typeof body.free_tier !== 'boolean') return c.json(apiErr('free_tier must be a boolean'), 400);
+    patch.freeTier = body.free_tier;
   }
   if (body.api_key !== undefined) {
     if (body.api_key === null || body.api_key === '') {
@@ -1060,6 +1067,7 @@ adminApp.post('/providers/fetch-models', async (c) => {
     timeoutMs: typeof body.timeout_ms === 'number' && Number.isFinite(body.timeout_ms) ? Math.min(120_000, Math.max(1_000, Math.round(body.timeout_ms))) : null,
     enabled: true,
     autoSync: false,
+    freeTier: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };

@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "generate": "drizzle-kit generate",
     "migrate:local": "wrangler d1 migrations apply khateway --local",
+    "seed:free": "node scripts/add-free-providers.mjs",
     "deploy": "npm run -s build:web && wrangler deploy",
     "smoke": "node scripts/smoke.mjs",
     "smoke:gateway": "node scripts/smoke_gateway.mjs",

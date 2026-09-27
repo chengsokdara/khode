@@ -22,6 +22,14 @@ export const providers = sqliteTable('providers', {
   // sync-owned free models fresh. Declared LAST so the generated migration
   // stays a plain ALTER TABLE ADD COLUMN.
   autoSync: integer('auto_sync', { mode: 'boolean' }).notNull().default(false),
+  // Whole-API free tier (Groq, GitHub Models, Pollinations, …): listings from
+  // such providers carry no pricing and no `:free` suffixes, yet every model
+  // on them is $0 (rate-limited). When true the free-models sync imports the
+  // ENTIRE listing as free — same accepted trade-off as the gemini adapter
+  // rule (per-request cost logs read $0.00). Never set on providers whose
+  // listing carries real pricing (OpenRouter). Declared LAST so generated
+  // migrations stay plain ALTER TABLE ADD COLUMNs.
+  freeTier: integer('free_tier', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const models = sqliteTable(

@@ -38,6 +38,9 @@ export interface Provider {
   /** Free-models auto-sync opt-in: the daily cron keeps this provider's
    * verified-free upstream models imported and fresh. */
   auto_sync: boolean;
+  /** Whole-API free tier: listings carry no pricing yet every model is $0
+   * (rate-limited) — auto-sync imports the entire listing as free. */
+  free_tier: boolean;
   model_count: number;
 }
 

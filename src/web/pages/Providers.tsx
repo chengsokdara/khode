@@ -36,6 +36,7 @@ type FormState = {
   timeout_ms: string;
   enabled: boolean;
   auto_sync: boolean;
+  free_tier: boolean;
 };
 
 const ALL_ADAPTERS: Adapter[] = ['openai', 'anthropic', 'gemini'];
@@ -64,6 +65,7 @@ function formPayload(form: FormState): Record<string, unknown> {
     timeout_ms: Number(form.timeout_ms) || 60000,
     enabled: form.enabled,
     auto_sync: form.auto_sync,
+    free_tier: form.free_tier,
   };
   if (form.api_key.trim()) payload.api_key = form.api_key.trim();
   return payload;
@@ -84,6 +86,7 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
           timeout_ms: String(initial.timeout_ms ?? 60000),
           enabled: initial.enabled,
           auto_sync: initial.auto_sync ?? false,
+          free_tier: initial.free_tier ?? false,
         }
       : {
           name: '',
@@ -94,6 +97,7 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
           timeout_ms: '60000',
           enabled: true,
           auto_sync: false,
+          free_tier: false,
         },
   );
 
@@ -283,6 +287,20 @@ function ProviderModal({ initial, onClose }: { initial: Provider | null; onClose
           </div>
         </div>
 
+        <div className="flex items-start gap-2">
+          <div className="pt-1">
+            <Switch checked={form.free_tier} onChange={(v) => setField('free_tier', v)} />
+          </div>
+          <div>
+            <div className="text-[13px] text-zinc-200">Whole API is a free tier</div>
+            <p className="text-xs text-zinc-500">
+              The listing carries no pricing, yet every model on it is $0 (rate-limited) — e.g. Groq, GitHub Models,
+              Pollinations. Auto-sync then imports the entire listing as free. Leave off for providers with real
+              per-token pricing (OpenRouter): their $0 entries are detected from the pricing data itself.
+            </p>
+          </div>
+        </div>
+
         {error ? <p className="text-xs text-red-400">{error}</p> : null}
       </form>
     </Modal>
@@ -408,6 +426,7 @@ export function Providers() {
                         ))}
                         {!p.enabled ? <Badge tone="warn">disabled</Badge> : null}
                         {p.auto_sync ? <Badge tone="ok">auto-sync</Badge> : null}
+                        {p.free_tier ? <Badge tone="ok">free-tier</Badge> : null}
                       </div>
                       <div className="mt-0.5 font-mono text-[11px] text-zinc-500">
                         {p.base_url ?? `${ADAPTER_DEFAULTS[p.adapter]} (default)`}

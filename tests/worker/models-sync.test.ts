@@ -16,7 +16,7 @@ const bySuite = (suite: string) => loadFixtures('models-sync.json').filter((c) =
 describe('isFreeUpstreamModel (golden)', () => {
   for (const case_ of bySuite('free')) {
     it(case_.name as string, () => {
-      expect(isFreeUpstreamModel(case_.model as UpstreamModel, case_.adapter as Adapter)).toBe(case_.expected);
+      expect(isFreeUpstreamModel(case_.model as UpstreamModel, case_.adapter as Adapter, case_.providerFreeTier === true)).toBe(case_.expected);
     });
   }
 });
@@ -28,7 +28,7 @@ describe('selectSyncEntries (golden)', () => {
         adapter: l.adapter,
         models: l.models,
       }));
-      const got = selectSyncEntries(listings);
+      const got = selectSyncEntries(listings, case_.providerFreeTier === true);
       expect(got.map((m) => m.id)).toEqual(case_.expectedIds);
       if (Array.isArray(case_.expectedDisplayNames)) {
         expect(got.map((m) => m.displayName)).toEqual(case_.expectedDisplayNames);

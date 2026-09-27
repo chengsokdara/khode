@@ -56,7 +56,7 @@ const j = async (path, opts = {}) => {
   return { status: res.status, headers: res.headers, body };
 };
 
-const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)', 'Free Sync Mock (smoke)'];
+const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)', 'Free Sync Mock (smoke)', 'Free Tier Mock (smoke)'];
 const SLUGS = [
   'mock-chat', 'mock-chat-429', 'mock-chat-401', 'mock-chat-500', 'mock-chat-500t', 'mock-claude', 'mock-claude-429',
   'mock-tools', 'mock-claude-tools',
@@ -2604,13 +2604,56 @@ const mock = await startMockUpstream();
   const lastRun = await j('/api/admin/models/sync');
   check('GET models/sync returns the persisted summary', lastRun.status === 200 && lastRun.body?.last_run?.ran_at > 0, JSON.stringify(lastRun.body?.last_run?.totals));
 
-  // Toggle off: the provider leaves the sync set entirely.
+  // Toggle off: the provider leaves the sync set entirely. (Scoped to THIS
+  // provider — other opted-in providers, e.g. seeded free providers, may
+  // legitimately still sync on the same run.)
   const syncOff = await j(`/api/admin/providers/${provSync.body.id}`, { method: 'PATCH', body: JSON.stringify({ auto_sync: false }) });
   const sync5 = await j('/api/admin/models/sync', { method: 'POST' });
+  const sr5 = (sync5.body?.results ?? []).find((r) => r.provider_id === provSync.body?.id);
   check(
     'auto_sync=false removes the provider from the sync set',
-    syncOff.body?.auto_sync === false && sync5.body?.providers_synced === 0 && sync5.body?.totals?.created === 0,
-    JSON.stringify(sync5.body?.totals),
+    syncOff.body?.auto_sync === false && sr5 === undefined,
+    JSON.stringify(sr5 ?? 'not in results'),
+  );
+
+  // -- free_tier flag (whole-API free tiers: Groq / GitHub Models style) -----
+  // A pricing-less listing imports wholesale as $0 models when the provider is
+  // flagged free-tier; un-flagging reverts to verified-only detection.
+  openaiListing.data = [
+    { id: 'tier-llama-70b', object: 'model', context_window: 131072 },
+    { id: 'tier-gpt-oss-120b', object: 'model' },
+  ];
+  const provTier = await j('/api/admin/providers', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Free Tier Mock (smoke)', adapter: 'openai', base_url: `http://127.0.0.1:${mock.port}/v1`, auto_sync: true, free_tier: true }),
+  });
+  check(
+    'free_tier provider create echoes free_tier=true',
+    provTier.status === 201 && provTier.body?.free_tier === true && provTier.body?.auto_sync === true,
+    JSON.stringify(provTier.body),
+  );
+  const sync6 = await j('/api/admin/models/sync', { method: 'POST' });
+  const sr6 = (sync6.body?.results ?? []).find((r) => r.provider_id === provTier.body?.id);
+  check(
+    'models sync #6: free_tier imports the whole pricing-less listing',
+    sync6.status === 200 && sr6?.ok === true && JSON.stringify(sr6.created) === JSON.stringify(['tier-llama-70b', 'tier-gpt-oss-120b']),
+    JSON.stringify(sr6),
+  );
+  const tierRows = await j('/api/admin/models?provider_id=' + provTier.body.id);
+  check(
+    'free_tier rows land pricing 0/0 + enabled, metadata kept',
+    (tierRows.body ?? []).length === 2 &&
+      tierRows.body.every((m) => m.pricing_input === 0 && m.pricing_output === 0 && m.enabled === true) &&
+      tierRows.body.find((m) => m.slug === 'tier-llama-70b')?.context_window === 131072,
+    JSON.stringify(tierRows.body?.map((m) => [m.slug, m.pricing_input, m.enabled])),
+  );
+  const tierOff = await j(`/api/admin/providers/${provTier.body.id}`, { method: 'PATCH', body: JSON.stringify({ free_tier: false }) });
+  const sync7 = await j('/api/admin/models/sync', { method: 'POST' });
+  const sr7 = (sync7.body?.results ?? []).find((r) => r.provider_id === provTier.body?.id);
+  check(
+    'free_tier=false reverts to verified-only detection (its rows drop out)',
+    tierOff.body?.free_tier === false && JSON.stringify([...(sr7?.disabled ?? [])].sort()) === JSON.stringify(['tier-gpt-oss-120b', 'tier-llama-70b']),
+    JSON.stringify(sr7),
   );
 
   // Restore the historical listing for any later readers.
