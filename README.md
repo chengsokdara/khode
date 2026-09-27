@@ -241,3 +241,7 @@ first-time user can approve a device code without ever creating an
 email/password account.
 
 See [`docs/plans/mvp-plan.md`](docs/plans/mvp-plan.md) for the full plan.
+
+## License
+
+[MIT](LICENSE) — copyright (c) 2026 Sokdara Cheng.
