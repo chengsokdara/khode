@@ -130,8 +130,9 @@ src/worker/
 │                     (per-adapter /models probe + normalization; openai/anthropic/gemini shapes) +
 │                     first-adapter listUpstreamModels wrapper + perTokenToPerMillion (OpenRouter
 │                     per-token price strings → USD per 1M; "0" → 0 = free, null = no pricing listed)
-├── models-sync.ts  — free-models auto-sync: pure halves (isFreeUpstreamModel — verified 0/0 pricing,
-│                     else `:free` suffix, gemini listings are free-tier; syncSlugForId — OpenRouter
+├── models-sync.ts  — free-models auto-sync: pure halves (isFreeUpstreamModel — provider
+│                     free_tier flag or gemini listings are free-tier, else verified 0/0 pricing,
+│                     else `:free` suffix; syncSlugForId — OpenRouter
 │                     ids `vendor/model:free` derive slugs with banned chars collapsed to '-', raw id
 │                     rides upstream_model; selectSyncEntries; planSyncUpserts — creates priced 0/0 +
 │                     sync-owned, metadata refreshes, dropout disable / reappear re-enable, manual +
@@ -164,7 +165,8 @@ src/worker/
 │                          insert + expired-row sweep + 200-with-error-body guard + 512 KB cap),
 │                          flushCache, cacheStats (entries/bytes + 24 h hits/token savings)
 ├── db/
-│   ├── schema.ts   — drizzle: providers(+auto_sync free-models opt-in), models(+rate_limit_rpm,
+│   ├── schema.ts   — drizzle: providers(+auto_sync free-models opt-in,+free_tier whole-API
+│   │                 free tier), models(+rate_limit_rpm,
 │   │                 +cache_enabled,+sync_source 'free_sync' rows owned by the sync), api_keys(+user_id,
 │   │                 +org_id,+rate_limit_rpm,+cache_enabled,+playground_session M14), device_codes
 │   │                 (session 28: hashed device_code, unique XXXX-XXXX user_code,
@@ -247,7 +249,7 @@ src/worker/
     │                 ids-only or discovery-enriched bodies incl. pricing_input/pricing_output
     │                 when the listing exposed them; default-base fallback; probing lives in
     │                 discovery.ts), free-models sync faces (POST/GET /models/sync — run-now +
-    │                 last-run summary; providers CRUD accepts/echoes auto_sync)
+    │                 last-run summary; providers CRUD accepts/echoes auto_sync + free_tier)
     ├── gateway.ts  — /v1 pipeline: client-key auth middleware (STRICT since session 29 —
     │                 every request needs a valid enabled key, 401 otherwise) + spend cap +
     │                 allowed-models (M7) + prepaid-balance gate + usage debit (M8 personal /
@@ -362,8 +364,16 @@ scripts/smoke_gateway.mjs  — /v1 pipeline test incl. a local mock upstream spe
                             top_provider.max_completion_tokens + the free-models sync flow
                             (mutable mock listing: free-only import with derived slugs, pricing
                             zeros, no-dup rerun, dropout disable, reappear re-enable, manual-slug
-                            guard, /__scheduled → triggered_by=cron, auto_sync toggle-off)
-                            — 231 checks as of 2026-09-25
+                            guard, /__scheduled → triggered_by=cron, auto_sync toggle-off,
+                            free_tier whole-listing import + flag-off revert + LIST-select pin)
+                            — 236 checks as of 2026-09-27
+scripts/add-free-providers.mjs — `npm run seed:free`: idempotent seeder for 9 free-model
+                            vendors (OpenRouter, Gemini AI Studio, Pollinations, GitHub Models,
+                            Groq, Cerebras, Mistral, SambaNova, NVIDIA NIM) — matches by NAME,
+                            PATCHes auto_sync/free_tier back in line (keys ride env vars:
+                            OPENROUTER_API_KEY, GEMINI_API_KEY, GITHUB_TOKEN, GROQ_API_KEY, …,
+                            only set when the row has none), then triggers one sync;
+                            --base/--password/--only/--no-sync
 scripts/smoke_m8.mjs       — accounts/balance/webhook e2e vs wrangler dev :8787 (signup → credit →
                             debit math → 429 → signed LS webhook → idempotency; 42 checks + 2 M16 /api/v1 checks = 45)
 scripts/smoke_m9.mjs       — orgs/teams e2e vs wrangler dev :8787 (2 orgs coexist, join codes,
@@ -405,7 +415,8 @@ drizzle/            — generated SQL migrations (applied with wrangler d1 migra
                       0010_m16_attribution adds request_logs.http_referer + x_title;
                       0011_device_codes adds the device-flow table (session 28);
                       0012_oauth_signin adds oauth_identities + makes users.password_hash nullable;
-                      0013_free_sync adds providers.auto_sync + models.sync_source)
+                      0013_free_sync adds providers.auto_sync + models.sync_source;
+                      0014_provider_free_tier adds providers.free_tier)
 
 tests/              — offline golden-fixture suite (vitest; no server needed)
 ├── fixtures/       — arrays of {name, …input, expected} cases per wire-format area
@@ -483,12 +494,20 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   `models_sync_last_run`). Opt-in per provider (`providers.auto_sync`,
   Providers modal switch; only ENABLED providers sync — a disabled provider
   freezes its sync state). FREE detection (verified data beats naming):
-  pricing present → free iff BOTH per-1M prices are exactly 0 (OpenRouter
+  the provider's `free_tier` flag (2026-09-27, migration 0014) or the
+  gemini adapter → free-tier listing, every entry imports; pricing present
+  → free iff BOTH per-1M prices are exactly 0 (OpenRouter
   `pricing.prompt/completion` "0"); no pricing → free iff the id ends
-  `:free`; gemini-adapter listings count as free-tier by explicit user
-  choice (their per-request cost logs read $0.00 even for paid-tier usage —
-  accepted trade-off; plain OpenAI/Anthropic listings expose no pricing and
-  yield nothing). OpenRouter-shaped ids (`vendor/model:free`) are NOT valid
+  `:free`. `free_tier` is for WHOLE-API free tiers (Groq, GitHub Models,
+  Pollinations, Cerebras, SambaNova, Mistral, NVIDIA NIM — listings carry
+  no pricing and no `:free` suffixes, everything is $0 rate-limited); NEVER
+  set it on providers with real pricing — OpenRouter keeps verified-zeros-
+  only (same $0.00-cost-log trade-off as gemini, accepted by user). Seed
+  the vendor set with `npm run seed:free`
+  (scripts/add-free-providers.mjs — idempotent by-NAME match, PATCHes
+  auto_sync/free_tier back in line, keys ride env vars and only land when
+  the row has none, then runs one sync). OpenRouter-shaped ids
+  (`vendor/model:free`) are NOT valid
   slugs (`/` + `:` banned) — `syncSlugForId` collapses banned runs to `-`
   (`meta-llama/llama-3.3-70b:free` → slug `meta-llama-llama-3.3-70b-free`)
   while the RAW id rides `upstream_model`, so the gateway sends upstream
@@ -500,7 +519,11 @@ tests/              — offline golden-fixture suite (vitest; no server needed)
   skipped, never modified; nothing is ever deleted. Deleting a sync-owned
   row gets it recreated next run while upstream still lists it — to freeze
   one, turn the provider's auto_sync off first. Per-provider try/catch (one
-  failure never stops the rest), cap 200 models/provider/run.
+  failure never stops the rest), cap 200 models/provider/run. GOTCHA (bit
+  2026-09-27): the `GET /providers` LIST uses an explicit-column select for
+  the modelCount join — a new `providers` column MUST be added there AND to
+  the `providerDto` mapping, or the API/UI read it as false while
+  PATCH/CREATE echo it fine (smoke pins the LIST shape now).
 - **Multi-adapter providers**: `providers.adapters` is a JSON array of upstream
   dialects (`["openai"]`, `["anthropic"]`, or both for dual-dialect endpoints
   like OpenRouter/LiteLLM/AI Gateway — ONE provider row, one shared base URL).
@@ -850,6 +873,8 @@ npm run smoke:m11               # semantic cache e2e, while `npm run dev` runs
 npm run smoke:m14               # playground e2e (session-scoped keys + streamed round-trip), while `npm run dev` runs
 npm run smoke:device            # device-flow e2e (mint/approve/poll → personal key), while `npm run dev` runs
 npm run smoke:oauth             # social sign-in failure paths (start/callback redirects), while `npm run dev` runs
+npm run seed:free               # seed/refresh the 9 free-model vendors + run one sync
+                                # (local dev by default; --base/--password for prod; keys via env vars)
 ```
 
 Schema changes: edit `src/worker/db/schema.ts` → `npm run generate` →

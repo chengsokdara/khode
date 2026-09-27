@@ -1,9 +1,33 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-25 (free-models auto-sync DEPLOYED — daily cron live, version aedbaffe)
+Last updated: 2026-09-27 (free-tier flag + seeder DEPLOYED — version 518fc56f)
 
 ## Cross-session facts
 
+- **Whole-API free-tier flag + free-provider seeder (2026-09-27)** —
+  `providers.free_tier` (migration 0014): whole-API free tiers (Groq, GitHub
+  Models, Pollinations, Cerebras, SambaNova, Mistral, NVIDIA NIM — listings
+  carry no pricing and no `:free` suffixes, everything is $0 rate-limited)
+  import their ENTIRE listing as free when flagged; same accepted $0.00-log
+  trade-off as the gemini rule. NEVER flag providers with real pricing —
+  OpenRouter keeps verified-zeros-only. Detection order:
+  `providerFreeTier || gemini` → free → pricing-zeros → `:free`. Seeder:
+  `npm run seed:free` (scripts/add-free-providers.mjs) — 9 researched
+  vendors, idempotent by-NAME match (PATCH re-aligns auto_sync/free_tier;
+  API keys ride env vars, never clobber a stored key with empty), then one
+  sync run. 4/9 sync keyless (OpenRouter public listing, Pollinations,
+  SambaNova, NVIDIA); Gemini/Groq/Cerebras/Mistral need keys, GitHub Models'
+  listing shape didn't parse (revisit with a token). **Bug shipped in the
+  first commit + fixed (bb5fc82): the GET /providers LIST select omits new
+  provider columns unless explicitly added** — free_tier read false
+  everywhere the list DTO was consumed while PATCH/CREATE echoed true;
+  keep the list select + `providerDto` in sync when `providers` gains a
+  column, and smoke the LIST shape, not just create-echo. DEPLOYED
+  2026-09-27 (version 518fc56f; migration 0014 was applied remote by the
+  user beforehand — verify with pragma before assuming). Counts: offline
+  375, smoke_gateway 236. Operator next: set vendor keys + re-run seeder
+  against prod (no auto_sync provider exists remotely yet — cron is a no-op
+  until one does).
 - **Free-models auto-sync (2026-09-25)** — keeps the catalog fresh with FREE
   upstream models; the module is `src/worker/models-sync.ts` + the cron entry
   in index.ts (`export default { fetch: app.fetch, scheduled }` — the repo's

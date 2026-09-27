@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-25 (free-models auto-sync DEPLOYED — daily cron live at 03:17 UTC)
+Last updated: 2026-09-27 (whole-API free-tier flag + free-provider seeder DEPLOYED — version 518fc56f)
 
 ## How to use this file
 
@@ -11,6 +11,61 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **Whole-API free-tier flag + free-provider seeder ✅ complete + DEPLOYED
+  (2026-09-27)** — user committed the feature themselves (05bf120) after
+  building on the free-models auto-sync; this session verified it live, found
+  + fixed one bug it slipped past the first smoke pass, deployed, seeded.
+  Shipped:
+  - **Schema (migration 0014)**: `providers.free_tier` (boolean, default
+    false) — whole-API free tiers (Groq, GitHub Models, Pollinations,
+    Cerebras, SambaNova, Mistral, NVIDIA NIM: listings carry NO pricing and
+    NO `:free` suffixes, yet every model is $0 rate-limited). When true the
+    free-models sync imports the ENTIRE listing as free (pricing 0/0,
+    sync-owned) — same accepted trade-off as the gemini rule. Detection
+    order: `providerFreeTier || adapter==='gemini'` → free; else verified
+    pricing zeros; else `:free` suffix. NEVER set on providers with real
+    pricing (OpenRouter imports only its verified $0 entries).
+  - **`npm run seed:free`** (`scripts/add-free-providers.mjs`): idempotent
+    seeder for 9 researched free vendors (OpenRouter, Gemini AI Studio,
+    Pollinations, GitHub Models, Groq, Cerebras, Mistral, SambaNova,
+    NVIDIA NIM) — matches by NAME (existing rows PATCHed back in line:
+    auto_sync/free_tier always, key only when the env var
+    `OPENROUTER_API_KEY`/`GEMINI_API_KEY`/`GITHUB_TOKEN`/… provides one AND
+    the row has none), then runs one sync. Flags: `--base`/`--password`/
+    `--only`/`--no-sync`.
+  - **UI/API**: Providers modal "Whole API is a free tier" switch + `free-tier`
+    badge; providers CRUD accepts/echoes `free_tier`; 5 new vendor presets in
+    `src/shared/vendor-urls.ts` (GitHub Models, Cerebras, SambaNova, NVIDIA
+    NIM, Pollinations; Groq hint notes free tier).
+  - **BUG FOUND + FIXED (bb5fc82)**: `GET /api/admin/providers` uses an
+    explicit-column select (for the modelCount join) and `freeTier` was never
+    added — the list API/UI always reported `free_tier: false` while the DB
+    held the real value (PATCH/CREATE echoed correctly via all-column
+    re-selects, which is why the first smoke pass and the create-echo check
+    missed it; the seed script kept re-patching and flagged providers looked
+    unflagged everywhere). Fixed the select + DTO mapping; new smoke check
+    pins the LIST DTO. **Local DB had been silently correct all along** —
+    NVIDIA's 82 / SambaNova's 7 imported wholesale in an earlier sync.
+  - Verified: tsc clean; **375/375** offline tests (4 new free_tier goldens:
+    flag wins over priced entries, pricing-less plain ids free, whole-listing
+    select); **smoke_gateway 236/236** (4 new free_tier cells + 1 list-select
+    pin); `npm run seed:free` exercised locally — 4/9 providers syncable
+    keyless (OpenRouter, Pollinations, SambaNova, NVIDIA NIM; OpenRouter's
+    listing is public, key only needed to CALL), 5 fail with clear "set its
+    API key" hints until keys are set (Gemini 403; GitHub Models returns a
+    shape discovery can't parse — revisit once a GITHUB_TOKEN is set; Groq/
+    Cerebras/Mistral 401).
+  - **DEPLOYED ✅ (2026-09-27, version 518fc56f-e9a9-4c3d-b576-e752cae6199b)**:
+    migration 0014 was already applied remote (user ran it earlier; column
+    verified via pragma), `npm run deploy` shipped the worker (assets
+    unchanged — the SPA with the switch was already live). Live checks green:
+    /health ok; /api/admin/providers + GET/POST /api/admin/models/sync → 401
+    unauth; served bundle == local build (index-BgZBha-L.js).
+  - **REMAINING (operator-only)**: set the vendors' API keys (env vars in the
+    script header) and re-run `npm run seed:free -- --base
+    https://khateway.chengsokdara.workers.dev --password '<admin>'` against
+    prod so their catalogs import; remote currently has no auto_sync
+    providers (first cron runs are no-ops until then).
 - **Free-models auto-sync ✅ complete + DEPLOYED (2026-09-25)** — user:
   "update the models list on a regular basis … only
   import or update model that is free." Approved decisions: daily period,
