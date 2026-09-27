@@ -74,7 +74,10 @@ Backlog (no committed order):
    pump forwards notifications through a `SetNotify` hook, the UI
    re-lists into the registry live, and the diff is reported in chat;
    refresh no longer means a restart). Resources/prompts remain open.
-3. Hooks: feed post_tool output to the model as feedback.
+3. ~~Hooks: feed post_tool output to the model as feedback.~~
+   (done — a hook's exit-0 stdout / exit-2 stderr is appended to the
+   call's tool result inside `<hook-feedback>` tags, capped at 8 KiB,
+   all matching hooks joined; other exits stay silent)
 4. OpenAI tool-call unit parity for MCP edge cases as they surface.
 5. Khode /terminal-setup: write the Terminal.app/iTerm2 shift+enter
    mapping khode's alt+enter fallback already picks up.

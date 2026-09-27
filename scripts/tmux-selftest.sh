@@ -25,6 +25,9 @@ go build -o "$DIR/mcpserver" ./internal/mcp/testdata/mcpserver
 # Unquoted so $DIR expands. The selftest MCP server runs in mutate mode:
 # its first tools/call flips the advertised set and pushes
 # notifications/tools/list_changed, which drives the refresh scenario.
+# The post_tool hook rides on edit: the first turn edits a file, so its
+# result block must show the hook's feedback appended as model-visible
+# context (the <hook-feedback> tags in the ⎿ summary).
 cat > "$DIR/home/.khode/config.json" << JSON
 {
   "provider": "fakeai",
@@ -32,6 +35,7 @@ cat > "$DIR/home/.khode/config.json" << JSON
   "max_tokens": 1024,
   "models": { "fakeai": "test-model" },
   "custom_providers": { "fakeai": { "kind": "openai", "base_url": "http://127.0.0.1:19731/v1" } },
+  "hooks": { "post_tool": [ { "command": "echo hook-saw-edit", "tools": ["edit"] } ] },
   "mcp_servers": { "selftest": { "command": "$DIR/mcpserver", "risk": "read", "env": ["KHOKE_MCP_MUTATE=1"] } }
 }
 JSON
@@ -63,6 +67,9 @@ tmux -L khv capture-pane -p -t main
 echo
 echo "=== SGR capture of the diff rows (what the terminal paints) ==="
 tmux -L khv capture-pane -e -p -t main | grep -E "EDITED|48;5" | cat -v | head -6
+echo
+echo "=== post_tool hook feedback capture (tagged feedback expected in the edit result) ==="
+tmux -L khv capture-pane -p -t main | grep -E "hook-saw-edit" || echo "NO HOOK FEEDBACK FOUND"
 echo
 
 # wait_ready polls the frame until the status line is back to ready, so

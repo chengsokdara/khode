@@ -72,7 +72,9 @@ from the gateway portal's Keys page.
 - **max tokens**
 - **mode** — plan / ask / accept-edits / auto (same as `/mode`)
 - **mcp servers** — add, edit, remove; changes apply live
-- **hooks** — `pre_tool` / `post_tool` shell hooks; apply next turn
+- **hooks** — `pre_tool` / `post_tool` shell hooks (a `pre_tool` exit 2
+  vetoes the call; `post_tool` stdout is fed back to the model as
+  `<hook-feedback>` on that call's result); apply next turn
 
 `--provider` and `--model` override the config for one session only.
 Other commands: `/new [name]` (optionally named sessions), `/sessions`

@@ -230,31 +230,64 @@ func TestTaskFanOutRunsChildrenConcurrently(t *testing.T) {
 	}
 }
 
+// routingProvider routes each Stream by transcript shape — the law
+// fakeai.py uses for concurrent children. The child prompts are distinct
+// from the parent's, and a child's glob round carries no tool result yet
+// while its report round does. There is no shared script list to
+// interleave, so the two children cannot consume each other's rounds
+// under any goroutine schedule.
+type routingProvider struct{}
+
+func (f *routingProvider) Name() string { return "routing" }
+
+func (f *routingProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	sawTool := false
+	prompt := ""
+	for _, m := range req.Messages {
+		if m.Role == llm.RoleUser && prompt == "" {
+			prompt = m.Content
+		}
+		if m.Role == llm.RoleTool {
+			sawTool = true
+		}
+	}
+	var resp []llm.Event
+	switch {
+	case prompt == "one" || prompt == "two": // a child
+		if sawTool {
+			resp = []llm.Event{llm.TextDeltaEvent{Text: "report from child."}}
+		} else {
+			resp = []llm.Event{llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c", Name: "glob",
+				Input: json.RawMessage(`{"pattern":"x"}`)}}}
+		}
+	default: // the parent
+		if sawTool {
+			resp = []llm.Event{llm.TextDeltaEvent{Text: "done."}}
+		} else {
+			resp = []llm.Event{
+				llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "o1", Name: "task",
+					Input: json.RawMessage(`{"prompt":"one","subagent_type":"explore"}`)}},
+				llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "o2", Name: "task",
+					Input: json.RawMessage(`{"prompt":"two","subagent_type":"explore"}`)}},
+			}
+		}
+	}
+	ch := make(chan llm.Event, len(resp)+1)
+	for _, ev := range resp {
+		ch <- ev
+	}
+	ch <- llm.DoneEvent{}
+	close(ch)
+	return ch, nil
+}
+
 func TestParallelGroupCarriesCallIDInContext(t *testing.T) {
 	// Progress lines from a fan-out carry the parent call's id, so the
 	// UI can route them when children run side by side. Both children
 	// get the same one-tool-call-then-report shape (responses are
 	// consumed in nondeterministic order across the two children, so
 	// per-round scripts must be identical for both).
-	glob := func(pattern string) []llm.Event {
-		return []llm.Event{llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "c", Name: "glob",
-			Input: json.RawMessage(`{"pattern":"` + pattern + `"}`)}}, llm.DoneEvent{}}
-	}
-	report := func(text string) []llm.Event {
-		return []llm.Event{llm.TextDeltaEvent{Text: text}, llm.DoneEvent{}}
-	}
-	p := &fakeProvider{responses: [][]llm.Event{
-		{
-			llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "o1", Name: "task",
-				Input: json.RawMessage(`{"prompt":"one","subagent_type":"explore"}`)}},
-			llm.ToolCallEvent{ToolCall: llm.ToolCall{ID: "o2", Name: "task",
-				Input: json.RawMessage(`{"prompt":"two","subagent_type":"explore"}`)}},
-			llm.DoneEvent{},
-		},
-		glob("go"), glob("md"),
-		report("report one."), report("report two."),
-		{llm.TextDeltaEvent{Text: "done."}, llm.DoneEvent{}},
-	}}
+	p := &routingProvider{}
 	var mu sync.Mutex
 	var seen []string
 	r, _ := newTestRunner(t, p, nil)

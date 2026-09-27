@@ -216,8 +216,8 @@ func (r *Runner) executeCalls(ctx context.Context, calls []llm.ToolCall, out cha
 				return err
 			}
 		} else {
-			output, execErr := r.execCall(ctx, calls[i])
-			if err := r.emitResult(calls[i], output, execErr, out); err != nil {
+			output, feedback, execErr := r.execCall(ctx, calls[i])
+			if err := r.emitResult(calls[i], output, feedback, execErr, out); err != nil {
 				return err
 			}
 		}
@@ -249,10 +249,11 @@ func (r *Runner) parallelizable(c llm.ToolCall) bool {
 // transcript order match sequential execution exactly.
 func (r *Runner) execParallel(ctx context.Context, group []llm.ToolCall, out chan<- llm.Event) error {
 	type slot struct {
-		call   llm.ToolCall
-		done   chan struct{}
-		output string
-		err    error
+		call     llm.ToolCall
+		done     chan struct{}
+		output   string
+		feedback string
+		err      error
 	}
 	slots := make([]slot, len(group))
 	sem := make(chan struct{}, min(maxParallelCalls, len(group)))
@@ -267,7 +268,7 @@ func (r *Runner) execParallel(ctx context.Context, group []llm.ToolCall, out cha
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			defer close(s.done)
-			s.output, s.err = r.execCall(ctx, s.call)
+			s.output, s.feedback, s.err = r.execCall(ctx, s.call)
 		}(&slots[i])
 	}
 	for i := range slots {
@@ -275,7 +276,7 @@ func (r *Runner) execParallel(ctx context.Context, group []llm.ToolCall, out cha
 		// a canceled turn drains promptly — each call still gets its
 		// "interrupted by user" result appended.
 		<-slots[i].done
-		if err := r.emitResult(slots[i].call, slots[i].output, slots[i].err, out); err != nil {
+		if err := r.emitResult(slots[i].call, slots[i].output, slots[i].feedback, slots[i].err, out); err != nil {
 			return err
 		}
 	}
@@ -284,8 +285,10 @@ func (r *Runner) execParallel(ctx context.Context, group []llm.ToolCall, out cha
 }
 
 // emitResult shapes one exec outcome into the transcript's tool result
-// message and the UI's result event.
-func (r *Runner) emitResult(c llm.ToolCall, output string, execErr error, out chan<- llm.Event) error {
+// message and the UI's result event. Non-empty post_tool hook feedback
+// rides inside <hook-feedback> tags: session truth the model reads and
+// the ⎿ block shows as part of the result.
+func (r *Runner) emitResult(c llm.ToolCall, output, feedback string, execErr error, out chan<- llm.Event) error {
 	res := llm.ToolResult{CallID: c.ID, IsError: execErr != nil}
 	switch {
 	case execErr == nil:
@@ -295,6 +298,9 @@ func (r *Runner) emitResult(c llm.ToolCall, output string, execErr error, out ch
 	default:
 		res.Content = execErr.Error()
 	}
+	if feedback != "" {
+		res.Content += "\n\n<hook-feedback>\n" + feedback + "\n</hook-feedback>"
+	}
 	if err := r.Session.Append(llm.Message{Role: llm.RoleTool, ToolResult: &res}); err != nil {
 		return fmt.Errorf("appending tool result: %w", err)
 	}
@@ -302,17 +308,17 @@ func (r *Runner) emitResult(c llm.ToolCall, output string, execErr error, out ch
 	return nil
 }
 
-func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
+func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, string, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", "", err
 	}
 	ctx = context.WithValue(ctx, callIDContextKey{}, c.ID)
 	tool, ok := r.Tools.Get(c.Name)
 	if !ok {
-		return "", fmt.Errorf("unknown tool %q", c.Name)
+		return "", "", fmt.Errorf("unknown tool %q", c.Name)
 	}
 	if !r.Tools.Enabled(c.Name) {
-		return "", fmt.Errorf("tool %q is disabled — the user turned it off in /tools", c.Name)
+		return "", "", fmt.Errorf("tool %q is disabled — the user turned it off in /tools", c.Name)
 	}
 
 	mode := perm.DefaultMode
@@ -324,26 +330,28 @@ func (r *Runner) execCall(ctx context.Context, c llm.ToolCall) (string, error) {
 	debug.Printf("tool %s: risk=%s mode=%s decision=%v", c.Name, risk, mode, decision)
 	switch decision {
 	case perm.DecisionDeny:
-		return "", fmt.Errorf("%s tools are blocked in %s mode — present a plan with the plan tool instead; the user can switch modes with /mode",
+		return "", "", fmt.Errorf("%s tools are blocked in %s mode — present a plan with the plan tool instead; the user can switch modes with /mode",
 			risk, mode)
 	case perm.DecisionAsk:
 		if r.Approver == nil || !r.Approver.Approve(ctx, c, risk, previewOf(tool, c.Input)) {
-			return "", errors.New("the user declined this tool call")
+			return "", "", errors.New("the user declined this tool call")
 		}
 	}
 
 	// Hooks run after permission decisions: only calls that are actually
-	// about to execute. A pre_tool veto (exit 2) becomes the error.
+	// about to execute. A pre_tool veto (exit 2) becomes the error; the
+	// post_tool feedback (if any) rides back with the outcome.
 	if r.Hooks != nil {
 		if err := r.Hooks.PreTool(ctx, c.Name, c.Input); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	out, err := tool.Exec(ctx, c.Input)
+	var feedback string
 	if r.Hooks != nil {
-		r.Hooks.PostTool(ctx, c.Name, c.Input, out, err)
+		feedback = r.Hooks.PostTool(ctx, c.Name, c.Input, out, err)
 	}
-	return out, err
+	return out, feedback, err
 }
 
 // previewOf asks a tool what it would change, for the approval dialog;

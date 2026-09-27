@@ -10,6 +10,32 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**post_tool hooks feed the model back (2026-09-27):** a post_tool hook's
+output used to vanish (`_ = r.run(...)`) — the model-facing power lived
+only in pre_tool's exit-2 veto. `PostTool` now returns feedback: exit-0
+stdout (trimmed), or exit-2 stderr (stdout fallback) when a hook flags
+the finished call — Claude Code's convention, still non-blocking (the
+result stays IsError=false unless the tool itself errored; other exits
+and timeouts stay silent). All matching hooks run and their feedback
+joins under an 8 KiB cap with the house `(…truncated)` marker; the loop
+appends it to that call's tool result inside `<hook-feedback>` tags
+(the `<task-context>` framing precedent), making it session truth —
+replayed to the provider, shown in the `⎿` block as-is (literal tags
+accepted for v1), and summarized by compaction like any result content.
+Fixed on the way: hooks skipped entirely when the model's raw tool args
+were not valid JSON (the payload marshal failed silently — which also
+meant pre_tool vetoes could not fire on malformed calls); malformed
+args now ride the payload as `{}`. Pinned by hooks tests (stdout
+feedback, exit-2 stderr + fallback, multi-hook join, other-exit
+silence, cap, canceled ctx, malformed args) and agent-loop tests
+(tagged content in session + event + provider replay, feedback after an
+errored result, none on cancel); the tmux harness gained a post_tool
+hook on `edit` and its first scenario asserts `hook-saw-edit` inside
+the ⎿ block. Also fixed a pre-existing fan-out test flake: the shared
+scripted response list let a late child consume the other's report
+round — the call-id test now routes responses by transcript shape
+(fakeai.py's law).
+
 **MCP tools refresh live (2026-09-27):** MCP tool lists are no longer a
 startup snapshot — refresh used to mean restarting the server from
 `/mcp` or `/settings`. The client's pump forwards every notification to
@@ -922,6 +948,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-27 | post_tool hooks feed the model back: exit-0 stdout / exit-2 stderr appended to the call's tool result inside `<hook-feedback>` tags (8 KiB cap, all matching hooks join, non-blocking); hooks fire even on malformed tool args (payload rides `{}`) | (this commit) |
 | 2026-09-27 | MCP tools refresh live: `tools/list_changed` notifications re-list a server's tools into the registry mid-session (`mcp.SetNotify` → UI fan-in channel → list-first registry swap; silent no-op, off-toggles preserved, idle pings drain at the next armed pump); `mcp.Exited()` dead-server glyph in `/mcp`; resources/prompts split to their own backlog item | (this commit) |
 | 2026-09-27 | Parallel read-only fan-out: consecutive read-only calls run as a bounded parallel group with call-ordered results; all-read task children spawn side by side with per-call progress ids and per-block live activity lines (`tools.ExclusiveTool` veto) | (this commit) |
 | 2026-09-27 | User-defined agents: `~/.khode/agents/*.md` (frontmatter + body) join the task catalog with tool allowlists and model pins; `code-reviewer` built-in; `/agents` overview dialog with live reload (`r`) | (this commit) |

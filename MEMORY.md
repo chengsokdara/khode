@@ -23,6 +23,25 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
+- **post_tool hook feedback (2026-09-27):** `hooks.Runner.PostTool`
+  returns the hooks' model-facing feedback instead of discarding it.
+  `runOne` reports feedback per hook (exit 0 → trimmed stdout; post_tool
+  exit 2 → stderr with stdout fallback — a hook flagging the finished
+  call; other exits and ctx timeouts stay silent), `run` joins all
+  matching hooks (pre_tool keeps its first-BlockError early return), and
+  `joinFeedback` caps the join at `maxHookFeedback` (8 KiB) with the
+  house `(…truncated)` marker reserving its own room. The loop's
+  `execCall` returns `(output, feedback, err)` (parallel slots carry the
+  field; `emitResult` wraps non-empty feedback in `<hook-feedback>` tags
+  appended to `res.Content`), so the transcript, the provider replay,
+  and the `⎿` result block all show it with zero UI changes. Also fixed:
+  hooks used to skip silently when the model's raw tool args were not
+  valid JSON (payload marshal failed — vetoes could not fire on
+  malformed calls); malformed args now ride the payload as `{}`. And the
+  call-id fan-out test stopped sharing a scripted response list (a late
+  child could consume the other's report round); it routes by transcript
+  shape via a `routingProvider` (fakeai.py's law).
+
 - **MCP tools refresh live (2026-09-27):** `notifications/tools/list_changed`
   no longer dies in the pump. `mcp.Client.SetNotify` installs a hook the
   pump calls for each notification (mu-guarded, safe to set any time
@@ -171,6 +190,10 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-27 | post_tool feedback rides inside the tool result content (`<hook-feedback>` tags), not a separate message or session field | the tags reuse the task-context framing precedent; one string keeps the transcript/event/replay plumbing byte-identical (no schema change, no UI event change) and compaction summarizes it like any result content |
+| 2026-09-27 | post_tool exit codes: 0 stdout = feedback, 2 stderr (stdout fallback) = feedback, every other exit silent; `IsError` never changes from hook outcomes | mirrors Claude Code's hook convention (exit 2 flags the call without failing it) and keeps the existing contract — a broken hook must not turn a succeeded call into an error the model would retry |
+| 2026-09-27 | Hook payloads coerce malformed tool args to `{}` instead of skipping the hook (was a silent marshal failure) | execCall runs the model's raw bytes by design, so a pre_tool veto must not depend on the model emitting valid JSON — the dangerous failure was a banned command escaping its veto |
+| 2026-09-27 | The call-id fan-out test routes responses by transcript shape (`routingProvider`) instead of one shared scripted list | concurrent children consume a shared list in any order — a late child could take the other's report round and fire both progress events (surfaced under cross-package test load); shape routing (fakeai.py's law) makes every schedule produce the same transcripts |
 | 2026-09-27 | MCP notifications ride a `SetNotify` hook on the client → non-blocking fan-in into a buffered UI channel; pings QUEUE while idle and drain at the next armed pump (no always-armed pump, no `tea.Program.Send`) | keeps the waitForEvents one-blocking-read invariant (never hold `*tea.Program`); a dropped ping costs nothing because the re-list reads the latest state; draining at turn start means the reconcile lands before the model sees tools |
 | 2026-09-27 | A refresh lists first and swaps the registry only on success (`RemoveMCP` + the new `AddMCPList`); unchanged sets stay silent in chat; session off-toggles are re-applied to surviving tools | a failing server must not leave the registry half-updated (Remove-then-AddMCP alone would erase tools on a failed list); chatty servers would spam scrollback with no-op lines; a refresh is not a removal — silently re-enabling toggled-off tools would surprise the user |
 | 2026-09-27 | Parallel execution groups CONSECUTIVE read-only calls and emits results in call order (slot-by-slot ordered drain); it does not reorder or interleave with risky calls | per-call pairing, transcript order, and the diff/todo replay logic must stay byte-identical to sequential; concurrency is a wall-clock win, not an ordering change — and group boundaries keep writes gated and dialogs one-at-a-time |
@@ -696,6 +719,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Session summary | Commits |
 |---|---|---|
+| 2026-09-27 | post_tool model feedback (roadmap Next #3; chosen after presenting the open backlog — the user declined to pick, so the recommendation went ahead): `hooks.PostTool` returns joined capped feedback (exit-0 stdout / exit-2 stderr, 8 KiB, non-blocking), the loop threads it into `emitResult`'s `<hook-feedback>` tags (session + event + replay, no UI change); fixed the malformed-args hook skip and the fan-out call-id test flake (routingProvider). 8 new tests; tmux harness gained a post_tool-on-edit hook with a frame assertion (`hook-saw-edit` captured live inside the ⎿ block) | (this commit) |
 | 2026-09-27 | MCP live re-list (roadmap Next #2's tools half; resources/prompts split to their own item by user choice): `mcp.Client.SetNotify` (mu-guarded hook, pump dispatches every notification) + `Exited()`; UI fan-in channel (`m.mcpEvents`, drop-on-full) as a 4th waitForEvents case; `refreshMCPCmd` lists off-thread and swaps registry-first-safe via the new `tools.AddMCPList` (silent no-op, off-toggles re-applied); /mcp exited glyph; hooks wired in `New` (startup clients) and `applyMCPResult` (late ones). Tests: hook delivery in order + exit flag (internal/mcp), refresh swap with toggle survival (internal/tools). tmux-verified: testdata mcpserver grew a mutate mode (KHOKE_MCP_MUTATE=1 flips the set on the first tools/call and pushes the notification), fakeai routes `# MCP refresh` by the `call_mcp1` marker (role:tool was already true in the outer transcript), harness captures `mcp: selftest tools refreshed (+1 −1)` mid-turn. Lesson: wait_ready no-ops when the app is already idle — settle-sleep after send-keys so it brackets the turn | (this commit) |
 | 2026-09-25 | Subagent features wrap-up: AGENTS.md architecture section documents subagent.go kinds, task.go's new schema/progress, Runner.Preface, the UI gatherer, and the `gather_context`/`subagent_model` knobs | (this commit) |
 | 2026-09-25 | Subagent features, commit 5 of 5: `subagent_model` config (trimmed accessor `SubModel()`, live-read `SubagentConfig.SubModel` func) routes task subagents and the gatherer onto a cheaper model; `/settings` "subagent model" editor row (empty = main model, same fallback). Tests: subagent request carries the override while the parent keeps its model; config round trip incl. the omitempty-clears trap (Unmarshal into a reused raw keeps stale values) | (this commit) |

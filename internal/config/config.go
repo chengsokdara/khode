@@ -74,8 +74,9 @@ type Hook struct {
 }
 
 // Hooks are the user's agent lifecycle hooks. PreTool runs before each
-// tool call and can block it (exit code 2); PostTool runs after and is
-// informational only.
+// tool call and can block it (exit code 2); PostTool runs after and
+// feeds the model back — exit-0 stdout (or exit-2 stderr, a hook
+// flagging the call) is appended to that call's tool result.
 type Hooks struct {
 	PreTool  []Hook `json:"pre_tool,omitempty"`
 	PostTool []Hook `json:"post_tool,omitempty"`
