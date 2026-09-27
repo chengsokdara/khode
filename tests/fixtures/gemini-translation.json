@@ -385,5 +385,54 @@
         "code": null
       }
     }
+  },
+  {
+    "fn": "json",
+    "name": "multi-candidate (n>1) → choices per candidate.index, single usage totals across them",
+    "model": "gemini-2.5-flash",
+    "payload": {
+      "responseId": "Multi1",
+      "candidates": [
+        {
+          "content": { "role": "model", "parts": [{ "text": "Choice one" }] },
+          "finishReason": "STOP",
+          "index": 0
+        },
+        {
+          "content": { "role": "model", "parts": [{ "text": "Choice two" }] },
+          "finishReason": "STOP",
+          "index": 1
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 4,
+        "candidatesTokenCount": 12,
+        "thoughtsTokenCount": 2,
+        "totalTokenCount": 18
+      }
+    },
+    "expected": {
+      "id": "chatcmpl-Multi1",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "gemini-2.5-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": { "role": "assistant", "content": "Choice one" },
+          "finish_reason": "stop"
+        },
+        {
+          "index": 1,
+          "message": { "role": "assistant", "content": "Choice two" },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 4,
+        "completion_tokens": 14,
+        "total_tokens": 18
+      }
+    }
   }
 ]

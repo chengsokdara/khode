@@ -11,8 +11,9 @@
 // and `reasoning_effort` extras map onto `generationConfig.thinkingConfig.
 // thinkingBudget` (thinking arrives only via the openai-face extra — the
 // anthropic parser still rejects `thinking`). Assistant-first conversations
-// get a spacer user turn prepended; n>1 is rejected 400
-// `untranslatable_request` (explicit; dual-adapter providers retry elsewhere).
+// get a spacer user turn prepended; n>1 maps natively onto
+// `generationConfig.candidateCount` (the normalizers in dialects/gemini.ts
+// fan the candidates back onto openai choices).
 //
 // Gemini responses are NOT relayed — the upstream speaks its own dialect, so
 // every pairing is translated. The gemini→client-dialect translation lives in
@@ -164,7 +165,7 @@ function thinkingConfigFor(req: CanonicalChatRequest): Record<string, unknown> |
  * Builds the upstream POST for one candidate. Throws UpstreamMisconfigError
  * when the stored key cannot be decrypted and UnsupportedTranslationError
  * when the canonical request cannot be expressed in the Gemini dialect
- * (n > 1, system-only). A provider without a key is allowed (proxies/local
+ * (system-only). A provider without a key is allowed (proxies/local
  * gateways) — the x-goog-api-key header is omitted.
  */
 export async function buildGeminiGenerateContentRequest(
@@ -179,11 +180,13 @@ export async function buildGeminiGenerateContentRequest(
   headers['content-type'] = 'application/json';
 
   const o = req.options;
-  if (o.n !== undefined && o.n !== null && o.n > 1) {
-    throw new UnsupportedTranslationError(
-      `The Gemini generateContent dialect has no multi-choice equivalent for n=${o.n} — only n=1 can be translated.`,
-    );
-  }
+  // n>1 maps natively onto generationConfig.candidateCount (wire fact
+  // verified 2026-09-27: "Number of generated responses to return … doesn't
+  // work for Gemini 1.0 family"). Candidates carry `index` and
+  // usageMetadata totals ACROSS candidates, so usage/billing needs no
+  // multiplication. A model that refuses >1 (or a too-high count) rejects
+  // upstream — surfaced honestly as a client 4xx.
+  const candidateCount = o.n !== undefined && o.n !== null && o.n > 1 ? o.n : null;
 
   // Tool-name lookup for functionResponse binding (Gemini binds by name).
   const functionNameById = new Map<string, string>();
@@ -248,6 +251,7 @@ export async function buildGeminiGenerateContentRequest(
   }
   const thinkingConfig = thinkingConfigFor(req);
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
+  if (candidateCount !== null) generationConfig.candidateCount = candidateCount;
   // M18: JSON mode / structured outputs → responseMimeType (+ responseSchema).
   if (req.responseFormat) {
     generationConfig.responseMimeType = 'application/json';

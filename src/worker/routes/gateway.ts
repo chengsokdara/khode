@@ -204,7 +204,7 @@ const ADAPTER_SUPPORTED_PARAMS: Record<UpstreamAdapter, string[]> = {
     'presence_penalty', 'frequency_penalty', 'logprobs', 'logit_bias',
   ],
   anthropic: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'response_format', 'metadata', 'cache_control'],
-  gemini: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'reasoning_effort', 'response_format'],
+  gemini: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'n', 'tools', 'tool_choice', 'reasoning_effort', 'response_format'],
 };
 
 /** Parses providers.adapters JSON defensively (shared with routing's parser contract). */
@@ -877,9 +877,12 @@ function estimateChatCostUsd(request: CanonicalChatRequest, cand: RoutingCandida
     chars += m.content.length;
     for (const tc of m.toolCalls ?? []) chars += tc.arguments.length;
   }
-  const tokensIn = Math.ceil(chars / 4);
+  const n = request.options.n !== undefined && request.options.n !== null && request.options.n > 1 ? request.options.n : 1;
+  // n>1 re-sends the prompt on every choice (anthropic fan-out) and
+  // generates n× output (gemini candidateCount) — both sides scale with n.
+  const tokensIn = Math.ceil(chars / 4) * n;
   const maxOut = request.options.maxTokens ?? cand.model.maxOutputTokens ?? 4096;
-  const tokensOut = Math.max(0, Math.min(Math.round(maxOut), 4096));
+  const tokensOut = Math.max(0, Math.min(Math.round(maxOut), 4096)) * n;
   // pricing is USD per 1M tokens (same contract as costUsd).
   const est =
     (pricingInput != null ? (tokensIn / 1e6) * pricingInput : 0) +

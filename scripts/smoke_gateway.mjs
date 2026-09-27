@@ -308,8 +308,11 @@ function startMockUpstream() {
             res.write(gemEvent({ responseId: 'gem-think-1', candidates: [{ content: { role: 'model', parts: [{ thought: true, text: 'gemini ' }, { thought: true, text: 'thinking' }] }, index: 0 }] }));
             res.write(gemEvent({ responseId: 'gem-think-1', candidates: [{ content: { role: 'model', parts: [{ text: 'Thought answer' }] }, index: 0 }] }));
           } else {
-            res.write(gemEvent({ responseId: 'gem-resp-1', candidates: [{ content: { role: 'model', parts: [{ text: 'Hello from native' }] }, index: 0 }] }));
-            res.write(gemEvent({ responseId: 'gem-resp-1', candidates: [{ content: { role: 'model', parts: [{ text: ' Gemini!' }] }, index: 0 }] }));
+            // n>1 (candidateCount) → two candidates per event, each with its index.
+            const multi = (body.generationConfig?.candidateCount ?? 1) > 1;
+            const cand = (index, text) => ({ content: { role: 'model', parts: [{ text }] }, index });
+            res.write(gemEvent({ responseId: 'gem-resp-1', candidates: multi ? [cand(0, 'Hello from native'), cand(1, 'Choice two stream')] : [cand(0, 'Hello from native')] }));
+            res.write(gemEvent({ responseId: 'gem-resp-1', candidates: multi ? [cand(0, ' Gemini!'), cand(1, ' from the mock.')] : [cand(0, ' Gemini!')] }));
           }
           res.write(gemEvent({ responseId: 'gem-resp-1', candidates: [{ content: { role: 'model', parts: [] }, finishReason: 'STOP', index: 0 }], usageMetadata: gemUsage, modelVersion: 'gemini-mock' }));
           return res.end();
@@ -320,12 +323,17 @@ function startMockUpstream() {
             : gemModel === 'gem-think'
               ? [{ thought: true, text: 'gemini thinking' }, { text: 'Thought answer' }]
               : [{ text: 'Hello from native Gemini!' }];
+        const gemCandidate = (index, parts) => ({ content: { role: 'model', parts }, finishReason: 'STOP', index });
+        const gemCandidates =
+          gemModel === 'gemini-mock' && (body.generationConfig?.candidateCount ?? 1) > 1
+            ? [gemCandidate(0, gemParts), gemCandidate(1, [{ text: 'Choice two from the mock.' }])]
+            : [gemCandidate(0, gemParts)];
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(
           JSON.stringify({
             responseId: 'gem-resp-1',
             modelVersion: 'gemini-mock',
-            candidates: [{ content: { role: 'model', parts: gemParts }, finishReason: 'STOP', index: 0 }],
+            candidates: gemCandidates,
             usageMetadata: gemUsage,
           }),
         );
@@ -1815,6 +1823,22 @@ const mock = await startMockUpstream();
     JSON.stringify(lastReq.body?.contents),
   );
 
+  // n>1 native support: candidateCount upstream → multi-candidates fanned onto
+  // openai choices (usageMetadata totals ACROSS candidates — no multiplication).
+  const gemN = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-gemini', messages: [{ role: 'user', content: 'hi' }], n: 2 }));
+  check(
+    'M12 chat → gemini upstream n=2 → candidateCount upstream, choices per candidate.index',
+    gemN.status === 200
+      && gemN.body?.choices?.length === 2
+      && gemN.body.choices[0]?.index === 0
+      && gemN.body.choices[0]?.message?.content === 'Hello from native Gemini!'
+      && gemN.body.choices[1]?.index === 1
+      && gemN.body.choices[1]?.message?.content === 'Choice two from the mock.'
+      && lastReq.body?.generationConfig?.candidateCount === 2
+      && gemN.body?.usage?.completion_tokens === 8,
+    JSON.stringify({ upstreamGenConfig: lastReq.body?.generationConfig, body: gemN.body }),
+  );
+
   // -- responses client → gemini upstream ------------------------------------
   const gemResp = await fetchOrPost('/v1/responses', JSON.stringify({ model: 'mock-gemini', input: 'hi', instructions: 'Be terse.' }));
   check(
@@ -1874,6 +1898,24 @@ const mock = await startMockUpstream();
     'M12 responses stream → gemini upstream: completed with assembled text + usage',
     gemRespStream.status === 200 && gemRespCompleted?.response?.status === 'completed' && gemRespCompleted?.response?.output?.[0]?.content?.[0]?.text === 'Hello from native Gemini!' && gemRespCompleted?.response?.usage?.input_tokens === 4 && gemRespCompleted?.response?.usage?.output_tokens === 8,
     JSON.stringify(gemRespCompleted)?.slice(0, 300),
+  );
+
+  // n=2 stream: per-index deltas + per-index finish chunks, shared [DONE].
+  const gemStreamN = await fetch(base + '/v1/chat/completions', {
+    method: 'POST',
+    headers: v1Headers(),
+    body: JSON.stringify({ model: 'mock-gemini', messages: [{ role: 'user', content: 'hi' }], stream: true, n: 2 }),
+  });
+  const gemStreamNText = await gemStreamN.text();
+  const gemStreamNChunks = parseDataLines(gemStreamNText);
+  check(
+    'M12 chat stream → gemini upstream n=2 → per-index deltas + per-index finish + [DONE]',
+    gemStreamN.status === 200
+      && gemStreamNChunks.some((ch) => ch?.choices?.[0]?.index === 0 && ch.choices[0]?.delta?.content === 'Hello from native')
+      && gemStreamNChunks.some((ch) => ch?.choices?.[0]?.index === 1 && ch.choices[0]?.delta?.content === 'Choice two stream')
+      && gemStreamNChunks.filter((ch) => ch?.choices?.[0]?.finish_reason === 'stop').length === 2
+      && gemStreamNText.trimEnd().endsWith('data: [DONE]'),
+    JSON.stringify(gemStreamNChunks.map((ch) => ch?.choices?.[0])),
   );
 
   // -- tools: functionCall → tool_calls, tool result → functionResponse ------

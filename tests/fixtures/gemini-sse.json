@@ -666,5 +666,157 @@
         "data": "[DONE]"
       }
     ]
+  },
+  {
+    "name": "multi-candidate stream (n>1) — per-index role/delta chunks, per-index finish, shared usage, [DONE]",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "inputEvents": [
+      {
+        "data": {
+          "responseId": "gem-multi",
+          "candidates": [
+            { "content": { "role": "model", "parts": [{ "text": "One" }] }, "index": 0 },
+            { "content": { "role": "model", "parts": [{ "text": "Two" }] }, "index": 1 }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "gem-multi",
+          "candidates": [
+            { "content": { "role": "model", "parts": [{ "text": " more" }] }, "index": 0 },
+            { "content": { "role": "model", "parts": [{ "text": "!" }] }, "index": 1 }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "gem-multi",
+          "candidates": [
+            { "content": { "role": "model", "parts": [] }, "finishReason": "STOP", "index": 0 },
+            { "content": { "role": "model", "parts": [] }, "finishReason": "STOP", "index": 1 }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 4,
+            "candidatesTokenCount": 9,
+            "totalTokenCount": 13
+          },
+          "modelVersion": "gemini-2.5-flash"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": { "content": "One" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": { "content": "Two" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": { "content": " more" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": { "content": "!" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": {}, "finish_reason": "stop" }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "completion_tokens": 9,
+            "total_tokens": 13
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": {}, "finish_reason": "stop" }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "completion_tokens": 9,
+            "total_tokens": 13
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
   }
 ]

@@ -156,35 +156,40 @@ function partsToOpenAiMessage(parts: unknown): { text: string; reasoning: string
 
 /**
  * Normalizes a Gemini generateContent JSON body into an openai chat.completion
- * (the first candidate; multi-candidate responses are not requested — n>1 is
- * rejected at request build time). `model` is the caller-facing model (the
- * requested slug).
+ — every candidate becomes one choice (`candidate.index` wins over position;
+ n>1 arrives as candidateCount, and usageMetadata totals ACROSS candidates so
+ the usage object needs no multiplication). `model` is the caller-facing model
+ (the requested slug). A body with no candidates (blocked prompt) keeps the
+ historical single empty choice.
  */
 export function geminiCompletionToOpenAi(payload: Record<string, unknown>, model: string): Record<string, unknown> {
   const candidates = Array.isArray(payload.candidates) ? (payload.candidates as Record<string, unknown>[]) : [];
-  const candidate = candidates[0] ?? {};
-  const content = candidate.content;
-  const parts = content && typeof content === 'object' && !Array.isArray(content) ? (content as Record<string, unknown>).parts : null;
-  const { text, reasoning, toolCalls } = partsToOpenAiMessage(parts);
-  const message: Record<string, unknown> = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
-  if (reasoning) message.reasoning_content = reasoning;
-  if (toolCalls.length) message.tool_calls = toolCalls;
   const usage = geminiUsageMetadata(payload);
   const { promptTokens, completionTokens } = usage
     ? geminiTokensFromMetadata(usage)
     : { promptTokens: 0, completionTokens: 0 };
+  const choiceFrom = (candidate: Record<string, unknown>, position: number): Record<string, unknown> => {
+    const content = candidate.content;
+    const parts = content && typeof content === 'object' && !Array.isArray(content) ? (content as Record<string, unknown>).parts : null;
+    const { text, reasoning, toolCalls } = partsToOpenAiMessage(parts);
+    const message: Record<string, unknown> = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+    if (reasoning) message.reasoning_content = reasoning;
+    if (toolCalls.length) message.tool_calls = toolCalls;
+    return {
+      index: typeof candidate.index === 'number' && Number.isFinite(candidate.index) ? candidate.index : position,
+      message,
+      finish_reason: mapGeminiFinishReason(candidate.finishReason, toolCalls.length > 0),
+    };
+  };
+  const choices = candidates.length
+    ? candidates.map(choiceFrom)
+    : [choiceFrom({}, 0)];
   return {
     id: typeof payload.responseId === 'string' && payload.responseId ? `chatcmpl-${payload.responseId}` : 'chatcmpl-khateway',
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [
-      {
-        index: 0,
-        message,
-        finish_reason: mapGeminiFinishReason(candidate.finishReason, toolCalls.length > 0),
-      },
-    ],
+    choices,
     usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
   };
 }
@@ -209,6 +214,11 @@ export interface GeminiToOpenAiStreamOptions {
  * usageMetadata event closes the stream (`data: [DONE]`). Malformed events
  * are skipped; a stream that ends without a finishReason still emits the
  * finish chunk so downstream translators always see a closed stream.
+ *
+ * n>1 (candidateCount) arrives as MULTIPLE candidates per event, each with an
+ * `index` — state (start chunk, finish reason, tool-call counter) is tracked
+ * per candidate index and every choice carries that index; tool-call ids stay
+ * scoped per choice (`call_gemini_<n>`), matching how clients pair results.
  */
 export function transformGeminiSseToOpenAi(
   src: ReadableStream<Uint8Array>,
@@ -216,24 +226,36 @@ export function transformGeminiSseToOpenAi(
   opts: GeminiToOpenAiStreamOptions = {},
 ): ReadableStream<Uint8Array> {
   return translateSseStream(src, (out) => {
-    let started = false;
     let finished = false;
     let id = 'chatcmpl-khateway';
     const created = Math.floor(Date.now() / 1000);
-    let finishReasonRaw: string | null = null;
-    let sawToolCall = false;
     let promptTokens = 0;
     let completionTokens = 0;
-    let toolCallCount = 0;
     const includeUsage = opts.includeUsage === true;
 
-    const chunk = (delta: Record<string, unknown>, finish: string | null, withUsage = false): string => {
+    interface CandidateState {
+      started: boolean;
+      finishReasonRaw: string | null;
+      sawToolCall: boolean;
+      toolCallCount: number;
+    }
+    const perCandidate = new Map<number, CandidateState>();
+    const stateFor = (idx: number): CandidateState => {
+      let s = perCandidate.get(idx);
+      if (!s) {
+        s = { started: false, finishReasonRaw: null, sawToolCall: false, toolCallCount: 0 };
+        perCandidate.set(idx, s);
+      }
+      return s;
+    };
+
+    const chunk = (delta: Record<string, unknown>, finish: string | null, idx = 0, withUsage = false): string => {
       const body: Record<string, unknown> = {
         id,
         object: 'chat.completion.chunk',
         created,
         model,
-        choices: [{ index: 0, delta, finish_reason: finish }],
+        choices: [{ index: idx, delta, finish_reason: finish }],
       };
       if (withUsage) {
         body.usage = { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens };
@@ -241,25 +263,33 @@ export function transformGeminiSseToOpenAi(
       return `data: ${JSON.stringify(body)}\n\n`;
     };
 
-    const emitStart = () => {
-      if (started) return;
-      started = true;
-      out.enqueue(chunk({ role: 'assistant', content: '' }, null));
+    const emitStart = (idx: number) => {
+      const s = stateFor(idx);
+      if (s.started) return;
+      s.started = true;
+      out.enqueue(chunk({ role: 'assistant', content: '' }, null, idx));
     };
 
     const emitFinish = () => {
       if (finished) return;
       finished = true;
-      emitStart();
-      const finish = finishReasonRaw
-        ? mapGeminiFinishReason(finishReasonRaw, sawToolCall)
-        : sawToolCall
-          ? 'tool_calls'
-          : 'stop';
-      out.enqueue(chunk({}, finish, !includeUsage));
+      // One finish chunk per candidate seen (ascending index); a stream that
+      // never showed a candidate (blocked prompt) still closes index 0.
+      const indexes = [...perCandidate.keys()].sort((a, b) => a - b);
+      for (const idx of indexes.length ? indexes : [0]) {
+        const s = stateFor(idx);
+        emitStart(idx);
+        const finish = s.finishReasonRaw
+          ? mapGeminiFinishReason(s.finishReasonRaw, s.sawToolCall)
+          : s.sawToolCall
+            ? 'tool_calls'
+            : 'stop';
+        out.enqueue(chunk({}, finish, idx, !includeUsage));
+      }
       if (includeUsage) {
         // openai include_usage contract: a trailing chunk with an EMPTY
-        // choices array carrying the aggregated usage.
+        // choices array carrying the aggregated usage (totals across all
+        // candidates — Google's usageMetadata already sums them).
         out.enqueue(
           `data: ${JSON.stringify({
             id,
@@ -310,14 +340,16 @@ export function transformGeminiSseToOpenAi(
           completionTokens = t.completionTokens;
         }
         const candidates = Array.isArray(payload.candidates) ? (payload.candidates as Record<string, unknown>[]) : [];
-        const candidate = candidates[0];
-        if (candidate) {
-          if (typeof candidate.finishReason === 'string' && candidate.finishReason) {
-            finishReasonRaw = candidate.finishReason;
-          }
-          const content = candidate.content;
-          const parts = content && typeof content === 'object' && !Array.isArray(content) ? (content as Record<string, unknown>).parts : null;
-          if (Array.isArray(parts)) {
+        if (candidates.length) {
+          for (const candidate of candidates) {
+            const idx = typeof candidate.index === 'number' && Number.isFinite(candidate.index) ? candidate.index : 0;
+            const s = stateFor(idx);
+            if (typeof candidate.finishReason === 'string' && candidate.finishReason) {
+              s.finishReasonRaw = candidate.finishReason;
+            }
+            const content = candidate.content;
+            const parts = content && typeof content === 'object' && !Array.isArray(content) ? (content as Record<string, unknown>).parts : null;
+            if (!Array.isArray(parts)) continue;
             let textBuffer = '';
             let thoughtBuffer = '';
             for (const raw of parts) {
@@ -332,38 +364,39 @@ export function transformGeminiSseToOpenAi(
               if (part.functionCall && typeof part.functionCall === 'object') {
                 const fc = part.functionCall as Record<string, unknown>;
                 if (typeof fc.name === 'string' && fc.name) {
-                  sawToolCall = true;
-                  const index = toolCallCount++;
+                  s.sawToolCall = true;
+                  const toolIndex = s.toolCallCount++;
                   let args = '';
                   try {
                     args = JSON.stringify(fc.args ?? {}) ?? '';
                   } catch {
                     args = '';
                   }
-                  emitStart();
+                  emitStart(idx);
                   out.enqueue(
                     chunk(
-                      { tool_calls: [{ index, id: `call_gemini_${index}`, type: 'function', function: { name: fc.name, arguments: args } }] },
+                      { tool_calls: [{ index: toolIndex, id: `call_gemini_${toolIndex}`, type: 'function', function: { name: fc.name, arguments: args } }] },
                       null,
+                      idx,
                     ),
                   );
                 }
               }
             }
             if (thoughtBuffer) {
-              emitStart();
-              out.enqueue(chunk({ reasoning_content: thoughtBuffer }, null));
+              emitStart(idx);
+              out.enqueue(chunk({ reasoning_content: thoughtBuffer }, null, idx));
             }
             if (textBuffer) {
-              emitStart();
-              out.enqueue(chunk({ content: textBuffer }, null));
+              emitStart(idx);
+              out.enqueue(chunk({ content: textBuffer }, null, idx));
             }
           }
-        } else if (!started && !finishReasonRaw) {
+        } else if (perCandidate.size === 0) {
           // No candidates at all — a blocked prompt (promptFeedback.blockReason).
           const feedback = payload.promptFeedback;
           if (feedback && typeof feedback === 'object' && (feedback as Record<string, unknown>).blockReason) {
-            finishReasonRaw = 'SAFETY';
+            stateFor(0).finishReasonRaw = 'SAFETY';
           }
         }
       },
