@@ -95,6 +95,7 @@ async function cleanup() {
 const lastReq = { path: '', headers: {}, body: {} };
 let lastGemThinking = null; // M17: last generationConfig.thinkingConfig seen by the gemini face
 let flakyHits = 0; // P3: first flaky-429 hit answers 429, the retry succeeds
+let anthropicHits = 0; // n>1 fan-out counting — reset per cell, one bump per /v1/messages leg
 // The openai-shaped /models listing served to every openai-adapter provider on
 // this origin. Mutable so the free-models sync section can shrink/restore the
 // upstream free pool between runs (starts as the historical fixed list).
@@ -144,6 +145,7 @@ function startMockUpstream() {
       }
       if (url.endsWith('/v1/messages')) {
         // ---- anthropic Messages dialect mock ----
+        anthropicHits++;
         if (model === 'claude-think') {
           // M17 thinking response: thinking block + text (JSON) / thinking_delta + text_delta (SSE).
           if (body.stream) {
@@ -1057,14 +1059,61 @@ const mock = await startMockUpstream();
     `ct=${openaiAnthStream.headers.get('content-type')} len=${openaiAnthStreamText.length}`,
   );
 
-  const openaiAnthN = await fetchOrPost(
+  // n>1 on an anthropic upstream: fan-out — n concurrent identical /v1/messages
+  // invocations merged into indexed openai choices, usage SUMMED across legs
+  // (JSON face: 7 in / 5 out per leg → 14/10; stream face: 7 in / 11 out → 14/22).
+  anthropicHits = 0;
+  const anthropicFanN = await fetchOrPost(
     '/v1/chat/completions',
-    JSON.stringify({ model: 'mock-claude', n: 4, messages: [{ role: 'user', content: 'hi' }] }),
+    JSON.stringify({ model: 'mock-claude', n: 2, messages: [{ role: 'user', content: 'hi' }] }),
   );
   check(
-    'chat → anthropic upstream with n>1 → 400 untranslatable',
-    openaiAnthN.status === 400 && openaiAnthN.body?.error?.code === 'untranslatable_request',
-    JSON.stringify(openaiAnthN.body),
+    'chat → anthropic upstream n=2 → fan-out 2 legs, merged choices with indexes',
+    anthropicFanN.status === 200
+      && anthropicHits === 2
+      && anthropicFanN.body?.choices?.length === 2
+      && anthropicFanN.body.choices[0]?.index === 0
+      && anthropicFanN.body.choices[0]?.message?.content === 'Hello from the mock upstream!'
+      && anthropicFanN.body.choices[1]?.index === 1
+      && anthropicFanN.body.choices[1]?.message?.content === 'Hello from the mock upstream!'
+      && anthropicFanN.body?.usage?.prompt_tokens === 14
+      && anthropicFanN.body?.usage?.completion_tokens === 10
+      && anthropicFanN.headers.get('x-khateway-attempts') === '1',
+    JSON.stringify({ hits: anthropicHits, body: anthropicFanN.body }),
+  );
+
+  const anthropicFanNLog = await waitForLog({ model: 'mock-claude' }, (r) => r?.tokens_in === 14 && r?.tokens_out === 10 && r?.status === 200);
+  check(
+    'chat → anthropic upstream n=2 fan-out logs summed usage (14 in / 10 out)',
+    !!anthropicFanNLog,
+    JSON.stringify(anthropicFanNLog),
+  );
+
+  anthropicHits = 0;
+  const anthropicFanStream = await fetch(base + '/v1/chat/completions', {
+    method: 'POST',
+    headers: v1Headers(),
+    body: JSON.stringify({ model: 'mock-claude', n: 2, messages: [{ role: 'user', content: 'hi' }], stream: true }),
+  });
+  const anthropicFanStreamText = await anthropicFanStream.text();
+  const anthropicFanChunks = parseDataLines(anthropicFanStreamText);
+  check(
+    'chat stream → anthropic upstream n=2 → fan-out legs interleaved with per-index chunks + summed usage chunk',
+    anthropicFanStream.status === 200
+      && anthropicHits === 2
+      && anthropicFanChunks.some((ch) => ch?.choices?.[0]?.index === 0 && ch.choices[0]?.delta?.content === 'Hello from the mock')
+      && anthropicFanChunks.some((ch) => ch?.choices?.[0]?.index === 1 && ch.choices[0]?.delta?.content === 'Hello from the mock')
+      && anthropicFanChunks.filter((ch) => ch?.choices?.[0]?.finish_reason === 'stop').length === 2
+      && anthropicFanChunks.some((ch) => Array.isArray(ch?.choices) && ch.choices.length === 0 && ch?.usage?.prompt_tokens === 14 && ch?.usage?.completion_tokens === 22)
+      && anthropicFanStreamText.trimEnd().endsWith('data: [DONE]'),
+    JSON.stringify(anthropicFanChunks.map((ch) => ({ c: ch?.choices?.[0], u: ch?.usage }))),
+  );
+
+  const anthropicFanStreamLog = await waitForLog({ model: 'mock-claude' }, (r) => r?.tokens_in === 14 && r?.tokens_out === 22 && r?.status === 200);
+  check(
+    'chat stream → anthropic upstream n=2 fan-out logs summed stream usage (14 in / 22 out)',
+    !!anthropicFanStreamLog,
+    JSON.stringify(anthropicFanStreamLog),
   );
 
   // Assistant-first support: the adapter prepends ONE spacer user turn (the

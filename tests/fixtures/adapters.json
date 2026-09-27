@@ -798,9 +798,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "error: n>1 is untranslatable",
-    "error": "unsupported",
-    "messageContains": "no multi-choice equivalent for n=2",
+    "name": "n>1 never reaches the body — fan-out happens at gateway level (body identical to n=1)",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5",
@@ -827,9 +825,33 @@
       ],
       "stream": false,
       "options": {
-        "n": 2
+        "n": 4
       },
       "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false
+      },
+      "timeoutMs": 60000
     }
   },
   {

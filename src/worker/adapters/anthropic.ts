@@ -124,7 +124,7 @@ function turnFor(m: CanonicalMessage, system: SystemPart[]): Turn | null {
  * Builds the upstream POST for one candidate. Throws UpstreamMisconfigError
  * when the stored key cannot be decrypted and UnsupportedTranslationError
  * when the canonical request cannot be expressed in the Messages dialect
- * (n > 1, system-only). A provider without a key is allowed
+ * (system-only). A provider without a key is allowed
  * (proxies/local gateways) — the x-api-key header is omitted.
  */
 export async function buildAnthropicMessagesRequest(
@@ -176,11 +176,10 @@ export async function buildAnthropicMessagesRequest(
   }
 
   const o = req.options;
-  if (o.n !== undefined && o.n !== null && o.n > 1) {
-    throw new UnsupportedTranslationError(
-      `The Anthropic Messages dialect has no multi-choice equivalent for n=${o.n} — only n=1 can be translated.`,
-    );
-  }
+  // NOTE: n is deliberately NOT emitted — the Messages API has no multi-choice
+  // param. n>1 is fanned out at the gateway level (invokeAnthropicFanOut:
+  // n concurrent invocations merged into openai choices) before this builder
+  // is ever reached, so the body is identical for every leg.
 
   const maxTokens =
     o.maxTokens !== undefined && o.maxTokens !== null ? o.maxTokens : (cand.model.maxOutputTokens ?? 4096);

@@ -203,7 +203,7 @@ const ADAPTER_SUPPORTED_PARAMS: Record<UpstreamAdapter, string[]> = {
     'n', 'tools', 'tool_choice', 'parallel_tool_calls', 'response_format', 'seed',
     'presence_penalty', 'frequency_penalty', 'logprobs', 'logit_bias',
   ],
-  anthropic: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'tools', 'tool_choice', 'response_format', 'metadata', 'cache_control'],
+  anthropic: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'n', 'tools', 'tool_choice', 'response_format', 'metadata', 'cache_control'],
   gemini: ['temperature', 'top_p', 'top_k', 'max_tokens', 'stop_sequences', 'stream', 'n', 'tools', 'tool_choice', 'reasoning_effort', 'response_format'],
 };
 
@@ -577,9 +577,179 @@ function khatewayHeaders(meta: ChatMeta): Record<string, string> {
   return meta.cacheState ? { ...headers, 'x-khateway-cache': meta.cacheState.toUpperCase() } : headers;
 }
 
+// ----------------------------------------------------- anthropic n>1 fan-out
+
+/**
+ * n>1 on an ANTHROPIC upstream: the Messages API has no multi-choice param,
+ * so the request fans out into n CONCURRENT identical invocations and the
+ * responses merge into openai-shaped choices (see respondAnthropicFanOut).
+ * n>1 can only arrive through the openai chat face — the only parser that
+ * reads `n` (responses drops it, the anthropic face has no such param,
+ * /v1/completions rejects it) — so the merged payload is always served to an
+ * openai-dialect client.
+ *
+ * All-or-nothing: any leg failing (timeout/network/4xx/429/5xx) fails the
+ * whole attempt, reported as a synthetic UpstreamOutcome so the EXISTING
+ * failure machinery applies unchanged — the P3 same-upstream retry re-runs
+ * every leg, the chain walk falls through, a client 4xx surfaces. Legs that
+ * already succeeded are accepted loss, exactly like a mid-request timeout.
+ */
+async function invokeAnthropicFanOut(built: UpstreamRequest, n: number): Promise<{ kind: 'failed'; outcome: UpstreamOutcome } | { kind: 'ok'; legs: Response[] }> {
+  const outcomes = await Promise.all(Array.from({ length: n }, () => invokeUpstream(built)));
+  const legs: Response[] = [];
+  for (const o of outcomes) {
+    if (o.kind !== 'fetched') return { kind: 'failed', outcome: o };
+    if (o.res.status >= 400) return { kind: 'failed', outcome: o };
+    legs.push(o.res);
+  }
+  return { kind: 'ok', legs };
+}
+
+/**
+ * Merges n successful anthropic fan-out legs into one client-facing response.
+ * Each leg is translated by the normal anthropic→openai translators, then the
+ * per-leg choices are re-indexed (choice i = leg i) and usage is SUMMED across
+ * legs — every leg re-sends the prompt and bills its own tokens. Usage follows
+ * the "missing usage never debits" rule: only when EVERY leg reported usage
+ * does the merged payload carry one (partial sums would silently under-bill).
+ * The merged payload is openai-shaped, so meta.upstream flips to 'openai' and
+ * the openai face relays it through the normal passthrough path — which also
+ * tees it for the log-row usage watcher.
+ */
+async function respondAnthropicFanOut(legs: Response[], meta: ChatMeta, draft: LogDraft): Promise<Response> {
+  const structuredOutput = meta.structuredOutput === true;
+  const openaiMeta: ChatMeta = { ...meta, upstream: 'openai' };
+  const isSse = (legs[0].headers.get('content-type') ?? '').includes('text/event-stream');
+
+  if (!isSse || !legs[0].body) {
+    const payloads = await Promise.all(legs.map((l) => l.json().catch(() => null) as Promise<Record<string, unknown> | null>));
+    if (payloads.some((p) => !p || typeof p !== 'object')) {
+      draft.error = `Upstream provider '${meta.candidate.provider.name}' returned a non-JSON body.`;
+      return errorJson(meta.dialect, 502, dialectError(meta.dialect, 502, draft.error, { code: 'upstream_invalid_response' }), khatewayHeaders(openaiMeta));
+    }
+    const translated = payloads.map((p) => anthropicMessageToOpenAiCompletion(p as Record<string, unknown>, meta.requested, { structuredOutput }));
+    const usages = payloads.map((p) => usageFromJsonBody('anthropic', p as Record<string, unknown>));
+    const merged: Record<string, unknown> = {
+      ...translated[0],
+      choices: translated.map((t, i) => ({ ...((t.choices as Record<string, unknown>[])[0]), index: i })),
+    };
+    if (usages.every((u) => u !== null)) {
+      const tokensIn = usages.reduce((a, u) => a + (u?.tokensIn ?? 0), 0);
+      const tokensOut = usages.reduce((a, u) => a + (u?.tokensOut ?? 0), 0);
+      merged.usage = { prompt_tokens: tokensIn, completion_tokens: tokensOut, total_tokens: tokensIn + tokensOut };
+    } else {
+      delete merged.usage; // some leg omitted usage — log nothing rather than a partial sum
+    }
+    return await respondTranslated(
+      new Response(JSON.stringify(merged), { status: 200, headers: { 'content-type': 'application/json' } }),
+      openaiMeta,
+      draft,
+    );
+  }
+
+  // SSE: each leg's anthropic stream is translated to openai chunks by the
+  // normal translator (includeUsage:false → usage rides its finish chunk); the
+  // merge re-indexes every choice to its leg, strips the per-leg usage and
+  // accumulates the sums, then closes with ONE summed usage-only chunk (the
+  // openai include_usage shape — harmless to clients that never asked) +
+  // [DONE]. The watch branch therefore sees exactly one usage object — the
+  // fan-out total — which the openai watcher picks up for the log row.
+  const mergedStream = mergeFanOutStreams(legs, meta.requested, structuredOutput);
+  const [toClient, toWatch] = mergedStream.tee();
+  draft.usageWatch = { upstream: 'openai', stream: toWatch, sse: true };
+  return new Response(withSseKeepAlive(toClient), {
+    status: 200,
+    headers: { ...khatewayHeaders(openaiMeta), 'content-type': 'text/event-stream' },
+  });
+}
+
+/** Interleaves the per-leg translated openai chunk streams (arrival order),
+ * re-indexing choices and summing usage as described above. */
+function mergeFanOutStreams(legs: Response[], model: string, structuredOutput: boolean): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const sums = { tokensIn: 0, tokensOut: 0, legsReported: 0 };
+      let mergedId: string | null = null;
+      let closed = false;
+      const legDone = legs.map(async (leg, k) => {
+        const translated = transformAnthropicSseToOpenAi(leg.body as ReadableStream<Uint8Array>, model, {
+          includeUsage: false,
+          structuredOutput,
+        });
+        const reader = translated.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const handleEvent = (rawEvent: string): void => {
+          const dataLines = rawEvent
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => (line.startsWith('data: ') ? line.slice(6) : line.slice(5)));
+          if (dataLines.length === 0) return;
+          const data = dataLines.join('\n');
+          if (data === '[DONE]') return; // per-leg [DONE] — the merge emits its own
+          let chunk: Record<string, unknown>;
+          try {
+            chunk = JSON.parse(data) as Record<string, unknown>;
+          } catch {
+            return;
+          }
+          if (typeof chunk.id === 'string' && chunk.id && mergedId === null) mergedId = chunk.id;
+          const choices = Array.isArray(chunk.choices) ? (chunk.choices as Record<string, unknown>[]) : [];
+          if (choices[0]) choices[0].index = k;
+          const usage = chunk.usage && typeof chunk.usage === 'object' ? (chunk.usage as Record<string, unknown>) : null;
+          if (usage) {
+            // includeUsage:false → usage rides the finish chunk; strip it from
+            // the client copy and accumulate the fan-out total.
+            delete chunk.usage;
+            sums.tokensIn += typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
+            sums.tokensOut += typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0;
+            sums.legsReported += 1;
+          }
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        };
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+          let sep: number;
+          while ((sep = buffer.indexOf('\n\n')) !== -1) {
+            handleEvent(buffer.slice(0, sep));
+            buffer = buffer.slice(sep + 2);
+          }
+        }
+        if (buffer.trim()) handleEvent(buffer);
+      });
+      void Promise.all(legDone)
+        .then(() => {
+          closed = true;
+          if (sums.legsReported === legs.length && sums.legsReported > 0) {
+            // One fan-out-total usage chunk (openai include_usage shape).
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  id: mergedId ?? 'chatcmpl-khateway',
+                  object: 'chat.completion.chunk',
+                  created: Math.floor(Date.now() / 1000),
+                  model,
+                  choices: [],
+                  usage: { prompt_tokens: sums.tokensIn, completion_tokens: sums.tokensOut, total_tokens: sums.tokensIn + sums.tokensOut },
+                })}\n\n`,
+              ),
+            );
+          }
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        })
+        .catch((e) => {
+          if (!closed) controller.error(e);
+        });
+    },
+  });
+}
+
 /** Same-dialect pairing: relays the upstream response (JSON or SSE) untouched. */
-function passthrough(res: Response, meta: ChatMeta, draft: LogDraft): Response {
-  const headers = new Headers(res.headers);
+function passthrough(res: Response, meta: ChatMeta, draft: LogDraft): Response {  const headers = new Headers(res.headers);
   headers.delete('content-encoding');
   headers.delete('content-length');
   headers.delete('transfer-encoding');
@@ -1180,6 +1350,7 @@ async function chatPipeline(
 
         let built: UpstreamRequest;
         let outcome: UpstreamOutcome;
+        let fanLegs: Response[] | null = null;
         try {
           built =
             upstream === 'anthropic'
@@ -1187,7 +1358,26 @@ async function chatPipeline(
               : upstream === 'gemini'
                 ? await buildGeminiGenerateContentRequest(c.env, cand, parsed.request)
                 : await buildOpenAiChatRequest(c.env, cand, parsed.request);
-          outcome = await invokeUpstream(built);
+          // n>1 on an anthropic upstream: no native multi-choice — fan out into
+          // concurrent identical invocations (see invokeAnthropicFanOut). Any
+          // other adapter/upstream serves n natively or never sees it.
+          const fanN =
+            upstream === 'anthropic' && parsed.request.options.n !== undefined && parsed.request.options.n !== null && parsed.request.options.n > 1
+              ? parsed.request.options.n
+              : null;
+          if (fanN !== null) {
+            const fan = await invokeAnthropicFanOut(built, fanN);
+            if (fan.kind === 'failed') {
+              outcome = fan.outcome;
+            } else {
+              fanLegs = fan.legs;
+              // A success-shaped outcome so the status checks below pass; the
+              // merged response is served after them.
+              outcome = { kind: 'fetched', res: fan.legs[0], latencyMs: Date.now() - t0 };
+            }
+          } else {
+            outcome = await invokeUpstream(built);
+          }
         } catch (err) {
           if (err instanceof UnsupportedTranslationError) {
             // This adapter cannot express the request (e.g. n>1 on Messages).
@@ -1257,6 +1447,7 @@ async function chatPipeline(
             // no execution context (non-workers harness) — caching is skipped
           }
         }
+        if (fanLegs) return await respondAnthropicFanOut(fanLegs, meta, draft);
         return await respondTranslated(outcome.res, meta, draft);
         }
       }
