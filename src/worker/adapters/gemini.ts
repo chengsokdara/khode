@@ -10,9 +10,9 @@
 // object arguments, images → `inlineData` (data URLs) / `fileData` (https),
 // and `reasoning_effort` extras map onto `generationConfig.thinkingConfig.
 // thinkingBudget` (thinking arrives only via the openai-face extra — the
-// anthropic parser still rejects `thinking`). n>1 and assistant-first
-// conversations are rejected 400 `untranslatable_request` (explicit, matching
-// the anthropic adapter stance; dual-adapter providers retry elsewhere).
+// anthropic parser still rejects `thinking`). Assistant-first conversations
+// get a spacer user turn prepended; n>1 is rejected 400
+// `untranslatable_request` (explicit; dual-adapter providers retry elsewhere).
 //
 // Gemini responses are NOT relayed — the upstream speaks its own dialect, so
 // every pairing is translated. The gemini→client-dialect translation lives in
@@ -22,7 +22,7 @@ import type { Env } from '../env';
 import { joinAdapterUrl } from '../env';
 import type { CanonicalChatRequest, CanonicalEmbeddingsRequest, CanonicalImage, CanonicalMessage } from '../canonical';
 import type { RoutingCandidate } from '../routing';
-import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
+import { ASSISTANT_FIRST_SPACER, UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
 import { EFFORT_BUDGETS } from '../dialects/options';
 
 /** Splits a `data:<media>;base64,<data>` URL; null for any other shape. */
@@ -164,9 +164,8 @@ function thinkingConfigFor(req: CanonicalChatRequest): Record<string, unknown> |
  * Builds the upstream POST for one candidate. Throws UpstreamMisconfigError
  * when the stored key cannot be decrypted and UnsupportedTranslationError
  * when the canonical request cannot be expressed in the Gemini dialect
- * (assistant-first conversations, n > 1, system-only). A provider without a
- * key is allowed (proxies/local gateways) — the x-goog-api-key header is
- * omitted.
+ * (n > 1, system-only). A provider without a key is allowed (proxies/local
+ * gateways) — the x-goog-api-key header is omitted.
  */
 export async function buildGeminiGenerateContentRequest(
   env: Env,
@@ -227,10 +226,12 @@ export async function buildGeminiGenerateContentRequest(
       'Gemini upstreams require at least one user or model message — only system messages were provided.',
     );
   }
+  // Gemini requires the first content turn to be 'user'. Assistant-first
+  // histories (an openai-dialect client providing context or a continuation)
+  // get ONE spacer user turn prepended — after the merge, so it can never be
+  // merged away or reordered with the functionResponse parts.
   if (merged[0].role !== 'user') {
-    throw new UnsupportedTranslationError(
-      "Gemini upstreams require the first message to use the 'user' role; this conversation starts with 'model'.",
-    );
+    merged.unshift({ role: 'user', parts: [{ text: ASSISTANT_FIRST_SPACER }] });
   }
 
   const body: Record<string, unknown> = {};

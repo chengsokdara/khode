@@ -620,9 +620,7 @@
   },
   {
     "adapter": "anthropic",
-    "name": "error: assistant-first conversation is untranslatable",
-    "error": "unsupported",
-    "messageContains": "first message to use the 'user' role",
+    "name": "assistant-first conversation gets a spacer user turn prepended",
     "cand": {
       "model": {
         "upstreamModel": "claude-sonnet-4-5",
@@ -645,11 +643,123 @@
           "role": "assistant",
           "content": "Hello",
           "extra": {}
+        },
+        {
+          "role": "user",
+          "content": "hi",
+          "extra": {}
         }
       ],
       "stream": false,
       "options": {},
       "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": " "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "anthropic",
+    "name": "lone assistant message → spacer user turn + trailing assistant = prefill continuation",
+    "cand": {
+      "model": {
+        "upstreamModel": "claude-sonnet-4-5",
+        "maxOutputTokens": null
+      },
+      "provider": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKeyEnc": null,
+        "defaultHeaders": null,
+        "timeoutMs": null,
+        "adapters": [
+          "anthropic"
+        ]
+      },
+      "baseUrl": "https://api.anthropic.com"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "The best answer is (",
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": " "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The best answer is ("
+              }
+            ]
+          }
+        ],
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 4096,
+        "stream": false
+      },
+      "timeoutMs": 60000
     }
   },
   {

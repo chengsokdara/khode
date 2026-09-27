@@ -60,7 +60,7 @@ const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual
 const SLUGS = [
   'mock-chat', 'mock-chat-429', 'mock-chat-401', 'mock-chat-500', 'mock-chat-500t', 'mock-claude', 'mock-claude-429',
   'mock-tools', 'mock-claude-tools', 'mock-claude-structured',
-  'mock-dual', 'mock-dual-n', 'mock-dual-first-assistant', 'mock-dual-bare',
+  'mock-dual', 'mock-dual-n', 'mock-dual-bare',
   'mock-fb-500', 'mock-fb-429', 'mock-fb-anthropic', 'mock-fb-dead', 'mock-fb-401',
   'mock-log-json', 'mock-log-stream',
   'mock-gemini', 'mock-gemini-tools', 'mock-gemini-400', 'mock-gemini-429',
@@ -568,7 +568,6 @@ const mock = await startMockUpstream();
     ['mock-claude-structured', 'claude-structured', provAnthropic.body.id],
     ['mock-dual', 'mock-chat', provDual.body.id],
     ['mock-dual-n', 'claude-mock', provDual.body.id],
-    ['mock-dual-first-assistant', 'claude-mock', provDual.body.id],
     ['mock-dual-bare', 'mock-chat', provDualBare.body.id],
     ['mock-fb-500', 'mock-500', prov.body.id, ['mock-chat']],
     ['mock-fb-429', 'mock-429', prov.body.id, ['mock-chat']],
@@ -826,11 +825,15 @@ const mock = await startMockUpstream();
     JSON.stringify({ path: lastReq.path, auth: lastReq.headers['x-api-key'], body: dualAnthropic.body }),
   );
 
-  const dualAssistantFirst = await fetchOrPost('/v1/messages', JSON.stringify({ model: 'mock-dual-first-assistant', max_tokens: 32, messages: [{ role: 'assistant', content: 'prefill' }, { role: 'user', content: 'hi' }] }));
+  // Assistant-first is now TRANSLATABLE on both adapters (spacer user turn), so
+  // the same-candidate adapter retry has no face-reachable trigger left — the
+  // loop + 400 `untranslatable_request` mapping stay as safety nets, pinned by
+  // the still-reachable system-only case against an anthropic-only provider.
+  const anthropicSystemOnly = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-claude', messages: [{ role: 'system', content: 'You are terse.' }] }));
   check(
-    'dual provider: untranslatable on anthropic → retried via openai adapter → 200 attempts 2',
-    dualAssistantFirst.status === 200 && dualAssistantFirst.body?.type === 'message' && lastReq.path.endsWith('/chat/completions') && dualAssistantFirst.headers.get('x-khateway-attempts') === '2',
-    JSON.stringify({ attempts: dualAssistantFirst.headers.get('x-khateway-attempts'), path: lastReq.path, body: dualAssistantFirst.body }),
+    'chat → anthropic upstream system-only → 400 untranslatable',
+    anthropicSystemOnly.status === 400 && anthropicSystemOnly.body?.error?.code === 'untranslatable_request',
+    JSON.stringify(anthropicSystemOnly.body),
   );
 
   const dualOpenaiN = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-dual-n', messages: [{ role: 'user', content: 'hi' }], n: 2 }));
@@ -1056,14 +1059,50 @@ const mock = await startMockUpstream();
     JSON.stringify(openaiAnthN.body),
   );
 
+  // Assistant-first support: the adapter prepends ONE spacer user turn (the
+  // Messages API requires a user-first history); the leading assistant turn
+  // stays in place, so a lone assistant message arrives last = prefill.
   const openaiAnthAssistantFirst = await fetchOrPost(
     '/v1/chat/completions',
     JSON.stringify({ model: 'mock-claude', messages: [{ role: 'assistant', content: 'hi' }, { role: 'user', content: 'hello' }] }),
   );
   check(
-    'chat → anthropic upstream assistant-first → 400 untranslatable',
-    openaiAnthAssistantFirst.status === 400 && openaiAnthAssistantFirst.body?.error?.code === 'untranslatable_request',
-    JSON.stringify(openaiAnthAssistantFirst.body),
+    'chat → anthropic upstream assistant-first → 200 with spacer user turn prepended',
+    openaiAnthAssistantFirst.status === 200
+      && openaiAnthAssistantFirst.body?.object === 'chat.completion'
+      && lastReq.body?.messages?.[0]?.role === 'user'
+      && lastReq.body.messages[0].content?.[0]?.text === ' '
+      && lastReq.body.messages[1]?.role === 'assistant'
+      && lastReq.body.messages[2]?.role === 'user',
+    JSON.stringify(lastReq.body?.messages),
+  );
+
+  const openaiAnthPrefill = await fetchOrPost(
+    '/v1/chat/completions',
+    JSON.stringify({ model: 'mock-claude', messages: [{ role: 'assistant', content: 'The best answer is (' }] }),
+  );
+  check(
+    'chat → anthropic upstream lone assistant message → spacer + trailing assistant (prefill)',
+    openaiAnthPrefill.status === 200
+      && lastReq.body?.messages?.length === 2
+      && lastReq.body.messages[0]?.role === 'user'
+      && lastReq.body.messages[0].content?.[0]?.text === ' '
+      && lastReq.body.messages[1]?.role === 'assistant'
+      && lastReq.body.messages[1].content?.[0]?.text === 'The best answer is (',
+    JSON.stringify(lastReq.body?.messages),
+  );
+
+  const anthropicFaceAssistantFirst = await fetchOrPost(
+    '/v1/messages',
+    JSON.stringify({ model: 'mock-claude', max_tokens: 32, messages: [{ role: 'assistant', content: 'hi' }, { role: 'user', content: 'hello' }] }),
+  );
+  check(
+    'anthropic face → anthropic upstream assistant-first → 200 (spacer prepended)',
+    anthropicFaceAssistantFirst.status === 200
+      && anthropicFaceAssistantFirst.body?.type === 'message'
+      && lastReq.body?.messages?.[0]?.role === 'user'
+      && lastReq.body.messages[0].content?.[0]?.text === ' ',
+    JSON.stringify(lastReq.body?.messages),
   );
 
   const openaiAnth429 = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-claude-429', messages: [{ role: 'user', content: 'hi' }] }));
@@ -1761,6 +1800,19 @@ const mock = await startMockUpstream();
     'M12 messages → gemini upstream: system folds into systemInstruction, max_tokens → maxOutputTokens',
     lastReq.body?.systemInstruction?.parts?.[0]?.text === 'Be terse.' && lastReq.body?.generationConfig?.maxOutputTokens === 256,
     JSON.stringify(lastReq.body),
+  );
+
+  // Assistant-first support: gemini upstream gets the spacer user turn prepended.
+  const gemAssistantFirst = await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-gemini', messages: [{ role: 'assistant', content: 'hi' }, { role: 'user', content: 'hello' }] }));
+  check(
+    'M12 chat → gemini upstream assistant-first → 200 with spacer user turn prepended',
+    gemAssistantFirst.status === 200
+      && gemAssistantFirst.body?.object === 'chat.completion'
+      && lastReq.body?.contents?.[0]?.role === 'user'
+      && lastReq.body.contents[0].parts?.[0]?.text === ' '
+      && lastReq.body.contents[1]?.role === 'model'
+      && lastReq.body.contents[2]?.role === 'user',
+    JSON.stringify(lastReq.body?.contents),
   );
 
   // -- responses client → gemini upstream ------------------------------------

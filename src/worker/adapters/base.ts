@@ -13,6 +13,15 @@ export class UpstreamMisconfigError extends Error {}
 /** The canonical request cannot be expressed in the target dialect (mapped to a 400 by the gateway). */
 export class UnsupportedTranslationError extends Error {}
 
+/**
+ * Text of the synthetic user turn prepended when a conversation starts with an
+ * assistant message (anthropic and gemini both require the first turn to be
+ * user-first). A single space — the established proxy workaround — carries no
+ * semantic content the model could over-read; change here only if an upstream
+ * ever rejects whitespace-only text.
+ */
+export const ASSISTANT_FIRST_SPACER = ' ';
+
 export interface UpstreamRequest {
   url: string;
   headers: Record<string, string>;

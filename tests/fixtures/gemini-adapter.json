@@ -1000,7 +1000,7 @@
     }
   },
   {
-    "name": "assistant-first conversation → untranslatable (explicit, matches the anthropic stance)",
+    "name": "assistant-first conversation gets a spacer user turn prepended",
     "adapter": "gemini",
     "apiKeyPlain": "sk-gem-mock",
     "cand": {
@@ -1030,8 +1030,42 @@
       "options": {},
       "extras": {}
     },
-    "error": "unsupported",
-    "messageContains": "first message to use the 'user' role"
+    "expected": {
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "headers": {
+        "x-goog-api-key": "sk-gem-mock",
+        "content-type": "application/json"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": " "
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "text": "prefill"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      },
+      "timeoutMs": 60000
+    }
   },
   {
     "name": "n>1 → untranslatable (no candidateCount support in v1)",

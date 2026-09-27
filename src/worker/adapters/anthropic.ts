@@ -5,7 +5,9 @@
 // `anthropic-version` auth, translating the canonical chat request into the
 // Messages dialect: system/developer messages fold into the top-level
 // `system` param, turns are merged into strict user/assistant alternation
-// (tool_results first inside a user turn), stop → stop_sequences, images →
+// (tool_results first inside a user turn; assistant-first histories get a
+// spacer user turn prepended — the leading assistant turn stays in place, so
+// a lone assistant message reaches the API as prefill), stop → stop_sequences, images →
 // image blocks (data URLs split into base64 sources, https URLs passed as
 // url sources), tool calls → tool_use/tool_result blocks, and the REQUIRED
 // max_tokens defaults to the model's configured max output (4096 when unset).
@@ -14,7 +16,7 @@ import type { Env } from '../env';
 import { joinAdapterUrl } from '../env';
 import type { CanonicalCacheControl, CanonicalChatRequest, CanonicalImage, CanonicalMessage, CanonicalToolChoice } from '../canonical';
 import type { RoutingCandidate } from '../routing';
-import { UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
+import { ASSISTANT_FIRST_SPACER, UnsupportedTranslationError, decryptProviderKey, parseHeaderMap, type UpstreamRequest } from './base';
 import { EFFORT_BUDGETS, anthropicStructuredOutputTool } from '../dialects/options';
 
 /** Wire value Khateway sends unless the provider overrides it via default_headers. */
@@ -122,7 +124,7 @@ function turnFor(m: CanonicalMessage, system: SystemPart[]): Turn | null {
  * Builds the upstream POST for one candidate. Throws UpstreamMisconfigError
  * when the stored key cannot be decrypted and UnsupportedTranslationError
  * when the canonical request cannot be expressed in the Messages dialect
- * (assistant-first conversations, n > 1). A provider without a key is allowed
+ * (n > 1, system-only). A provider without a key is allowed
  * (proxies/local gateways) — the x-api-key header is omitted.
  */
 export async function buildAnthropicMessagesRequest(
@@ -164,10 +166,13 @@ export async function buildAnthropicMessagesRequest(
       'Anthropic upstreams require at least one user or assistant message — only system messages were provided.',
     );
   }
+  // The API requires the first message to use the 'user' role. Assistant-first
+  // histories (an openai-dialect client providing context or a continuation)
+  // get ONE spacer user turn prepended; the leading assistant turn stays where
+  // it is, so a lone assistant message still lands last = the API's documented
+  // prefill rule (the response continues from the final assistant message).
   if (merged[0].role !== 'user') {
-    throw new UnsupportedTranslationError(
-      "Anthropic upstreams require the first message to use the 'user' role; this conversation starts with 'assistant'.",
-    );
+    merged.unshift({ role: 'user', blocks: [{ type: 'text', text: ASSISTANT_FIRST_SPACER }] });
   }
 
   const o = req.options;
