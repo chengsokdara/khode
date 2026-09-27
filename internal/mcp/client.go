@@ -57,6 +57,9 @@ type Client struct {
 	mu      sync.Mutex
 	nextID  int
 	pending map[int]chan rpcMsg
+	// notifyFn, when set, sees every notification the server sends.
+	// Guarded by mu so it can be installed any time after Start.
+	notifyFn func(method string)
 
 	done     chan struct{} // closed when the reader sees EOF
 	doneOnce sync.Once
@@ -184,6 +187,27 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// SetNotify installs a hook the pump calls for every notification the
+// server sends (e.g. notifications/tools/list_changed), in message
+// order. It runs on the reader goroutine, so it must not block; the
+// client drops the notification rather than stall the stream.
+func (c *Client) SetNotify(fn func(method string)) {
+	c.mu.Lock()
+	c.notifyFn = fn
+	c.mu.Unlock()
+}
+
+// Exited reports whether the server's output has closed: the process is
+// gone, and every future call will fail with "mcp server exited".
+func (c *Client) Exited() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // --- JSON-RPC round trips ----------------------------------------------------
 
 // call sends a request and decodes the result into out (may be nil).
@@ -253,7 +277,7 @@ func (c *Client) write(msg *rpcMsg) error {
 }
 
 // pump reads framed messages and routes them: responses to their pending
-// call, server requests answered inline, notifications dropped.
+// call, server requests answered inline, notifications to the notify hook.
 func (c *Client) pump(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), maxLineBytes)
@@ -268,8 +292,12 @@ func (c *Client) pump(r io.Reader) {
 		case msg.ID != nil:
 			c.answerServerRequest(*msg.ID, msg.Method)
 		default:
-			// Notifications (tools/list_changed, log messages, …) are
-			// ignored: khode snapshots tools once at startup.
+			c.mu.Lock()
+			fn := c.notifyFn
+			c.mu.Unlock()
+			if fn != nil {
+				fn(msg.Method)
+			}
 		}
 	}
 	c.doneOnce.Do(func() { close(c.done) })

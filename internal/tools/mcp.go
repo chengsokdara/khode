@@ -71,10 +71,17 @@ func AddMCP(r *Registry, server string, src ToolSource, riskOverride string) err
 	if err != nil {
 		return err
 	}
+	AddMCPList(r, server, src, riskOverride, list)
+	return nil
+}
+
+// AddMCPList registers an already-listed set of server tools. A refresh
+// lists first with a direct Tools call and only reaches here on success,
+// so a failing server never leaves the registry half-updated.
+func AddMCPList(r *Registry, server string, src ToolSource, riskOverride string, list []mcp.Tool) {
 	for _, tl := range list {
 		r.Register(&MCPTool{Source: src, Server: server, Tool: tl, risk: parseRisk(riskOverride)})
 	}
-	return nil
 }
 
 // RemoveMCP drops every tool of one MCP server (mcp__<server>__*),

@@ -299,3 +299,65 @@ func TestServerExitFailsPendingCall(t *testing.T) {
 		t.Fatal("Tools hung after the server exited")
 	}
 }
+
+func TestNotifyHookSeesNotifications(t *testing.T) {
+	c, s := startFake(t, okHandler(t, map[string]func(*testing.T, json.RawMessage) any{
+		"tools/list": func(t *testing.T, params json.RawMessage) any {
+			return toolsPage{Tools: []Tool{{Name: "a"}}}
+		},
+	}))
+
+	var got []string
+	changed := make(chan struct{})
+	c.SetNotify(func(method string) {
+		got = append(got, method)
+		if method == "notifications/tools/list_changed" {
+			close(changed)
+		}
+	})
+
+	// The server pushes two notifications; the hook must see both, in
+	// message order.
+	note := func(method string) {
+		data, _ := json.Marshal(rpcMsg{JSONRPC: "2.0", Method: method})
+		if _, err := s.out.Write(append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	note("notifications/log")
+	note("notifications/tools/list_changed")
+
+	select {
+	case <-changed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tools/list_changed never reached the notify hook")
+	}
+	if len(got) != 2 || got[0] != "notifications/log" || got[1] != "notifications/tools/list_changed" {
+		t.Fatalf("hook saw %v, want both notifications in order", got)
+	}
+
+	// Notifications are not replies: the connection still round-trips.
+	if _, err := c.Tools(context.Background()); err != nil {
+		t.Fatalf("Tools after notifications: %v", err)
+	}
+}
+
+func TestExitedAfterEOF(t *testing.T) {
+	toCliR, toCliW := io.Pipe()
+	_, toSrvW := io.Pipe()
+	c := newConn(toCliR, toSrvW)
+	t.Cleanup(func() { toCliW.Close(); toSrvW.Close() })
+
+	if c.Exited() {
+		t.Fatal("a live connection reported Exited")
+	}
+	toCliW.Close() // the server's output goes away; the pump sees EOF
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pump never saw EOF")
+	}
+	if !c.Exited() {
+		t.Fatal("connection still live after the server's output closed")
+	}
+}

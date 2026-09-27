@@ -144,7 +144,8 @@ func (m *Model) mcpRows(regNames []string, nameW int) []string {
 	p := m.mcpPanel
 	rows := make([]string, 0, len(p.names))
 	for i, n := range p.names {
-		_, running := m.mcpClients[n]
+		cli, running := m.mcpClients[n]
+		dead := running && cli.Exited()
 		tools := serverTools(regNames, n)
 		off := 0
 		for _, tn := range tools {
@@ -157,13 +158,18 @@ func (m *Model) mcpRows(regNames []string, nameW int) []string {
 		switch {
 		case p.busy[n]:
 			glyph = m.spinner.View()
+		case dead:
+			glyph = errorStyle.Render("✗ ")
 		case running:
 			glyph = okStyle.Render("● ")
 		default:
 			glyph = dimStyle.Render("○ ")
 		}
 		summary := dimStyle.Render("unavailable")
-		if running {
+		switch {
+		case dead:
+			summary = dimStyle.Render("exited · enter to restart")
+		case running:
 			summary = fmt.Sprintf("%d tools", len(tools))
 			if off > 0 {
 				summary += dimStyle.Render(fmt.Sprintf(" (%d off)", off))

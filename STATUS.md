@@ -10,6 +10,28 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**MCP tools refresh live (2026-09-27):** MCP tool lists are no longer a
+startup snapshot — refresh used to mean restarting the server from
+`/mcp` or `/settings`. The client's pump forwards every notification to
+a new `mcp.Client.SetNotify` hook; the UI fans
+`notifications/tools/list_changed` pings into a buffered per-model
+channel (a fourth `waitForEvents` case, send-drops when full) and a
+`refreshMCPCmd` sibling of `applyMCPCmd` re-lists and swaps the
+registry set: list-first, so a failing server keeps its old tools; an
+unchanged set stays silent (chatty servers fire liberally); session
+off-toggles survive the swap for tools the server still serves. Pings
+queue while the app idles and drain at the next armed pump (turn start
+or mid-turn), keeping the never-hold-`*tea.Program` invariant — and the
+model picks the new set up with no loop changes, since `Definitions()`
+is already re-read per round. `/mcp` marks a crashed server with a dead
+`✗ exited` glyph via the new `mcp.Client.Exited()`. Pinned by client
+tests (hook delivery in order, exit flag), an adapter test walking the
+RemoveMCP+AddMCPList+re-disable refresh swap, and a tmux harness
+scenario: the fake MCP server (KHOKE_MCP_MUTATE=1) flips its tool set
+as it answers the first `tools/call` and pushes the notification, and
+the captured frame shows `mcp: selftest tools refreshed (+1 −1)`
+mid-turn.
+
 **Parallel read-only fan-out (2026-09-27):** the agent loop executes
 consecutive read-only calls of a round as one parallel group (bounded
 at 8 concurrent), while risky calls and group boundaries keep strict
@@ -900,6 +922,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-27 | MCP tools refresh live: `tools/list_changed` notifications re-list a server's tools into the registry mid-session (`mcp.SetNotify` → UI fan-in channel → list-first registry swap; silent no-op, off-toggles preserved, idle pings drain at the next armed pump); `mcp.Exited()` dead-server glyph in `/mcp`; resources/prompts split to their own backlog item | (this commit) |
 | 2026-09-27 | Parallel read-only fan-out: consecutive read-only calls run as a bounded parallel group with call-ordered results; all-read task children spawn side by side with per-call progress ids and per-block live activity lines (`tools.ExclusiveTool` veto) | (this commit) |
 | 2026-09-27 | User-defined agents: `~/.khode/agents/*.md` (frontmatter + body) join the task catalog with tool allowlists and model pins; `code-reviewer` built-in; `/agents` overview dialog with live reload (`r`) | (this commit) |
 | 2026-09-26 | Tool results and diffs hang directly under their `⏺` call lines (pair-aware viewport spacing) instead of two blank rows below | (this commit) |

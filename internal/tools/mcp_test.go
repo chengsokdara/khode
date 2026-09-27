@@ -110,6 +110,48 @@ func TestRemoveMCPPurgesDisabledToggles(t *testing.T) {
 	}
 }
 
+// TestAddMCPListRefreshSwapsServerSet walks the refresh path
+// (RemoveMCP + AddMCPList + re-disable) the way a tools/list_changed
+// refresh does: the new set fully replaces the old one, and off-toggles
+// survive for tools the server still serves.
+func TestAddMCPListRefreshSwapsServerSet(t *testing.T) {
+	src := &fakeSource{tools: []mcp.Tool{{Name: "a"}, {Name: "b"}}}
+	reg := NewRegistry()
+	if err := AddMCP(reg, "docs", src, ""); err != nil {
+		t.Fatal(err)
+	}
+	reg.SetEnabled("mcp__docs__b", false)
+	old := reg.Names()
+
+	// The server now serves b and c; a is gone.
+	src.tools = []mcp.Tool{{Name: "b"}, {Name: "c"}}
+	list, err := src.Tools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	RemoveMCP(reg, "docs")
+	AddMCPList(reg, "docs", src, "", list)
+	for _, tn := range old {
+		if reg.Enabled(tn) {
+			reg.SetEnabled(tn, false) // the refresh keeps the session's off-toggles
+		}
+	}
+
+	names := reg.Names()
+	if len(names) != 2 || names[0] != "mcp__docs__b" || names[1] != "mcp__docs__c" {
+		t.Fatalf("names after refresh = %v, want exactly b and c", names)
+	}
+	if reg.Enabled("mcp__docs__b") {
+		t.Error("refresh lost the off-toggle of a tool the server still serves")
+	}
+	if !reg.Enabled("mcp__docs__c") {
+		t.Error("new tool did not start enabled")
+	}
+	if _, ok := reg.Get("mcp__docs__a"); ok {
+		t.Error("removed tool survived the refresh")
+	}
+}
+
 func TestMCPToolExec(t *testing.T) {
 	src := &fakeSource{tools: []mcp.Tool{{Name: "search"}}, text: "found it"}
 	tool := &MCPTool{Source: src, Server: "docs", Tool: src.tools[0], risk: perm.RiskExec}

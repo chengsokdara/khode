@@ -922,6 +922,7 @@ func (m *Model) applyMCPResult(msg mcpApplyMsg) {
 	}
 	for name, cli := range msg.started {
 		m.mcpClients[name] = cli
+		cli.SetNotify(mcpNotifyFunc(m.mcpEvents, name))
 	}
 	var notes []string
 	if len(msg.removed) > 0 {
@@ -952,6 +953,115 @@ func (m *Model) applyMCPResult(msg mcpApplyMsg) {
 		m.settings.savedMsg = strings.Join(notes, " · ")
 	}
 	m.messages = append(m.messages, uiMessage{role: "system", raw: "mcp: " + strings.Join(notes, " · ")})
+}
+
+// --- live MCP tool refresh ------------------------------------------------------
+
+// mcpNotifyFunc returns the notify hook installed on one MCP client: it
+// forwards a tools/list_changed notification into the pump's channel as
+// the server's config name. Sends never block — a full buffer means a
+// refresh is already queued, and the re-list reads the latest state no
+// matter how many pings were dropped.
+func mcpNotifyFunc(ch chan<- string, server string) func(string) {
+	return func(method string) {
+		if method != "notifications/tools/list_changed" {
+			return
+		}
+		select {
+		case ch <- server:
+		default:
+		}
+	}
+}
+
+// mcpRefreshMsg reports one tools/list_changed refresh of a running
+// server: the diff against the previously registered set, or why the
+// re-list failed.
+type mcpRefreshMsg struct {
+	server  string
+	added   []string
+	removed []string
+	err     error
+}
+
+// startMCPRefresh reacts to a tools/list_changed notification: it
+// snapshots the server's current tool state on the UI goroutine (client,
+// risk override, registered names, session-disabled ones) and hands the
+// re-list to refreshMCPCmd off-thread.
+func (m *Model) startMCPRefresh(name string) tea.Cmd {
+	cli, ok := m.mcpClients[name]
+	if !ok {
+		return m.pump() // not running (removed while the ping queued)
+	}
+	sc := m.cfg.MCPServers[name]
+	old := serverTools(m.tools.Names(), name)
+	var disabled []string
+	for _, tn := range old {
+		if !m.tools.Enabled(tn) {
+			disabled = append(disabled, tn)
+		}
+	}
+	return tea.Batch(m.pump(), refreshMCPCmd(m.tools, name, cli, sc.Risk, old, disabled))
+}
+
+// refreshMCPCmd re-lists one running server's tools and swaps the
+// registry set. It lists first and mutates only on success, so a
+// failing server keeps its old tools; a list identical to the previous
+// one comes back as an empty diff, which the chat treats as silence.
+func refreshMCPCmd(reg *tools.Registry, server string, cli *mcp.Client, risk string, oldNames, disabled []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), mcp.InitTimeout)
+		defer cancel()
+		list, err := cli.Tools(ctx)
+		if err != nil {
+			return mcpRefreshMsg{server: server, err: err}
+		}
+		tools.RemoveMCP(reg, server)
+		tools.AddMCPList(reg, server, cli, risk, list)
+		names := make(map[string]bool, len(list))
+		prefix := "mcp__" + server + "__"
+		for _, tl := range list {
+			names[prefix+tl.Name] = true
+		}
+		for _, tn := range disabled {
+			if names[tn] {
+				reg.SetEnabled(tn, false) // keep the session's off-toggles
+			}
+		}
+		old := make(map[string]bool, len(oldNames))
+		for _, tn := range oldNames {
+			old[tn] = true
+		}
+		msg := mcpRefreshMsg{server: server}
+		for _, tn := range oldNames {
+			if !names[tn] {
+				msg.removed = append(msg.removed, tn)
+			}
+		}
+		for tn := range names {
+			if !old[tn] {
+				msg.added = append(msg.added, tn)
+			}
+		}
+		sort.Strings(msg.added)
+		return msg
+	}
+}
+
+// applyMCPRefresh reports a finished refresh in chat. An unchanged tool
+// set stays silent — chatty servers fire the notification liberally and
+// a line per fire would spam the scrollback.
+func (m *Model) applyMCPRefresh(msg mcpRefreshMsg) {
+	switch {
+	case msg.err != nil:
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("mcp: %s refresh failed: %v · tools unchanged", msg.server, msg.err)})
+	case len(msg.added) == 0 && len(msg.removed) == 0:
+		return
+	default:
+		m.messages = append(m.messages, uiMessage{role: "system",
+			raw: fmt.Sprintf("mcp: %s tools refreshed (+%d −%d)", msg.server, len(msg.added), len(msg.removed))})
+	}
 }
 
 // --- views -------------------------------------------------------------------

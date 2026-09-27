@@ -23,6 +23,27 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
+- **MCP tools refresh live (2026-09-27):** `notifications/tools/list_changed`
+  no longer dies in the pump. `mcp.Client.SetNotify` installs a hook the
+  pump calls for each notification (mu-guarded, safe to set any time
+  after Start); the UI installs it on startup clients in `New` and on
+  late-started ones in `applyMCPResult`, fanning pings into
+  `m.mcpEvents` (buffered 8, drop on full — the re-list reads the
+  latest state regardless of how many pings queued). `waitForEvents`
+  grew a fourth nil-safe case (`mcpChangedMsg`); its handler snapshots
+  client + risk override + old names + session-disabled names on the UI
+  goroutine, then `refreshMCPCmd` lists off-thread (`mcp.InitTimeout`)
+  and swaps via `tools.RemoveMCP` + the new `tools.AddMCPList` —
+  list-first, so a failing server keeps its old tools — re-disables the
+  off-toggles of tools the server still serves, and diffs. Unchanged
+  sets stay silent; otherwise `mcp: <server> tools refreshed (+N −M)`;
+  a failed refresh keeps the tools and says so. Pings queue while the
+  app idles and drain at the next armed pump (turn start or mid-turn).
+  `mcp.Client.Exited()` backs a dead `✗ exited · enter to restart` glyph
+  in /mcp for crashed servers. The selftest MCP server runs with
+  KHOKE_MCP_MUTATE=1: its first tools/call flips the advertised set and
+  pushes the notification, and the harness's final scenario captures
+  `mcp: selftest tools refreshed (+1 −1)` mid-turn.
 - **Parallel read-only fan-out (2026-09-27):** `executeCalls` splits
   the round into maximal runs of parallelizable calls
   (`RiskRead` + no `ExclusiveTool` veto) and runs each run as a group
@@ -150,6 +171,8 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-27 | MCP notifications ride a `SetNotify` hook on the client → non-blocking fan-in into a buffered UI channel; pings QUEUE while idle and drain at the next armed pump (no always-armed pump, no `tea.Program.Send`) | keeps the waitForEvents one-blocking-read invariant (never hold `*tea.Program`); a dropped ping costs nothing because the re-list reads the latest state; draining at turn start means the reconcile lands before the model sees tools |
+| 2026-09-27 | A refresh lists first and swaps the registry only on success (`RemoveMCP` + the new `AddMCPList`); unchanged sets stay silent in chat; session off-toggles are re-applied to surviving tools | a failing server must not leave the registry half-updated (Remove-then-AddMCP alone would erase tools on a failed list); chatty servers would spam scrollback with no-op lines; a refresh is not a removal — silently re-enabling toggled-off tools would surprise the user |
 | 2026-09-27 | Parallel execution groups CONSECUTIVE read-only calls and emits results in call order (slot-by-slot ordered drain); it does not reorder or interleave with risky calls | per-call pairing, transcript order, and the diff/todo replay logic must stay byte-identical to sequential; concurrency is a wall-clock win, not an ordering change — and group boundaries keep writes gated and dialogs one-at-a-time |
 | 2026-09-27 | `tools.ExclusiveTool` vetoes parallelism per call; TaskTool allows only `kindIsReadOnly` children to fan out | concurrency safety is the tool's own knowledge (state, spawned children) — the loop cannot infer it; only all-read children are provably safe to run side by side (no mutation, no approval dialog) |
 | 2026-09-27 | The task tool's progress carries the parent call id read from a context value stamped in `execCall` (`callIDContextKey`), not a wider Tool interface | the Tool contract stays `Exec(ctx, args)`; context is the narrowest channel for per-invocation data and direct Exec callers (tests) simply carry no id |
@@ -216,7 +239,7 @@ If you are starting a session, or recovering after an interrupt:
 | 2026-09-17 | MCP client is hand-rolled JSON-RPC over stdio in `internal/mcp`, no SDK | the subset khode needs (initialize, tools/list, tools/call) is small; house style avoids casual deps (glob/diff precedents) |
 | 2026-09-17 | MCP tools are namespaced `mcp__<server>__<tool>` (Claude Code convention) | collisions with local tools and between servers are impossible; /mcp groups by prefix |
 | 2026-09-17 | MCP tools default to exec risk with a per-server `risk` override (read/write/exec) | a remote tool can do anything, so it must be gated like a shell command by default; trusted read-only servers opt into plan-mode usability |
-| 2026-09-17 | MCP tool list is a startup snapshot; `tools/list_changed` is ignored | refresh = restart khode; keeps the pump free of notification machinery for now |
+| 2026-09-17 | MCP tool list is a startup snapshot; `tools/list_changed` is ignored (SUPERSEDED 2026-09-27 — the pump forwards notifications through `SetNotify` and the UI re-lists live) | refresh = restart khode; keeps the pump free of notification machinery for now |
 | 2026-09-17 | A failing MCP server warns at launch but khode still starts | one broken server must not take the app down; /mcp shows "unavailable" |
 | 2026-09-17 | `mcp.Client` is built on `newConn(r, w)` so tests drive the protocol over in-memory pipes; one subprocess test covers real pipes + env | exec pipes in tests are slow and flaky; the seam is 5 lines |
 | 2026-09-17 | Subagents run on `NewMemorySession` (Path=="" skips disk in Append/Replace/Name) | subagent transcripts are scratch work; persisting every task call would litter the sessions dir |
@@ -673,6 +696,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Session summary | Commits |
 |---|---|---|
+| 2026-09-27 | MCP live re-list (roadmap Next #2's tools half; resources/prompts split to their own item by user choice): `mcp.Client.SetNotify` (mu-guarded hook, pump dispatches every notification) + `Exited()`; UI fan-in channel (`m.mcpEvents`, drop-on-full) as a 4th waitForEvents case; `refreshMCPCmd` lists off-thread and swaps registry-first-safe via the new `tools.AddMCPList` (silent no-op, off-toggles re-applied); /mcp exited glyph; hooks wired in `New` (startup clients) and `applyMCPResult` (late ones). Tests: hook delivery in order + exit flag (internal/mcp), refresh swap with toggle survival (internal/tools). tmux-verified: testdata mcpserver grew a mutate mode (KHOKE_MCP_MUTATE=1 flips the set on the first tools/call and pushes the notification), fakeai routes `# MCP refresh` by the `call_mcp1` marker (role:tool was already true in the outer transcript), harness captures `mcp: selftest tools refreshed (+1 −1)` mid-turn. Lesson: wait_ready no-ops when the app is already idle — settle-sleep after send-keys so it brackets the turn | (this commit) |
 | 2026-09-25 | Subagent features wrap-up: AGENTS.md architecture section documents subagent.go kinds, task.go's new schema/progress, Runner.Preface, the UI gatherer, and the `gather_context`/`subagent_model` knobs | (this commit) |
 | 2026-09-25 | Subagent features, commit 5 of 5: `subagent_model` config (trimmed accessor `SubModel()`, live-read `SubagentConfig.SubModel` func) routes task subagents and the gatherer onto a cheaper model; `/settings` "subagent model" editor row (empty = main model, same fallback). Tests: subagent request carries the override while the parent keeps its model; config round trip incl. the omitempty-clears trap (Unmarshal into a reused raw keeps stale values) | (this commit) |
 | 2026-09-25 | Subagent features, commit 4 of 5: the automatic new-session context gatherer — submit runs a read-only sweep (gatherer registry, MaxRounds 15) before the first turn of an empty session; live `◆ gathering context` block + status line; on completion the block converts to the durable `◆ context brief` block and the turn starts with the brief as Preface; failure → note + plain turn, esc → full stop; `gather_context` config (default on) + /settings toggle row. tmux-verified: mid-gather block/status, brief block, transcript injection, second prompt skips, task scenario intact (fakeai routed by body markers, holds widened for readable captures). 6 new tests (gather→turn handoff, disabled, esc, fresh-only, config round-trip) | (this commit) |

@@ -70,7 +70,10 @@ Backlog (no committed order):
 
 1. ~~Stream subagent activity into the TUI instead of hiding it.~~
    (done — task tool progress feeds a live nested line under the call)
-2. MCP: re-list tools on `tools/list_changed`; resources/prompts.
+2. ~~MCP: re-list tools on `tools/list_changed`~~ (done — the client's
+   pump forwards notifications through a `SetNotify` hook, the UI
+   re-lists into the registry live, and the diff is reported in chat;
+   refresh no longer means a restart). Resources/prompts remain open.
 3. Hooks: feed post_tool output to the model as feedback.
 4. OpenAI tool-call unit parity for MCP edge cases as they surface.
 5. Khode /terminal-setup: write the Terminal.app/iTerm2 shift+enter

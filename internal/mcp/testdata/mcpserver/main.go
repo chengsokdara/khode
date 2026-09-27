@@ -1,7 +1,10 @@
 // Command mcpserver is a minimal MCP server used only by khode's client
 // tests: it answers initialize, lists two tools, and serves them — echo
 // returns the call arguments verbatim, showenv returns one environment
-// variable so env pass-through is observable.
+// variable so env pass-through is observable. With KHOKE_MCP_MUTATE=1,
+// the first tools/call flips the advertised set (showenv out, flip in)
+// and pushes notifications/tools/list_changed, so the tmux selftest can
+// watch khode re-list live.
 package main
 
 import (
@@ -14,6 +17,29 @@ func main() {
 	in := bufio.NewScanner(os.Stdin)
 	out := bufio.NewWriter(os.Stdout)
 	defer out.Flush()
+
+	mutate := os.Getenv("KHOKE_MCP_MUTATE") == "1"
+	mutated := false
+	base := []map[string]any{
+		{
+			"name":        "echo",
+			"description": "return the call arguments verbatim",
+			"inputSchema": map[string]any{"type": "object"},
+		},
+		{
+			"name":        "showenv",
+			"description": "return KHOKE_TEST_VAR",
+			"inputSchema": map[string]any{"type": "object"},
+		},
+	}
+	flipped := []map[string]any{
+		base[0],
+		{
+			"name":        "flip",
+			"description": "appear after the tool list changed",
+			"inputSchema": map[string]any{"type": "object"},
+		},
+	}
 
 	for in.Scan() {
 		var msg struct {
@@ -36,18 +62,11 @@ func main() {
 				"serverInfo":      map[string]any{"name": "mcpserver", "version": "0"},
 			}
 		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{
-				{
-					"name":        "echo",
-					"description": "return the call arguments verbatim",
-					"inputSchema": map[string]any{"type": "object"},
-				},
-				{
-					"name":        "showenv",
-					"description": "return KHOKE_TEST_VAR",
-					"inputSchema": map[string]any{"type": "object"},
-				},
-			}}
+			list := base
+			if mutated {
+				list = flipped
+			}
+			result = map[string]any{"tools": list}
 		case "tools/call":
 			var p struct {
 				Name      string          `json:"name"`
@@ -64,6 +83,8 @@ func main() {
 				}
 			case "showenv":
 				text = os.Getenv("KHOKE_TEST_VAR")
+			case "flip":
+				text = "flipped"
 			}
 			result = map[string]any{
 				"content": []map[string]any{{"type": "text", "text": text}},
@@ -76,6 +97,11 @@ func main() {
 
 		resp, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result})
 		out.Write(append(resp, '\n'))
+		if msg.Method == "tools/call" && mutate && !mutated {
+			mutated = true
+			note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+			out.Write(append(note, '\n'))
+		}
 		out.Flush()
 	}
 }

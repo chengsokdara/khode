@@ -20,14 +20,19 @@ cd "$(dirname "$0")/.."
 DIR=${TMPDIR:-/tmp}/khode-selftest
 mkdir -p "$DIR/home/.khode" "$DIR/work"
 go build -o "$DIR/khode" ./cmd/khode
+go build -o "$DIR/mcpserver" ./internal/mcp/testdata/mcpserver
 
-cat > "$DIR/home/.khode/config.json" << 'JSON'
+# Unquoted so $DIR expands. The selftest MCP server runs in mutate mode:
+# its first tools/call flips the advertised set and pushes
+# notifications/tools/list_changed, which drives the refresh scenario.
+cat > "$DIR/home/.khode/config.json" << JSON
 {
   "provider": "fakeai",
   "permission_mode": "auto",
   "max_tokens": 1024,
   "models": { "fakeai": "test-model" },
-  "custom_providers": { "fakeai": { "kind": "openai", "base_url": "http://127.0.0.1:19731/v1" } }
+  "custom_providers": { "fakeai": { "kind": "openai", "base_url": "http://127.0.0.1:19731/v1" } },
+  "mcp_servers": { "selftest": { "command": "$DIR/mcpserver", "risk": "read", "env": ["KHOKE_MCP_MUTATE=1"] } }
 }
 JSON
 
@@ -100,5 +105,25 @@ wait_ready
 echo
 echo "=== final capture after both fan-out reports land ==="
 tmux -L khv capture-pane -p -t main | tail -16
+echo
+
+# MCP refresh scenario: the fake model calls the selftest server's echo
+# tool; the server flips its tool set as it answers and pushes
+# notifications/tools/list_changed, so khode re-lists live and reports
+# the diff in chat — no restart involved. The follow-up prompt forces a
+# turn (and with it an armed pump) so a notice that landed while idle is
+# drained into scrollback either way; the fake server just answers it.
+wait_ready
+tmux -L khv send-keys -t main "call the mcp echo tool now (# MCP refresh)" Enter
+sleep 1.0 # let the turn start, so wait_ready brackets it instead of no-oping
+wait_ready
+tmux -L khv send-keys -t main "and in five words, wrap up (# MCP refresh)" Enter
+sleep 1.0
+wait_ready
+echo "=== mcp refresh capture (tools-refreshed notice expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "tools refreshed|mcp:" || echo "NO MCP REFRESH NOTICE FOUND"
+echo
+echo "=== final capture after the mcp refresh ==="
+tmux -L khv capture-pane -p -t main | tail -14
 echo
 echo "session left running: tmux -L khv attach -t main · cleanup: tmux -L khv kill-server"

@@ -51,7 +51,8 @@ internal/khateway/   khateway device-flow client (RFC 8628): Start/Poll → pers
                        the /login dialog
 internal/perm/       permission policy: modes × risk classes → allow/ask/deny
 internal/tools/      tools (read, glob, grep, edit, write, bash, todo) + Registry
-internal/mcp/        minimal MCP client (stdio JSON-RPC): initialize, tools/list, tools/call
+internal/mcp/        minimal MCP client (stdio JSON-RPC): initialize, tools/list,
+                       tools/call; server notifications forwarded through SetNotify
 internal/hooks/      user lifecycle hooks around tool calls (pre_tool veto, post_tool)
 internal/agent/      conversation machinery
   session.go           JSONL transcript (source of truth for LLM history)

@@ -43,7 +43,7 @@ func newGatherModel(t *testing.T, p *gatherProvider) Model {
 func pumpUntilQuiet(t *testing.T, m Model) Model {
 	t.Helper()
 	for m.streaming {
-		msg := waitForEvents(m.events, nil, nil)()
+		msg := waitForEvents(m.events, nil, nil, nil)()
 		if msg == nil {
 			break
 		}

@@ -198,8 +198,13 @@ type Model struct {
 	ctxOut int64
 
 	// mcpClients holds the running MCP server connections so /settings
-	// can start and stop servers live.
+	// can start and stop servers live. mcpEvents carries server names
+	// whose tools/list_changed notification arrived (sent by the clients'
+	// notify hooks, dropped when full); the pump drains it into a
+	// re-list, so while the app idles the pings simply queue for the
+	// next armed pump.
 	mcpClients map[string]*mcp.Client
+	mcpEvents  chan string
 
 	approvals *agent.Bridge  // permission questions to/from the agent loop
 	perm      *agent.Request // open approval dialog; nil when closed
@@ -274,6 +279,7 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 		session:      sess,
 		tools:        reg,
 		mcpClients:   mcpClients,
+		mcpEvents:    make(chan string, 8),
 		workdir:      workdir,
 		textarea:     ta,
 		spinner:      sp,
@@ -281,6 +287,13 @@ func New(cfg *config.Config, auth *config.Auth, p llm.Provider, sess *agent.Sess
 		partialThink: new(strings.Builder),
 		approvals:    agent.NewBridge(),
 		taskProgress: make(chan agent.SubagentProgress, 64),
+	}
+
+	// Startup MCP clients report tool-list changes into the pump's
+	// channel; clients started later get the same hook when the
+	// reconcile installs them.
+	for name, cli := range mcpClients {
+		cli.SetNotify(mcpNotifyFunc(m.mcpEvents, name))
 	}
 
 	m.registerTaskTool()
@@ -461,6 +474,10 @@ type streamClosedMsg struct{}
 // from the taskProgress channel.
 type taskProgressMsg agent.SubagentProgress
 
+// mcpChangedMsg names an MCP server whose tools/list_changed
+// notification arrived, taken from the mcpEvents channel.
+type mcpChangedMsg string
+
 // compactDoneMsg carries the outcome of a manual /compact run.
 type compactDoneMsg struct {
 	removed int
@@ -549,6 +566,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mcpApplyMsg:
 		m.applyMCPResult(msg)
 		return m, m.flush() // the reconciliation notice prints to scrollback
+
+	case mcpChangedMsg:
+		return m, m.startMCPRefresh(string(msg))
+
+	case mcpRefreshMsg:
+		m.applyMCPRefresh(msg)
+		return m, m.flush()
 
 	case modelsFetchedMsg:
 		m.applyFetchedModels(msg)
@@ -1063,10 +1087,10 @@ func (m Model) helpLine() string {
 // --- streaming -------------------------------------------------------------
 
 // waitForEvents blocks until either the stream produces an event, the
-// approval bridge has a question, or a subagent reports activity;
-// whichever the agent loop offers first. A nil channel never fires, so
-// callers opt out by passing nil.
-func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request, prog <-chan agent.SubagentProgress) tea.Cmd {
+// approval bridge has a question, a subagent reports activity, or an
+// MCP server announces a tool-list change; whichever is offered first.
+// A nil channel never fires, so callers opt out by passing nil.
+func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request, prog <-chan agent.SubagentProgress, mcpEv <-chan string) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case ev, ok := <-ch:
@@ -1081,14 +1105,16 @@ func waitForEvents(ch <-chan llm.Event, reqs <-chan agent.Request, prog <-chan a
 			return permRequestMsg{req: req}
 		case p := <-prog:
 			return taskProgressMsg(p)
+		case name := <-mcpEv:
+			return mcpChangedMsg(name)
 		}
 	}
 }
 
-// pump schedules the next poll of the stream, the approval bridge, and
-// the subagent activity feed.
+// pump schedules the next poll of the stream, the approval bridge, the
+// subagent activity feed, and the MCP change feed.
 func (m *Model) pump() tea.Cmd {
-	return waitForEvents(m.events, m.approvals.Requests(), m.taskProgress)
+	return waitForEvents(m.events, m.approvals.Requests(), m.taskProgress, m.mcpEvents)
 }
 
 func (m *Model) handleStreamEvent(ev llm.Event) tea.Cmd {

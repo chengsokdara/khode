@@ -82,6 +82,32 @@ class H(BaseHTTPRequestHandler):
                 ])
             return
 
+        if b"# MCP refresh" in body:
+            # The MCP live-refresh scenario: the request without the
+            # echo call in its transcript calls the selftest server's
+            # echo tool (the server flips its tool set right after
+            # answering and pushes tools/list_changed); once call_mcp1
+            # has a result, the turn closes while khode re-lists in the
+            # background. Later turns still carrying the prompt also
+            # land here and just answer — the notification fired once.
+            if b'"call_mcp1"' in body:
+                sse(self, [
+                    chunk({"content": "Echoed through the MCP tool; the server's tool list changed underneath us."}),
+                    chunk({}, finish="stop"),
+                    chunk({}, usage={"prompt_tokens": 5000, "completion_tokens": 20}),
+                ])
+            else:
+                ea = json.dumps({"text": "ping"})
+                sse(self, [
+                    chunk({"role": "assistant"}),
+                    chunk({"content": "Calling the MCP echo tool."}),
+                    chunk({"tool_calls": [{"index": 0, "id": "call_mcp1", "type": "function",
+                                           "function": {"name": "mcp__selftest__echo", "arguments": ea}}]}),
+                    chunk({}, finish="tool_calls"),
+                    chunk({}, usage={"prompt_tokens": 4600, "completion_tokens": 30}),
+                ])
+            return
+
         H.outer += 1
         if H.outer == 4:
             ta = json.dumps({"prompt": "survey this repository",
