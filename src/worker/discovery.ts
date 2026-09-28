@@ -30,6 +30,61 @@ export const UPSTREAM_MODELS_MAX = 500;
 
 export type UpstreamModelsResult = { ok: true; models: UpstreamModel[] } | { ok: false; error: string; status: number | null };
 
+export type ModelsBodyKind = 'openai-listing' | 'gemini-listing' | 'error' | 'unknown';
+
+export interface ModelsBodyClassification {
+  kind: ModelsBodyKind;
+  /** Entries in a recognized listing; null for error/unknown bodies. */
+  modelCount: number | null;
+  /** Extracted message for error envelopes; null otherwise. ≤240 chars. */
+  errorMessage: string | null;
+}
+
+const CLASSIFIED_ERROR_MAX = 240;
+
+/**
+ * Content-aware classification of a 2xx /models response body. Some vendors
+ * (z.ai) authenticate /models but answer HTTP 200 with an auth-error JSON —
+ * a status-only probe reads that as healthy. A recognized LISTING array wins
+ * over everything (even odd extra fields); `error` envelopes (openai/gemini/
+ * anthropic shapes) and z.ai-style nonzero `code` bodies classify as errors;
+ * anything else is `unknown` and stays lenient (some working providers serve
+ * nonstandard listings — GitHub Models answers text/plain "OK" today).
+ */
+export function classifyModelsBody(body: unknown): ModelsBodyClassification {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { kind: 'unknown', modelCount: null, errorMessage: null };
+  }
+  const o = body as Record<string, unknown>;
+  if (Array.isArray(o.data)) return { kind: 'openai-listing', modelCount: o.data.length, errorMessage: null };
+  if (Array.isArray(o.models)) return { kind: 'gemini-listing', modelCount: o.models.length, errorMessage: null };
+  if (o.error !== undefined) {
+    const err = o.error;
+    let msg: string | null = null;
+    if (typeof err === 'string' && err.trim()) {
+      msg = err.trim();
+    } else if (err && typeof err === 'object' && !Array.isArray(err)) {
+      const e = err as Record<string, unknown>;
+      for (const k of ['message', 'status', 'type']) {
+        if (typeof e[k] === 'string' && (e[k] as string).trim()) {
+          msg = (e[k] as string).trim();
+          break;
+        }
+      }
+    }
+    const out = msg ?? 'Upstream reported an error';
+    return { kind: 'error', modelCount: null, errorMessage: out.length > CLASSIFIED_ERROR_MAX ? out.slice(0, CLASSIFIED_ERROR_MAX) : out };
+  }
+  if (typeof o.code === 'number' && o.code !== 0) {
+    const msg =
+      typeof o.msg === 'string' && o.msg.trim() ? o.msg.trim()
+      : typeof o.message === 'string' && o.message.trim() ? o.message.trim()
+      : `error code ${o.code}`;
+    return { kind: 'error', modelCount: null, errorMessage: msg.length > CLASSIFIED_ERROR_MAX ? msg.slice(0, CLASSIFIED_ERROR_MAX) : msg };
+  }
+  return { kind: 'unknown', modelCount: null, errorMessage: null };
+}
+
 /** Parses an OpenRouter-style per-token USD price ("0", "0.0000015") into USD
  * per 1M tokens ("0" → 0 = free); anything non-numeric/negative → null
  * (no pricing rather than a made-up one). */

@@ -44,7 +44,7 @@ import {
   timingSafeStrEqual,
 } from '../auth';
 import { loginAllowed } from '../ratelimit/client';
-import { listUpstreamModels, type ProviderRow, type UpstreamModel } from '../discovery';
+import { classifyModelsBody, listUpstreamModels, type ProviderRow, type UpstreamModel } from '../discovery';
 import { runModelsSync } from '../models-sync';
 import { getModelsSyncLastRun } from '../db/settings';
 
@@ -975,16 +975,17 @@ adminApp.post('/providers/:id/test', async (c) => {
         if (!best || (attempt.status ?? 0) < (best.status ?? 0)) best = attempt;
         continue;
       }
-      let modelCount: number | null = null;
-      try {
-        const j = (await res.json()) as { data?: unknown[]; models?: unknown[] };
-        if (Array.isArray(j?.data)) modelCount = j.data.length;
-        else if (Array.isArray(j?.models)) modelCount = j.models.length; // gemini listing
-      } catch {
-        // non-JSON success still counts as reachable
+      // Content-aware: a 200 whose body is an ERROR envelope (z.ai answers
+      // its auth errors with HTTP 200) is a FAILED probe, not a healthy one.
+      const body: unknown = await res.json().catch(() => null);
+      const classified = classifyModelsBody(body);
+      if (classified.kind === 'error') {
+        const attempt = { ok: false, status: res.status as number | null, latency_ms: latencyMs, model_count: null, error: classified.errorMessage ?? `HTTP ${res.status}` };
+        if (!best || (attempt.status ?? 0) < (best.status ?? 0)) best = attempt;
+        continue;
       }
-      best = { ok: true, status: res.status, latency_ms: latencyMs, model_count: modelCount, error: null };
-      break; // first healthy adapter wins
+      best = { ok: true, status: res.status, latency_ms: latencyMs, model_count: classified.modelCount, error: null };
+      break; // first healthy adapter wins (unknown bodies stay lenient)
     } catch (e) {
       const latencyMs = Date.now() - t0;
       const msg = e instanceof Error ? e.message : 'network error';

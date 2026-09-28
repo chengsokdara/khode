@@ -56,7 +56,7 @@ const j = async (path, opts = {}) => {
   return { status: res.status, headers: res.headers, body };
 };
 
-const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)', 'Free Sync Mock (smoke)', 'Free Tier Mock (smoke)'];
+const PROVIDER_NAMES = ['Khateway Mock (smoke)', 'Anthropic Mock (smoke)', 'Dual Mock (smoke)', 'Dual Mock Bare (smoke)', 'Gemini Mock (smoke)', 'Z.ai Blind (smoke)', 'Free Sync Mock (smoke)', 'Free Tier Mock (smoke)'];
 const SLUGS = [
   'mock-chat', 'mock-chat-429', 'mock-chat-401', 'mock-chat-500', 'mock-chat-500t', 'mock-claude', 'mock-claude-429',
   'mock-tools', 'mock-claude-tools', 'mock-claude-structured',
@@ -140,6 +140,12 @@ function startMockUpstream() {
         );
       }
       if (url.endsWith('/models') && (req.method === 'GET' || !lastReq.body || Object.keys(lastReq.body).length === 0)) {
+        // z.ai-style blind spot: /models authenticates the key but answers
+        // HTTP 200 with an auth-error JSON body (admin test-connection cell).
+        if (req.headers.authorization === 'Bearer sk-zai-blind') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ code: 1000, msg: 'Invalid API key' }));
+        }
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify(openaiListing));
       }
@@ -1875,6 +1881,31 @@ const mock = await startMockUpstream();
     'M12 fetch-models preview probes the gemini /v1beta/models path',
     gemPreview.status === 200 && lastReq.path.endsWith('/v1beta/models') && lastReq.headers['x-goog-api-key'] === 'sk-gemini-preview',
     JSON.stringify({ path: lastReq.path, body: gemPreview.body }),
+  );
+
+  // -- content-aware test-connection: a 200 error-envelope /models body is a
+  // FAILED probe (z.ai authenticates /models but answers HTTP 200) ----------
+  const provZai = await j('/api/admin/providers', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Z.ai Blind (smoke)',
+      adapter: 'openai',
+      base_url: `http://127.0.0.1:${mock.port}/v1`,
+      api_key: 'sk-zai-blind',
+    }),
+  });
+  const zaiTest = await j(`/api/admin/providers/${provZai.body.id}/test`, { method: 'POST' });
+  check(
+    'test-connection reads a 200 error-envelope /models body as FAILED (z.ai blind spot)',
+    zaiTest.status === 200 && zaiTest.body?.ok === false && zaiTest.body?.status === 200 && zaiTest.body?.error === 'Invalid API key',
+    JSON.stringify(zaiTest.body),
+  );
+  // Sanity: the plain listing still reads healthy after the face was added.
+  const plainTest = await j(`/api/admin/providers/${prov.body.id}/test`, { method: 'POST' });
+  check(
+    'test-connection still reads a real listing as healthy',
+    plainTest.status === 200 && plainTest.body?.ok === true && plainTest.body?.model_count === 4,
+    JSON.stringify(plainTest.body),
   );
 
   // -- openai client → gemini upstream (translated, usage mapped) -----------
