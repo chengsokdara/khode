@@ -45,6 +45,14 @@ export type CacheEnabled = typeof CACHE_ENABLED_ON | typeof CACHE_ENABLED_OFF;
 export const CACHE_DEFAULT_TTL_SECONDS = 3600;
 export const CACHE_TTL_MAX = 2_592_000; // 30 days
 
+/** Opt-in auth-failure logging: when 'on', every 401 at the /v1 auth
+ * middleware writes a minimal request_logs row (model '(unknown)', no
+ * attribution, generic error text — never the attempted key/header). */
+export const LOG_AUTH_FAILURES_KEY = 'log_auth_failures';
+export const LOG_AUTH_FAILURES_ON = 'on';
+export const LOG_AUTH_FAILURES_OFF = 'off';
+export type LogAuthFailures = typeof LOG_AUTH_FAILURES_ON | typeof LOG_AUTH_FAILURES_OFF;
+
 /** Cache TTL. Short on purpose: the admin toggles must converge quickly. */
 const SETTINGS_TTL_MS = 5_000;
 
@@ -52,6 +60,7 @@ interface SettingsCache {
   at: number;
   rateLimit: RateLimitSettings;
   cache: CacheSettings;
+  logAuthFailures: boolean;
 }
 
 export interface RateLimitSettings {
@@ -106,6 +115,7 @@ async function writeSetting(env: Env, key: string, value: string): Promise<void>
 async function loadSnapshot(env: Env): Promise<SettingsCache> {
   let rateLimit: RateLimitSettings = { enabled: true, keyRpm: RATE_LIMIT_DEFAULT_KEY_RPM, ipRpm: RATE_LIMIT_DEFAULT_IP_RPM };
   const cacheSettings: CacheSettings = { enabled: false, ttlSeconds: CACHE_DEFAULT_TTL_SECONDS };
+  let logAuthFailures = false;
   try {
     const rows = await getDb(env).select({ key: settings.key, value: settings.value }).from(settings);
     const byKey = new Map(rows.map((r) => [r.key, r.value]));
@@ -117,11 +127,12 @@ async function loadSnapshot(env: Env): Promise<SettingsCache> {
     };
     cacheSettings.enabled = byKey.get(CACHE_ENABLED_KEY) === CACHE_ENABLED_ON;
     cacheSettings.ttlSeconds = normalizeTtl(byKey.get(CACHE_TTL_SECONDS_KEY));
+    logAuthFailures = byKey.get(LOG_AUTH_FAILURES_KEY) === LOG_AUTH_FAILURES_ON;
   } catch {
     // Table missing / DB hiccup → fail OPEN (limits off, cache off): a
     // settings hiccup must never brick the gateway.
   }
-  return { at: Date.now(), rateLimit, cache: cacheSettings };
+  return { at: Date.now(), rateLimit, cache: cacheSettings, logAuthFailures };
 }
 
 async function cachedSnapshot(env: Env): Promise<SettingsCache> {
@@ -153,6 +164,7 @@ export async function setRateLimitSettings(env: Env, patch: Partial<RateLimitSet
       ipRpm: patch.ipRpm ?? current.rateLimit.ipRpm,
     },
     cache: current.cache,
+    logAuthFailures: current.logAuthFailures,
   };
 }
 
@@ -178,6 +190,25 @@ export async function setCacheSettings(env: Env, patch: Partial<CacheSettings>):
       enabled: patch.enabled ?? current.cache.enabled,
       ttlSeconds: patch.ttlSeconds ?? current.cache.ttlSeconds,
     },
+    logAuthFailures: current.logAuthFailures,
+  };
+}
+
+/** Reads the auth-failure logging flag. Absent row → 'off' (logging 401s is
+ * opt-in); cached with the other gateway settings; fail-open = off. */
+export async function getLogAuthFailures(env: Env): Promise<boolean> {
+  return (await cachedSnapshot(env)).logAuthFailures;
+}
+
+/** Persists the auth-failure logging flag and invalidates this isolate's cache. */
+export async function setLogAuthFailures(env: Env, value: LogAuthFailures): Promise<void> {
+  await writeSetting(env, LOG_AUTH_FAILURES_KEY, value);
+  const current = await cachedSnapshot(env);
+  cache = {
+    at: Date.now(),
+    rateLimit: current.rateLimit,
+    cache: current.cache,
+    logAuthFailures: value === LOG_AUTH_FAILURES_ON,
   };
 }
 

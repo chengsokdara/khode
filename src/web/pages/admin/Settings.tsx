@@ -45,6 +45,19 @@ function GatewayCard() {
           </div>
           <Switch checked={s.public_signup === 'on'} onChange={(v) => patch.mutate({ public_signup: v ? 'on' : 'off' })} disabled={patch.isPending} />
         </div>
+        <div className="border-t border-zinc-800/70 pt-5">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <div className="text-[13px] text-zinc-200">Log auth failures</div>
+              <p className="mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
+                Off (default): requests rejected at the key check are never logged. On: each 401 on a
+                gateway pipeline path writes a minimal log row (status, path type, time) — no attribution,
+                no key material.
+              </p>
+            </div>
+            <Switch checked={s.log_auth_failures === 'on'} onChange={(v) => patch.mutate({ log_auth_failures: v ? 'on' : 'off' })} disabled={patch.isPending} />
+          </div>
+        </div>
       </div>
     </Card>
   );

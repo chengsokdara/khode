@@ -22,11 +22,16 @@ import {
   RATE_LIMIT_ENABLED_ON,
   RATE_LIMIT_RPM_MAX,
   getCacheSettings,
+  getLogAuthFailures,
   getPublicSignup,
   getRateLimitSettings,
   setCacheSettings,
+  setLogAuthFailures,
   setPublicSignup,
   setRateLimitSettings,
+  LOG_AUTH_FAILURES_OFF,
+  LOG_AUTH_FAILURES_ON,
+  type LogAuthFailures,
 } from '../db/settings';
 import { cacheStats, flushCache } from '../cache/store';
 import { billingConfigStatus, saveBillingConfig } from '../billing/config';
@@ -583,10 +588,11 @@ adminApp.get('/usage', async (c) => {
 // admin opts in (khode users then set KHATEWAY_API_KEY).
 
 adminApp.get('/settings', async (c) => {
-  const [publicSignup, rateLimit, cache] = await Promise.all([
+  const [publicSignup, rateLimit, cache, logAuthFailures] = await Promise.all([
     getPublicSignup(c.env),
     getRateLimitSettings(c.env),
     getCacheSettings(c.env),
+    getLogAuthFailures(c.env),
   ]);
   // Auth is not settings-dependent any more: every /v1 request requires a
   // valid client key (device flow / portal keys are the onboarding paths).
@@ -597,6 +603,7 @@ adminApp.get('/settings', async (c) => {
     rate_limit_ip_rpm: rateLimit.ipRpm,
     cache_enabled: cache.enabled ? CACHE_ENABLED_ON : CACHE_ENABLED_OFF,
     cache_ttl_seconds: cache.ttlSeconds,
+    log_auth_failures: logAuthFailures ? 'on' : 'off',
   });
 });
 
@@ -607,6 +614,7 @@ adminApp.patch('/settings', async (c) => {
     signup?: string;
     rateLimit?: { enabled?: boolean; keyRpm?: number; ipRpm?: number };
     cache?: { enabled?: boolean; ttlSeconds?: number };
+    logAuthFailures?: string;
   } = {};
   if (body.public_signup !== undefined) {
     if (body.public_signup !== PUBLIC_SIGNUP_ON && body.public_signup !== PUBLIC_SIGNUP_OFF) {
@@ -645,13 +653,21 @@ adminApp.patch('/settings', async (c) => {
     }
     patch.cache = { ...(patch.cache ?? {}), ttlSeconds: body.cache_ttl_seconds };
   }
+  if (body.log_auth_failures !== undefined) {
+    if (body.log_auth_failures !== LOG_AUTH_FAILURES_ON && body.log_auth_failures !== LOG_AUTH_FAILURES_OFF) {
+      return c.json(apiErr(`log_auth_failures must be '${LOG_AUTH_FAILURES_ON}' or '${LOG_AUTH_FAILURES_OFF}'`), 400);
+    }
+    patch.logAuthFailures = body.log_auth_failures;
+  }
   if (patch.signup !== undefined) await setPublicSignup(c.env, patch.signup as typeof PUBLIC_SIGNUP_ON | typeof PUBLIC_SIGNUP_OFF);
   if (patch.rateLimit !== undefined) await setRateLimitSettings(c.env, patch.rateLimit);
   if (patch.cache !== undefined) await setCacheSettings(c.env, patch.cache);
-  const [publicSignup, rateLimit, cache] = await Promise.all([
+  if (patch.logAuthFailures !== undefined) await setLogAuthFailures(c.env, patch.logAuthFailures as LogAuthFailures);
+  const [publicSignup, rateLimit, cache, logAuthFailures] = await Promise.all([
     getPublicSignup(c.env),
     getRateLimitSettings(c.env),
     getCacheSettings(c.env),
+    getLogAuthFailures(c.env),
   ]);
   return c.json({
     public_signup: publicSignup,
@@ -660,6 +676,7 @@ adminApp.patch('/settings', async (c) => {
     rate_limit_ip_rpm: rateLimit.ipRpm,
     cache_enabled: cache.enabled ? CACHE_ENABLED_ON : CACHE_ENABLED_OFF,
     cache_ttl_seconds: cache.ttlSeconds,
+    log_auth_failures: logAuthFailures ? 'on' : 'off',
   });
 });
 

@@ -62,7 +62,7 @@ import type { CanonicalChatRequest, CanonicalEmbeddingsRequest } from '../canoni
 import { apiKeys, balanceEntries, models, orgs, providers, requestLogs, users } from '../db/schema';
 import { resolveModelChain, type RoutingCandidate } from '../routing';
 import { verifyClientKey, type ApiKeyRow } from '../auth';
-import { getCacheSettings, getRateLimitSettings } from '../db/settings';
+import { getCacheSettings, getLogAuthFailures, getRateLimitSettings } from '../db/settings';
 import { buildGatewayRateChecks, checkRateLimits, reserveSpend, settleSpend } from '../ratelimit/client';
 import type { RateLimitDecision } from '../ratelimit/do';
 import { buildCacheKey, evaluateCacheEligibility } from '../cache/key';
@@ -136,6 +136,18 @@ function clientDialectForPath(path: string): ClientDialect {
   return path.endsWith('/messages') ? 'anthropic' : 'openai';
 }
 
+/** request_logs.dialect for an auth-failure row — pipeline paths only
+ * (/v1/models 401s don't log, matching the pipeline's own no-log behavior
+ * there; the legacy + embeddings faces get their own vocabulary entries). */
+function authLogDialectForPath(path: string): 'chat' | 'responses' | 'messages' | 'embeddings' | 'completions' | null {
+  if (path.endsWith('/chat/completions')) return 'chat';
+  if (path.endsWith('/completions')) return 'completions';
+  if (path.endsWith('/responses')) return 'responses';
+  if (path.endsWith('/messages')) return 'messages';
+  if (path.endsWith('/embeddings')) return 'embeddings';
+  return null;
+}
+
 /** The sentinel value keyless clients send instead of a real key. */
 const ANONYMOUS_KEY = 'anonymous';
 
@@ -152,6 +164,40 @@ gatewayApp.use('*', async (c, next) => {
   const key = lookup && lookup.enabled ? lookup : null;
 
   if (!key) {
+    // Opt-in auth-failure logging (settings log_auth_failures): a minimal 401
+    // row with NO attribution and a generic error text — the attempted key,
+    // its headers and their shape are never logged (same policy as every row).
+    const logDialect = authLogDialectForPath(c.req.path);
+    if (logDialect && (await getLogAuthFailures(c.env))) {
+      const inserted = getDb(c.env)
+        .insert(requestLogs)
+        .values({
+          id: crypto.randomUUID(),
+          apiKeyId: null,
+          userId: null,
+          orgId: null,
+          modelSlug: '(unknown)',
+          providerId: null,
+          upstreamModel: null,
+          dialect: logDialect,
+          status: 401,
+          latencyMs: null,
+          tokensIn: null,
+          tokensOut: null,
+          costUsd: null,
+          cacheHit: false,
+          httpReferer: null,
+          xTitle: null,
+          error: 'invalid api key',
+          createdAt: Date.now(),
+        })
+        .catch((e) => console.error('[gateway] failed to write auth-failure log:', e));
+      try {
+        c.executionCtx.waitUntil(inserted);
+      } catch {
+        // no executionCtx (offline unit tests) — logging must never break the 401
+      }
+    }
     return errorJson(
       dialect,
       401,

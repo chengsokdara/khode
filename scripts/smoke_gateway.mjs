@@ -3083,6 +3083,35 @@ const mock = await startMockUpstream();
   // -- unknown /v1 endpoint -------------------------------------------------
   const unknownEndpoint = await fetchOrPost('/v1/zzz', null);
   check('unknown /v1 endpoint → 404 openai envelope', unknownEndpoint.status === 404 && unknownEndpoint.body?.error?.type === 'invalid_request_error', JSON.stringify(unknownEndpoint.body));
+
+  // -- opt-in auth-failure logging -------------------------------------------
+  // Off (default): a rejected key writes NO log row. On: ONE minimal 401 row —
+  // model '(unknown)', no attribution, generic error text.
+  const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ log_auth_failures: 'off' }) });
+  await sleepMs(5300); // settings snapshot TTL — converge before dependent requests
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), 'khat-deadbeef');
+  const logsOff = await j('/api/admin/logs?status=4xx&limit=100');
+  check(
+    'auth-failure logging off → rejected key writes NO log row',
+    !(logsOff.body ?? []).some((r) => r.status === 401 && r.error === 'invalid api key'),
+  );
+
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ log_auth_failures: 'on' }) });
+  await sleepMs(5300);
+  await fetchOrPost('/v1/chat/completions', JSON.stringify({ model: 'mock-chat', messages: [{ role: 'user', content: 'hi' }] }), 'khat-deadbeef');
+  let authRow = null;
+  for (let i = 0; i < 20 && !authRow; i++) {
+    await sleepMs(250); // the row lands via waitUntil
+    const logsOn = await j('/api/admin/logs?status=4xx&limit=100');
+    authRow = (logsOn.body ?? []).find((r) => r.status === 401 && r.error === 'invalid api key');
+  }
+  check(
+    'auth-failure logging on → rejected key writes a minimal 401 row',
+    Boolean(authRow) && authRow.model_slug === '(unknown)' && authRow.api_key_id === null && authRow.user_id === null && authRow.dialect === 'chat' && authRow.cost_usd === null,
+    JSON.stringify(authRow),
+  );
+  await j('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ log_auth_failures: 'off' }) });
 })()
   .catch((e) => {
     fail('smoke crashed', String(e));

@@ -240,6 +240,9 @@ export interface GatewaySettings {
   cache_enabled: 'on' | 'off';
   /** Cached-entry lifetime in seconds (1–2592000); default 3600. */
   cache_ttl_seconds: number;
+  /** Opt-in auth-failure logging: 'on' writes a minimal 401 row per rejected
+   * gateway request (no attribution, no key material). */
+  log_auth_failures: 'on' | 'off';
 }
 
 export interface PortalUserRow {
