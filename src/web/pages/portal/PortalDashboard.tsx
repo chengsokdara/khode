@@ -1,13 +1,92 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDownRight, ArrowUpRight, CreditCard, Wallet } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, CreditCard, KeyRound, Wallet } from 'lucide-react';
 import { portalApi, type PortalUsageRow } from '../../portal-api';
-import { Button, Card, EmptyState, PageHeader, Spinner, toast, fmtPrice, fmtTokens, cn } from '../../components/ui';
+import { Button, Card, EmptyState, Field, Input, PageHeader, Spinner, toast, fmtPrice, fmtTokens, cn } from '../../components/ui';
 
 const TOPUP_PRESETS = [5, 10, 25, 50];
 
 function fmtWhen(ms: number): string {
   return new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function ChangePasswordCard() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const change = useMutation({
+    mutationFn: () => portalApi.changePassword(current, next),
+    onSuccess: () => {
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+      setError(null);
+      toast('Password changed');
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : 'Change failed'),
+  });
+
+  const valid = next.length >= 8 && next === confirm;
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2 text-[13px] font-medium text-zinc-200">
+        <KeyRound className="h-4 w-4" />
+        Change password
+      </div>
+      <p className="mt-2 max-w-md text-xs leading-relaxed text-zinc-500">
+        Your current password is required — a stolen browser session alone cannot change it.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <Field label="Current password">
+          <Input
+            type="password"
+            value={current}
+            onChange={(e) => {
+              setCurrent(e.target.value);
+              setError(null);
+            }}
+            autoComplete="current-password"
+          />
+        </Field>
+        <Field label="New password" hint="At least 8 characters">
+          <Input
+            type="password"
+            value={next}
+            onChange={(e) => {
+              setNext(e.target.value);
+              setError(null);
+            }}
+            autoComplete="new-password"
+          />
+        </Field>
+        <Field label="Repeat new password">
+          <Input
+            type="password"
+            value={confirm}
+            onChange={(e) => {
+              setConfirm(e.target.value);
+              setError(null);
+            }}
+            autoComplete="new-password"
+          />
+        </Field>
+      </div>
+      {next.length > 0 && confirm.length > 0 && next !== confirm ? (
+        <p className="mt-2 text-xs text-amber-400">New passwords don't match.</p>
+      ) : error ? (
+        <p className="mt-2 text-xs text-red-400">{error}</p>
+      ) : null}
+      <div className="mt-4 flex justify-end">
+        <Button onClick={() => change.mutate()} disabled={!valid || change.isPending}>
+          {change.isPending ? <Spinner className="border-zinc-900/70 border-t-transparent" /> : null}
+          Change password
+        </Button>
+      </div>
+    </Card>
+  );
 }
 
 function UsageTable({ rows }: { rows: PortalUsageRow[] }) {
@@ -172,6 +251,12 @@ export function PortalDashboard() {
           )}
         </Card>
       </div>
+
+      {user.has_password ? (
+        <div className="mt-4">
+          <ChangePasswordCard />
+        </div>
+      ) : null}
 
       <div className="mt-4">
         <Card>

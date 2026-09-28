@@ -49,6 +49,9 @@ function userDto(u: UserRow) {
     balance_usd: u.balanceUsdMicros / 1e6,
     enabled: Boolean(u.enabled),
     created_at: u.createdAt,
+    // Presence flag only (never the hash) — OAuth-only accounts get no
+    // password-change UI and password login answers them specially.
+    has_password: Boolean(u.passwordHash),
   };
 }
 
@@ -187,6 +190,30 @@ portalApp.use('*', portalAuth);
 portalApp.get('/me', async (c) => {
   const billing = await billingConfigStatus(c.env);
   return c.json({ user: userDto(c.get('user')), billing_configured: billing.configured });
+});
+
+// POST /me/password — self-service password change. The CURRENT password is
+// the authority (a hijacked session alone must not be able to take over the
+// account's credential); OAuth-only accounts are pointed at the admin reset
+// instead — the portal has no email flow to verify identity.
+portalApp.post('/me/password', async (c) => {
+  const body = await readJson(c);
+  if (!body) return c.json(apiErr('Invalid JSON body'), 400);
+  const current = typeof body.current_password === 'string' ? body.current_password : '';
+  const next = typeof body.new_password === 'string' ? body.new_password : '';
+  if (next.length < 8) return c.json(apiErr('New password must be at least 8 characters'), 400);
+  if (next.length > 200) return c.json(apiErr('New password must be at most 200 characters'), 400);
+  const [user] = await getDb(c.env).select().from(users).where(eq(users.id, c.get('userId')));
+  if (!user) return c.json(apiErr('Account not found'), 404);
+  if (!user.passwordHash) {
+    return c.json(apiErr('This account signs in with Google/GitHub and has no password — an administrator can set one (admin console → Users).'), 400);
+  }
+  if (!(await verifyPassword(current, user.passwordHash))) return c.json(apiErr('Current password is incorrect'), 400);
+  await getDb(c.env)
+    .update(users)
+    .set({ passwordHash: await hashPassword(next), updatedAt: Date.now() })
+    .where(eq(users.id, user.id));
+  return c.json({ ok: true });
 });
 
 // -------------------------------------------------------------------- keys

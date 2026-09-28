@@ -36,7 +36,7 @@ import {
 import { cacheStats, flushCache } from '../cache/store';
 import { billingConfigStatus, saveBillingConfig } from '../billing/config';
 import { getOAuthConfig, oauthConfigStatus, saveOAuthConfig } from '../oauth/config';
-import { decryptSecret, encryptSecret } from '../crypto';
+import { decryptSecret, encryptSecret, hashPassword } from '../crypto';
 import {
   SESSION_COOKIE,
   adminAuth,
@@ -1688,6 +1688,26 @@ adminApp.patch('/users/:id', async (c) => {
   const [updated] = await db.select().from(users).where(eq(users.id, id));
   const [kc] = await db.select({ n: count(apiKeys.id) }).from(apiKeys).where(eq(apiKeys.userId, id));
   return c.json(userDto(updated, kc?.n ?? 0));
+});
+
+// POST /users/:id/password — admin password reset: sets a new password on any
+// account (OAuth-only included — this converts it to dual sign-in) and
+// revokes the account's live sessions, so the new credential is the only way
+// back in. The raw password is chosen by the admin and shown once in the UI;
+// it is never stored in plaintext (PBKDF2, same format as signup).
+adminApp.post('/users/:id/password', async (c) => {
+  const id = c.req.param('id');
+  const body = await readJson(c);
+  if (!body) return c.json(apiErr('Invalid JSON body'), 400);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (password.length < 8) return c.json(apiErr('Password must be at least 8 characters'), 400);
+  if (password.length > 200) return c.json(apiErr('Password must be at most 200 characters'), 400);
+  const db = getDb(c.env);
+  const [existing] = await db.select().from(users).where(eq(users.id, id));
+  if (!existing) return c.json(apiErr('User not found'), 404);
+  await db.update(users).set({ passwordHash: await hashPassword(password), updatedAt: Date.now() }).where(eq(users.id, id));
+  await revokeAllUserSessions(c.env, id);
+  return c.json({ ok: true });
 });
 
 adminApp.delete('/users/:id', async (c) => {

@@ -421,6 +421,8 @@ export const api = {
   users: () => req<PortalUserRow[]>('/api/admin/users'),
   updateUser: (id: string, patch: Record<string, unknown>) =>
     req<PortalUserRow>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  resetUserPassword: (id: string, password: string) =>
+    req<{ ok: boolean }>(`/api/admin/users/${id}/password`, { method: 'POST', body: JSON.stringify({ password }) }),
   deleteUser: (id: string) => req<{ ok: boolean }>(`/api/admin/users/${id}`, { method: 'DELETE' }),
   billingConfig: () => req<BillingConfigInfo>('/api/admin/billing/config'),
   updateBillingConfig: (patch: Record<string, unknown>) =>

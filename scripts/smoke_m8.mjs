@@ -203,6 +203,33 @@ async function cleanup({ restoreSignup }) {
   check('public_signup off → signup 403', closed.status === 403, `got ${closed.status} ${JSON.stringify(closed.body)}`);
   await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ public_signup: 'on' }) });
 
+  // --- password reset: self-service change + admin reset ----------------------
+  const PASSWORD2 = 'reset-pass-9876';
+  const wrongCurrent = await api('/api/portal/me/password', { method: 'POST', body: JSON.stringify({ current_password: 'not-my-password', new_password: PASSWORD2 }) }, 'portal');
+  check('self-service change: wrong current password → 400', wrongCurrent.status === 400, JSON.stringify(wrongCurrent.body));
+  const shortNext = await api('/api/portal/me/password', { method: 'POST', body: JSON.stringify({ current_password: PASSWORD, new_password: 'short' }) }, 'portal');
+  check('self-service change: short new password → 400', shortNext.status === 400);
+  const changed = await api('/api/portal/me/password', { method: 'POST', body: JSON.stringify({ current_password: PASSWORD, new_password: PASSWORD2 }) }, 'portal');
+  check('self-service change with right current → 200', changed.status === 200, JSON.stringify(changed.body));
+  const oldLogin = await api('/api/portal/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
+  check('login with OLD password after change → 401', oldLogin.status === 401);
+  const newLogin = await api('/api/portal/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD2 }) }, 'portal');
+  check('login with NEW password → 200', newLogin.status === 200 && newLogin.body?.user?.email === EMAIL);
+  const mePw = await api('/api/portal/me', {}, 'portal');
+  check('me: has_password true for password account', mePw.body?.user?.has_password === true, JSON.stringify(mePw.body?.user));
+
+  // Admin reset back to the original password — and it must revoke the live
+  // session minted BEFORE the reset (the current jar cookie).
+  const adminUser = (await api('/api/admin/users')).body.find((u) => u.email === EMAIL);
+  const shortAdminReset = await api(`/api/admin/users/${adminUser.id}/password`, { method: 'POST', body: JSON.stringify({ password: 'short' }) }, 'admin');
+  check('admin reset: short password → 400', shortAdminReset.status === 400);
+  const adminReset = await api(`/api/admin/users/${adminUser.id}/password`, { method: 'POST', body: JSON.stringify({ password: PASSWORD }) }, 'admin');
+  check('admin reset → 200', adminReset.status === 200 && adminReset.body?.ok === true, JSON.stringify(adminReset.body));
+  const preResetSession = await api('/api/portal/me', {}, 'portal');
+  check('admin reset revokes pre-reset sessions → 401', preResetSession.status === 401, `got ${preResetSession.status}`);
+  const resetLogin = await api('/api/portal/login', { method: 'POST', body: JSON.stringify({ email: EMAIL, password: PASSWORD }) }, 'portal');
+  check('login with admin-reset password → 200 (jar refreshed)', resetLogin.status === 200);
+
   // --- user key + balance gate ----------------------------------------------
   const keyRes = await api('/api/portal/keys', { method: 'POST', body: JSON.stringify({ name: KEY_NAME }) }, 'portal');
   const rawKey = keyRes.body?.key ?? '';

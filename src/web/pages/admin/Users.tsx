@@ -87,7 +87,93 @@ function AdjustBalanceModal({ user, onClose }: { user: PortalUserRow | null; onC
   );
 }
 
-function UserRow({ u, onAdjust }: { u: PortalUserRow; onAdjust: (id: string) => void }) {
+/** Readable random password (no look-alike chars) for the generate button. */
+function generatePassword(): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
+
+function ResetPasswordModal({ user, onClose }: { user: PortalUserRow | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const reset = useMutation({
+    mutationFn: () => api.resetUserPassword(user!.id, password),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-users'] });
+      // Show the new password once — it was never stored in plaintext.
+      setSaved(password);
+      setPassword('');
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : 'Reset failed'),
+  });
+
+  const close = () => {
+    onClose();
+    setError(null);
+    setSaved(null);
+    setPassword('');
+  };
+
+  if (!user) return null;
+  const valid = password.length >= 8 && password.length <= 200;
+
+  return (
+    <Modal open={Boolean(user)} onClose={close} title="Reset password" description={`Set a new password for ${user.email}. The account's sessions are signed out.`}>
+      {saved ? (
+        <>
+          <div className="rounded-lg border border-emerald-900/60 bg-emerald-950/40 p-4">
+            <div className="text-[11px] tracking-wide text-emerald-500 uppercase">New password (shown once)</div>
+            <div className="mt-1 font-mono text-sm break-all text-emerald-300 select-all">{saved}</div>
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-zinc-500">
+            Give it to the user over a channel you trust. If this was an OAuth-only account, it can now also sign in
+            with email and password.
+          </p>
+          <div className="mt-5 flex justify-end">
+            <Button onClick={close}>Done</Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <Field label="New password" hint="8–200 characters. The current password (if any) stops working and all sessions are revoked.">
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError(null);
+                }}
+                placeholder="Type a password or generate one"
+                autoFocus
+              />
+              <Button variant="outline" onClick={() => setPassword(generatePassword())} type="button">
+                Generate
+              </Button>
+            </div>
+          </Field>
+          {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="outline" onClick={close}>
+              Cancel
+            </Button>
+            <Button onClick={() => reset.mutate()} disabled={!valid || reset.isPending}>
+              {reset.isPending ? <Spinner className="border-zinc-900/70 border-t-transparent" /> : null}
+              Reset password
+            </Button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function UserRow({ u, onAdjust, onResetPassword }: { u: PortalUserRow; onAdjust: (id: string) => void; onResetPassword: (id: string) => void }) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
 
@@ -121,6 +207,9 @@ function UserRow({ u, onAdjust }: { u: PortalUserRow; onAdjust: (id: string) => 
           <Button size="sm" variant="outline" onClick={() => onAdjust(u.id)}>
             Adjust
           </Button>
+          <Button size="sm" variant="outline" onClick={() => onResetPassword(u.id)}>
+            Reset password
+          </Button>
           <button
             className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-red-400"
             title="Delete user"
@@ -148,7 +237,9 @@ function UserRow({ u, onAdjust }: { u: PortalUserRow; onAdjust: (id: string) => 
 export function Users() {
   const users = useQuery({ queryKey: ['admin-users'], queryFn: api.users });
   const [adjustId, setAdjustId] = useState<string | null>(null);
+  const [resetId, setResetId] = useState<string | null>(null);
   const adjusting = users.data?.find((u) => u.id === adjustId) ?? null;
+  const resetting = users.data?.find((u) => u.id === resetId) ?? null;
 
   return (
     <>
@@ -181,7 +272,7 @@ export function Users() {
               </thead>
               <tbody>
                 {(users.data ?? []).map((u) => (
-                  <UserRow key={u.id} u={u} onAdjust={setAdjustId} />
+                  <UserRow key={u.id} u={u} onAdjust={setAdjustId} onResetPassword={setResetId} />
                 ))}
               </tbody>
             </table>
@@ -189,6 +280,7 @@ export function Users() {
         )}
       </Card>
       <AdjustBalanceModal user={adjusting} onClose={() => setAdjustId(null)} />
+      <ResetPasswordModal user={resetting} onClose={() => setResetId(null)} />
     </>
   );
 }

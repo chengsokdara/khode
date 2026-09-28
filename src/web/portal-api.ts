@@ -8,6 +8,8 @@ export interface PortalUser {
   balance_usd: number;
   enabled: boolean;
   created_at: number;
+  /** Presence flag — false = OAuth-only account (signs in with Google/GitHub). */
+  has_password: boolean;
 }
 
 export interface MeResponse {
@@ -131,6 +133,11 @@ export const portalApi = {
     req<{ user: PortalUser }>('/api/portal/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   logout: () => req<{ ok: boolean }>('/api/portal/logout', { method: 'POST' }),
   me: () => req<MeResponse>('/api/portal/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok: boolean }>('/api/portal/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
 
   keys: () => req<PortalKey[]>('/api/portal/keys'),
   createKey: (k: Record<string, unknown>) => req<PortalKey>('/api/portal/keys', { method: 'POST', body: JSON.stringify(k) }),
