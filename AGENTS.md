@@ -100,6 +100,16 @@ Google / GitHub" (pure OAuth 2.0 on fetch, no SDKs; `oauth_identities` +
 nullable `users.password_hash`); email/password stays as the fallback and
 khode's device flow inherits the one-click step via `?next=` preservation
 (architecture note below).
+**Polish/markup/reset pack done (2026-09-28)** — content-aware admin
+test-connection (`classifyModelsBody`: a 200 error-envelope /models body is a
+FAILED probe — z.ai blind spot), opt-in auth-failure logging
+(`log_auth_failures` setting → minimal 401 request_logs rows, no attribution,
+key material never logged), password reset (admin reset endpoint revoking
+sessions + portal self-service change; portal user DTO gained
+`has_password`), and a global cost markup (`markup_percent` 0–500 —
+`applyMarkupPercent` hits log costs + debits, spend-cap reservations and
+/v1/models pricing; model rows keep upstream prices; 0 = at cost). MIT
+LICENSE added; repo pushed (still private).
 **Keys required, always** (session 29): /v1 answers only valid client keys —
 onboarding is the device flow (`/api/v1/device`, khode `/login`) or portal/
 admin keys. The old keyless-native default, official-build gate and guest
@@ -144,7 +154,10 @@ src/worker/
 ├── discovery.ts    — upstream model discovery lifted out of routes/admin.ts: listUpstreamModelsForAdapter
 │                     (per-adapter /models probe + normalization; openai/anthropic/gemini shapes) +
 │                     first-adapter listUpstreamModels wrapper + perTokenToPerMillion (OpenRouter
-│                     per-token price strings → USD per 1M; "0" → 0 = free, null = no pricing listed)
+│                     per-token price strings → USD per 1M; "0" → 0 = free, null = no pricing listed) +
+│                     classifyModelsBody (2026-09-28: content-aware 2xx /models body classification —
+│                     listings win; error envelopes + z.ai-style nonzero-code bodies = FAILED probe;
+│                     unknown bodies stay lenient — used by admin test-connection)
 ├── models-sync.ts  — free-models auto-sync: pure halves (isFreeUpstreamModel — provider
 │                     free_tier flag or gemini listings are free-tier, else verified 0/0 pricing,
 │                     else `:free` suffix; syncSlugForId — OpenRouter
@@ -199,7 +212,8 @@ src/worker/
 │   │                offline-tested; + applyOAuthSignInDecision executor (create refuses on
 │   │                email conflict instead of linking) + identity/email lookups
 │   └── settings.ts — deployment flags (public_signup, rate_limit_enabled/key_rpm/ip_rpm — M10,
-│                      cache_enabled/ttl — M11) in one 5 s cached snapshot, fail-open on read errors;
+│                      cache_enabled/ttl — M11, log_auth_failures + markup_percent — 2026-09-28) in one
+│                      5 s cached snapshot, fail-open on read errors;
 │                      models_sync_last_run (JSON last free-sync summary) rides the same table
 │                      uncached (one write per run)
 ├── oauth/
@@ -234,7 +248,9 @@ src/worker/
 │   ├── sse.ts               — generic text/event-stream framing shared by SSE translators
 │   │                          (+ M16 withSseKeepAlive: `: keep-alive` comments during silence)
 │   └── usage.ts             — M7 usage extraction from upstream JSON/SSE (tee-branch watcher for
-│                              logs; M12 adds gemini usageMetadata — thoughts bill as output)
+│                              logs; M12 adds gemini usageMetadata — thoughts bill as output) +
+│                              applyMarkupPercent (2026-09-28: the global markup multiplier applied to
+│                              every client-facing cost surface; null passes through, free stays $0)
 ├── adapters/
 │   ├── base.ts      — shared adapter plumbing: key decrypt, header merge, invoke w/ header-timeout
 │   │                 (+ ASSISTANT_FIRST_SPACER — the synthetic user turn both adapters prepend)

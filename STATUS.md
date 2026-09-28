@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-27 (n>1 / assistant-first / intra-message order — the last translation-matrix gap, deployed)
+Last updated: 2026-09-28 (polish queue closed + password reset + global markup; MIT license; deployed)
 
 ## How to use this file
 
@@ -10,6 +10,57 @@ where the milestone plan lives, "Recent changes" for history (newest first).
 If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
+
+- **Polish queue + password reset + cost markup + MIT license ✅ complete +
+  DEPLOYED (2026-09-28)** — user picked ALL FOUR from the "what next" menu.
+  Five commits, each verified (check / 408→415 offline tests / full smoke
+  sweep) before the next:
+  - **MIT LICENSE (7696740)** + README section; repo pushed to
+    github.com/chengsokdara/khateway (was 21 commits behind; still PRIVATE —
+    visibility flip is an operator action).
+  - **Content-aware test-connection (c6232a6)**: `classifyModelsBody`
+    (discovery.ts, pure, 19 goldens) reads a 2xx /models body — listing arrays
+    win, openai/gemini/anthropic error envelopes and z.ai-style nonzero
+    `code` bodies → FAILED probe with the extracted message; unknown bodies
+    stay lenient (GitHub Models' text/plain "OK"). Fixes the z.ai blind spot
+    (its /models answers HTTP 200 with auth-error JSON). smoke_gateway 258.
+  - **Opt-in auth-failure logging (6056374)**: settings `log_auth_failures`
+    ('off' default, cached snapshot, fail-open=off). When on, each 401 at the
+    /v1 auth middleware on a PIPELINE path (chat/completions/responses/
+    messages/embeddings — /v1/models stays unlogged like the pipeline) writes
+    ONE minimal request_logs row via waitUntil: model '(unknown)', NO
+    attribution, null cost/tokens, error exactly `'invalid api key'` — key
+    material never logged. Admin settings + Gateway card toggle.
+    smoke_gateway 260.
+  - **Password reset (f3751fa)**: admin `POST /api/admin/users/:id/password`
+    (8–200 chars, PBKDF2, works on OAuth-only accounts = converts to dual
+    sign-in, revokes ALL user sessions) + portal self-service
+    `POST /api/portal/me/password` (current password is the authority;
+    OAuth-only → explicit 400 pointing at the admin reset — no email flow).
+    UI: Users row "Reset password" (generate-or-type, one-time reveal);
+    portal Change-password card shown only when `user.has_password` (new
+    presence flag on the portal user DTO). smoke_m8 55.
+  - **Global cost markup (e4c991b)**: settings `markup_percent` (0–500, ≤2dp,
+    default 0 = at cost) via getBillingSettings on the cached snapshot.
+    `applyMarkupPercent(cost, pct)` (usage.ts, 7 goldens; null passes through
+    — unknown never debits; free stays $0) applied at BOTH costUsd sites in
+    writeRequestLog (insert + SSE final update → debits/ledger follow), the
+    P4 spend-cap reservation, and the /v1/models pricing strings (client
+    prices = billed prices). Model rows keep upstream prices — never stored.
+    Admin settings + new Pricing card. PROD verified markup_percent=0 after
+    deploy (live billing unchanged). smoke_m8 64.
+  - **Smoke gotcha recorded**: m8's drain-to-zero cell (before the webhook
+    section) leaves the balance at exactly -0.01 — the markup smoke block
+    re-funds +$1 and anchors to the post-grant balance.
+  - Verified: `npm run check` clean; **415/415** offline tests (+19 classifier
+    goldens, +7 markup goldens); smokes: admin green, **gateway 260**, **m8
+    64**, m9 75, m10 33, m11/m14/device/oauth ALL PASS; build clean.
+  - **DEPLOYED ✅ (2026-09-28, version e39780ad-9aa1-439e-96b4-32a8d833c213)**
+    via `npm run deploy` — worker only, NO migrations (new flags are settings
+    rows). Live checks: /health ok; keyless /v1 → 401 strict envelope;
+    /api/admin/providers + /api/admin/settings → 401 unauth; served bundle ==
+    local build (index-jIi0SThU.js); remote settings: log_auth_failures=off,
+    markup_percent=0.
 
 - **n>1 / assistant-first / intra-message order ✅ complete + DEPLOYED
   (2026-09-27)** — user picked the last translation-matrix gap from the queue

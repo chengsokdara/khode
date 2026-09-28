@@ -1,7 +1,6 @@
 # ROADMAP.md — Khateway roadmap
 
-Last updated: 2026-09-27 (anthropic json_schema emulation done — struck from the queue). STATUS.md keeps live state only and
-points here.
+Last updated: 2026-09-28 (test-connection classifier, auth-failure logging, password reset and global markup done — struck from the queue). STATUS.md keeps live state only and points here.
 
 ## Where we are
 
@@ -118,9 +117,16 @@ M16.
 
 Still queued: signup captcha (needs a Turnstile-style service + account/keys —
 an external-dependency decision); key-scoped spend alerts (needs a
-notification channel; no email sender on Workers); content-aware admin
-test-connection (z.ai "200 with auth-error body" blind spot); optional
-auth-failure logging.
+notification channel; no email sender on Workers); email-based
+forgot-password (needs an email sender — the 2026-09-28 admin reset +
+portal self-service change closed the lockout gap without one).
+DONE 2026-09-28: content-aware admin test-connection (the z.ai "200 with
+auth-error body" blind spot is closed — classifyModelsBody) and opt-in
+auth-failure logging (settings log_auth_failures → minimal 401 request_logs
+rows). Also shipped 2026-09-28 (user-picked, outside the queue): a global
+cost markup (settings markup_percent — billed costs, spend-cap reservations
+and /v1/models pricing scale together; 0 = at cost) and password reset
+(admin reset + portal self-service; see STATUS.md).
 DONE 2026-09-27: anthropic json_schema tool emulation (the M18 upgrade path —
 structured outputs are now a hard guarantee on anthropic upstreams; see
 STATUS.md). DONE 2026-09-27: `n>1` (native candidateCount on gemini,

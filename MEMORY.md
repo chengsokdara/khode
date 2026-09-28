@@ -1,8 +1,57 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-27 (n>1 / assistant-first / intra-message order shipped + deployed)
+Last updated: 2026-09-28 (test-connection classifier + auth-failure logging + password reset + global markup shipped + deployed)
 
 ## Cross-session facts
+
+- **Test-connection classifier + auth-failure logging + password reset +
+  global markup (2026-09-28)** — contracts, do not regress:
+  - **classifyModelsBody (discovery.ts)**: a 2xx /models body is
+    content-classified — a LISTING array (`data` openai / `models` gemini)
+    wins over everything; `error` envelopes (openai/gemini/anthropic shapes,
+    message→status→type fallback) and z.ai-style nonzero numeric `code`
+    bodies → kind 'error' (probe FAILED, message ≤240 chars); anything else
+    (non-JSON, arrays, `{code:0}`, unrecognized objects) stays 'unknown' =
+    lenient ok:true — GitHub Models answers text/plain "OK" today, and a
+    working-but-nonstandard provider must not read as broken. The route
+    prefers a LOWER-status failed attempt over a 200-error-body (a real 401
+    is more informative than a lying 200).
+  - **log_auth_failures** ('off' default, fail-open=off): when on, EVERY 401
+    at the /v1 auth middleware on a pipeline path writes ONE minimal
+    request_logs row (model '(unknown)', dialect from the path — chat/
+    completions/responses/messages/embeddings, /v1/models NEVER logs, status
+    401, null cost/tokens/attribution, error exactly 'invalid api key'). The
+    attempted key/headers are never logged — same policy as every row. Row
+    lands via waitUntil; insert errors are swallowed.
+  - **Password reset**: admin `POST /api/admin/users/:id/password` sets a
+    PBKDF2 password on ANY account (OAuth-only included = converts to dual
+    sign-in) and REVOKES ALL the user's sessions (forced re-login). Portal
+    `POST /api/portal/me/password` requires the CURRENT password (a hijacked
+    session alone cannot take the credential) and does NOT revoke sessions;
+    OAuth-only accounts get an explicit 400 (no email flow exists to verify
+    identity — the admin reset is their path). Portal user DTO gained
+    `has_password` (presence flag) — the portal Change-password card renders
+    only when true.
+  - **markup_percent** (0–500, ≤2dp, default 0 = at cost): the ONE deployment
+    markup multiplier. `applyMarkupPercent(cost, pct)` (usage.ts, next to
+    costUsd) is applied at BOTH costUsd sites in writeRequestLog (insert +
+    SSE final-cost update — debits + ledger + usage views follow), the P4
+    spend-cap reservation (reservations must match debits), and the
+    /v1/models pricing strings (client prices = billed prices; strings stay
+    exponent-free via usdPerMillionToPerToken). null cost passes through
+    (unknown pricing never debits); free 0/0 models stay $0. Model rows keep
+    the UPSTREAM prices — the markup is never stored anywhere. Changing it
+    affects only NEW requests (log rows are snapshots).
+  - **m8 smoke gotcha**: the drain-to-zero cell (before the webhook section)
+    leaves the balance at exactly -0.01; any later block needing a funded
+    account must re-grant and waitFor the post-grant balance (the markup
+    block grants +$1 → 0.99).
+  - Counts: offline 415, smoke_gateway 260, smoke_m8 64. DEPLOYED 2026-09-28
+    (version e39780ad) — worker only, NO migrations (both flags are settings
+    rows); prod verified markup_percent=0 / log_auth_failures=off.
+  - **MIT LICENSE** added (2026-09-28); repo pushed to
+    github.com/chengsokdara/khateway (still PRIVATE — flip visibility
+    deliberately; AGENTS/RULES doc trio stays the governance either way).
 
 - **n>1 / assistant-first / intra-message order (2026-09-27)** — the last
   translation-matrix gap, closed in 4 commits (0aad4ce / 217f6f0 / f522224 /
