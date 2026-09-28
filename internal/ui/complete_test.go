@@ -149,16 +149,36 @@ func TestEnterFillsCommandWithArgs(t *testing.T) {
 	}
 }
 
-func TestEnterFillsOnlyWhileStreaming(t *testing.T) {
+// A command picked from the popup mid-turn behaves exactly like typing
+// it: argument-free commands hit submit, which answers with the wait
+// note instead of running (commands mutate UI state the running turn
+// reads); the input clears either way.
+func TestEnterMidStreamWaitsForTurn(t *testing.T) {
 	m := newTestModel(t)
-	m.streaming = true // a turn is in flight; nothing may submit
+	m.streaming = true // a turn is in flight
 
 	m = pressKeys(m, "/", "h", "e", "enter")
-	if got := m.textarea.Value(); got != "/help " {
-		t.Errorf("mid-stream enter filled %q, want /help without running", got)
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("mid-stream enter left %q in the input, want cleared", got)
 	}
-	if len(m.messages) != 0 {
-		t.Errorf("mid-stream enter ran the command: %d messages", len(m.messages))
+	found := false
+	for _, msg := range m.messages {
+		if strings.Contains(msg.raw, "wait for the current turn") {
+			found = true
+		}
+		if strings.Contains(msg.raw, "/config") {
+			t.Error("mid-stream enter ran the command")
+		}
+	}
+	if !found {
+		t.Errorf("mid-stream command run produced no wait note: %+v", m.messages)
+	}
+
+	// Commands that take arguments still just fill the input.
+	m.messages = nil
+	m = pressKeys(m, "/", "m", "o", "d", "e", "enter")
+	if got := m.textarea.Value(); got != "/mode " {
+		t.Errorf("mid-stream enter on /mode filled %q, want /mode ready for its argument", got)
 	}
 }
 

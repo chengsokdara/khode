@@ -10,6 +10,36 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Queued prompts mid-turn (2026-09-28):** pressing enter while a turn
+streams no longer swallows the input (`case "enter": if m.streaming {
+return }`) — a plain prompt is filed in `m.queued` (input clears) and a
+dim one-row band above the input shows the head of the line
+(`… next: … · +N queued`, `queuedHint`, the setup-banner law: clipped to
+one physical row, auto-counted in the frame budget). At turn end
+`finishStream` pops the queue FIFO and submits immediately, chaining
+until it is empty — the next turn starts inside the same Update, so
+"ready" never flashes between turns. Esc interrupts the turn AND hands
+the held prompts back to the input (joined by blank lines) instead of
+auto-submitting behind the user's back; slash commands are never queued
+(submit answers with the "commands wait for the current turn" note —
+they mutate UI state the running turn reads), which retires the old
+popup rule "nothing submits mid-stream": popup-enter on an argless
+command mid-turn now produces the same note as typing it. The drain is
+safe by construction: `finishStream` runs exactly once per turn (the
+pump is not re-armed after it), and `streamClosedMsg` is now ignored
+when no turn is live so a stale abnormal close can never clobber a
+drain-started turn. History banks at send time, so an esc-restored
+draft never pollutes ↑/↓ recall; a session switch clears the queue. The
+`queued` glyph joins the icon table (auto `…`, nerd md-pause, ascii
+`.`). Pinned by queue tests (queue+band, FIFO drain through real
+turns, no re-gather for a prompt queued during the first-prompt
+gatherer, esc restore + no send, command note, empty-enter no-op,
+stale-close) and a tmux harness scenario (fakeai routes the queue
+prompts by marker COUNT — the transcript carries earlier scenario
+markers, so substring routing answered instantly and the band never
+appeared; counts survive transcript accumulation: held turn = 1
+occurrence, drained follow-up = 2).
+
 **post_tool hooks feed the model back (2026-09-27):** a post_tool hook's
 output used to vanish (`_ = r.run(...)`) — the model-facing power lived
 only in pre_tool's exit-2 veto. `PostTool` now returns feedback: exit-0
@@ -948,6 +978,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-09-28 | Queued prompts mid-turn: enter while a turn streams files the prompt (queued band above the input), turn end auto-submits FIFO; esc hands the queue back to the input; slash commands wait with a note; `streamClosedMsg` ignored with no turn live | (this commit) |
 | 2026-09-27 | post_tool hooks feed the model back: exit-0 stdout / exit-2 stderr appended to the call's tool result inside `<hook-feedback>` tags (8 KiB cap, all matching hooks join, non-blocking); hooks fire even on malformed tool args (payload rides `{}`) | (this commit) |
 | 2026-09-27 | MCP tools refresh live: `tools/list_changed` notifications re-list a server's tools into the registry mid-session (`mcp.SetNotify` → UI fan-in channel → list-first registry swap; silent no-op, off-toggles preserved, idle pings drain at the next armed pump); `mcp.Exited()` dead-server glyph in `/mcp`; resources/prompts split to their own backlog item | (this commit) |
 | 2026-09-27 | Parallel read-only fan-out: consecutive read-only calls run as a bounded parallel group with call-ordered results; all-read task children spawn side by side with per-call progress ids and per-block live activity lines (`tools.ExclusiveTool` veto) | (this commit) |

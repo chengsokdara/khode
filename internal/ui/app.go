@@ -111,6 +111,13 @@ type Model struct {
 	inputPos     int
 	inputDraft   string
 
+	// queued holds prompts typed while a turn was streaming: enter
+	// files one instead of submitting, the queued band shows the head
+	// of the line, and finishStream auto-submits them FIFO at turn end
+	// (esc restores them to the textarea instead). UI state only — the
+	// agent loop never sees a queued prompt until it is actually sent.
+	queued []string
+
 	// messages holds the chat blocks. Blocks up to the printed
 	// watermark have been handed to the terminal's real scrollback via
 	// tea.Println (flush) and are never redrawn; the live region renders
@@ -460,6 +467,7 @@ func (m *Model) useSession(sess *agent.Session) {
 	m.messages = nil
 	m.replayTranscript(sess)
 	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0
+	m.queued = nil // a session switch must not inherit queued prompts
 }
 
 // --- tea.Model -------------------------------------------------------------
@@ -525,7 +533,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleStreamEvent(msg.ev)
 
 	case streamClosedMsg:
-		return m, m.finishStream()
+		// A close only means something while a turn is live; after the
+		// drain a stale close must not clobber the queued turn that
+		// finishStream just started.
+		if m.streaming {
+			return m, m.finishStream()
+		}
+		return m, nil
 
 	case taskProgressMsg:
 		idx, ok := m.activeTasks[msg.CallID]
@@ -702,14 +716,20 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case msg.String() == "esc" && m.streaming:
 		m.stopStream()
+		// An interrupt cancels the plan: prompts held for this turn go
+		// back to the input instead of auto-submitting behind the
+		// user's back.
+		if len(m.queued) > 0 {
+			m.textarea.SetValue(strings.Join(m.queued, "\n\n"))
+			m.textarea.MoveToEnd()
+			m.queued = nil
+		}
 		return m, nil
 	// Exactly plain enter submits; modified enters ("shift+enter",
 	// "alt+enter") fall through to the textarea, whose InsertNewline
-	// binding turns them into newlines.
+	// binding turns them into newlines. While a turn streams, submit
+	// files the prompt instead of racing the turn (see submit).
 	case msg.String() == "enter":
-		if m.streaming {
-			return m, nil
-		}
 		return m, m.submit()
 	// shift+tab walks the permission modes. It only lands here when
 	// no overlay is open — welcome and settings use it for their own
@@ -881,6 +901,31 @@ func (m *Model) setupHint() (string, []region) {
 	return warnStyle.Render(clip(text, m.width)), rel
 }
 
+// queuedHint renders the band above the input while prompts are held for
+// the in-flight turn: the head of the line, plus how many more wait
+// behind it. Quiet by design — the turn keeps center stage; the queued
+// prompt is what happens next, not an alarm. One physical row, like the
+// setup banner.
+func (m *Model) queuedHint() string {
+	if len(m.queued) == 0 {
+		return ""
+	}
+	text := m.icons().queued + " next: " + firstLine(m.queued[0])
+	if extra := len(m.queued) - 1; extra > 0 {
+		text += fmt.Sprintf(" · +%d queued", extra)
+	}
+	return dimStyle.Render(clip(text, m.width))
+}
+
+// firstLine flattens a multi-line prompt to its opening line for the
+// queued band.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // chatView assembles the full screen, spanning the terminal's whole
 // height: the khode header pinned to the top rows, the command hints
 // under it, the conversation viewport filling the middle, and the
@@ -907,6 +952,9 @@ func (m Model) chatView() string {
 	var mid []midBand
 	if hint, rel := m.setupHint(); hint != "" {
 		mid = append(mid, midBand{hint, rel}) // setup banner: first, persistent
+	}
+	if hint := m.queuedHint(); hint != "" {
+		mid = append(mid, midBand{hint, nil}) // prompts held for the running turn
 	}
 	if m.popup != nil {
 		view, rel := m.popupView() // floats just above the input
@@ -1440,6 +1488,15 @@ func (m *Model) finishStream() tea.Cmd {
 
 	// The turn is over: its blocks (final answer included) print into
 	// the terminal's real scrollback and the live region empties.
+	// A prompt filed while the turn ran hands off to the input and
+	// sends now — the next turn starts immediately (this is the only
+	// drain point, and finishStream runs exactly once per turn).
+	if len(m.queued) > 0 {
+		m.textarea.SetValue(m.queued[0])
+		m.textarea.MoveToEnd()
+		m.queued = m.queued[1:]
+		return tea.Batch(m.flush(), m.submit())
+	}
 	return tea.Batch(m.flush(), textarea.Blink)
 }
 
@@ -1457,6 +1514,19 @@ func (m *Model) submit() tea.Cmd {
 	m.textarea.Reset()
 	m.closePopup()
 	if input == "" {
+		return nil
+	}
+	// A turn in flight files the input instead of racing it: plain
+	// prompts join the queue (finishStream auto-submits them FIFO at
+	// turn end), slash commands get the /compact treatment — they
+	// mutate UI state the running turn may be reading, so they wait.
+	if m.streaming {
+		if strings.HasPrefix(input, "/") {
+			m.messages = append(m.messages, uiMessage{role: "system",
+				raw: "commands wait for the current turn to finish"})
+			return m.flush()
+		}
+		m.queued = append(m.queued, input)
 		return nil
 	}
 	m.rememberInput(input)

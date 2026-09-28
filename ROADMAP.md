@@ -87,3 +87,7 @@ Backlog (no committed order):
    command, and parallel read-only fan-out (consecutive read-only calls
    run as a bounded parallel group; all-read task children spawn side
    by side).
+7. ~~Queue prompts mid-turn~~ (done): enter while a turn streams files
+   the prompt instead of swallowing it — a queued band shows the head
+   of the line, turn end auto-submits FIFO, esc hands the queue back to
+   the input, and slash commands wait with an explicit note.

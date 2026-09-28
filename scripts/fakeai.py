@@ -4,7 +4,9 @@
 hold, "# Subagent" (a task subagent) gets a grep call on its first
 request and a report on its second, and everything else is the outer
 conversation: rounds replay write → edit → answer, then a task(explore)
-call, then a two-child task fan-out, then the closing answer. The holds
+call, then a two-child task fan-out, then the closing answer. "# Queue"
+holds the turn open so the harness can type a second prompt mid-turn;
+the auto-submitted follow-up answers at once. The holds
 keep the live "gathering context" / subagent activity lines readable in
 the captured frames. Threaded so parallel children are served truly
 concurrently."""
@@ -80,6 +82,31 @@ class H(BaseHTTPRequestHandler):
                     chunk({}, finish="tool_calls"),
                     chunk({}, usage={"prompt_tokens": 900, "completion_tokens": 30}),
                 ])
+            return
+
+        if body.count(b"# Queue") >= 2:
+            # The queued-prompt scenario's second half: this request
+            # was never typed to a ready khode — it was filed mid-turn
+            # and auto-submitted by the drain when the held turn ended.
+            # Counted, not searched: the transcript carries the first
+            # "# Queue" prompt too, so the drained turn sees two.
+            sse(self, [
+                chunk({"content": "The queued prompt arrived the moment the first turn ended."}),
+                chunk({}, finish="stop"),
+                chunk({}, usage={"prompt_tokens": 7000, "completion_tokens": 30}),
+            ])
+            return
+
+        if b"# Queue" in body:
+            # The queued-prompt scenario's first turn: hold before
+            # answering so the harness can type a second prompt
+            # mid-turn and capture the queued band.
+            time.sleep(4.0)
+            sse(self, [
+                chunk({"content": "First turn done; anything typed meanwhile was queued."}),
+                chunk({}, finish="stop"),
+                chunk({}, usage={"prompt_tokens": 6800, "completion_tokens": 40}),
+            ])
             return
 
         if b"# MCP refresh" in body:

@@ -30,6 +30,7 @@ type iconPack struct {
 	gather   string // the first-prompt context gatherer
 	context  string // the gathered context brief
 	todo     string // the checklist panel title
+	queued   string // prompts held while a turn runs
 	// tools overrides the uniform tool mark per tool name; a missing
 	// name falls back to tool.
 	tools map[string]string
@@ -46,6 +47,7 @@ var packUnicode = iconPack{
 	gather:   "◆",
 	context:  "◆",
 	todo:     "◆",
+	queued:   "…",
 }
 
 // packNerd's codepoints come from Nerd Fonts v3's glyphnames.json:
@@ -64,6 +66,7 @@ var packNerd = iconPack{
 	gather:   "\U000F0349", // md-magnify
 	context:  "\U000F0982", // md-map-outline
 	todo:     "\U000F0756", // md-format-list-checks
+	queued:   "\U000F004C", // md-pause
 	tools: map[string]string{
 		"read":  "\U000F14F7", // md-book-open-variant
 		"edit":  "\U000F03EB", // md-pencil
@@ -88,6 +91,7 @@ var packASCII = iconPack{
 	gather:   "+",
 	context:  "-",
 	todo:     "#",
+	queued:   ".",
 }
 
 // packFor maps a config.IconSet value to its glyph pack; anything

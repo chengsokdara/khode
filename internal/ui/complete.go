@@ -156,13 +156,14 @@ func (m *Model) fillCommand(name string) {
 	m.textarea.SetValue("/" + name + " ")
 }
 
-// acceptCommand answers enter: argument-free commands run at once
-// (except mid-stream, where nothing submits), the rest fill the input
-// so their arguments can be typed.
+// acceptCommand answers enter: argument-free commands run at once —
+// mid-stream that means submit files its "commands wait" note like any
+// typed command — while the rest fill the input so their arguments can
+// be typed.
 func (m *Model) acceptCommand() tea.Cmd {
 	c := m.popup.highlighted()
 	m.fillCommand(c.name)
-	if c.args == "" && !m.streaming {
+	if c.args == "" {
 		return m.submit()
 	}
 	return nil

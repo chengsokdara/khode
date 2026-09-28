@@ -23,6 +23,35 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
+- **Queued prompts mid-turn (2026-09-28):** `Model.queued []string`
+  holds prompts typed while `m.streaming`. `submit()` is the single
+  queue decision point (key enter, popup-enter, and the drain all go
+  through it): mid-turn a plain prompt appends to the queue and returns
+  nil — no transcript write, no history bank (history banks at real
+  send, so esc-restored drafts never pollute ↑/↓ recall) — while a
+  slash command gets the "commands wait for the current turn" note (the
+  /compact treatment; commands mutate UI state the running turn reads).
+  The old silent swallow in handleKey's enter case is gone (enter →
+  `m.submit()` unconditionally), and acceptCommand dropped its
+  `!m.streaming` guard so popup-enter on an argless command mid-turn
+  produces the same note as typing it. `finishStream`'s tail is the
+  only drain point: it pops `queued[0]` into the textarea and calls
+  `m.submit()` synchronously — inside the same Update as the turn-end
+  event, so streaming flips false→true without an intermediate render
+  and "ready" never flashes between turns; the queue chains until
+  empty. The drain is safe because finishStream runs exactly once per
+  turn (after it, no pump is armed on the old channel), and
+  `streamClosedMsg` is now ignored when `!m.streaming` (the abnormal
+  close path is the only producer, and it is exactly "turn still
+  live"). Esc restores the queue to the textarea joined by blank lines
+  (interrupt ≠ consent to send); `useSession` clears the queue. The
+  `queuedHint` band (one clipped row, icon table's `queued` glyph:
+  auto `…` / nerd md-pause / ascii `.`) sits in chatView's mid stack
+  right after the setup banner, above the popup. fakeai routes the
+  selftest's queue prompts by marker COUNT (1 = held turn, 2 = drained
+  follow-up): substring routing collided with earlier scenario markers
+  riding in the transcript and the held turn answered instantly.
+
 - **post_tool hook feedback (2026-09-27):** `hooks.Runner.PostTool`
   returns the hooks' model-facing feedback instead of discarding it.
   `runOne` reports feedback per hook (exit 0 → trimmed stdout; post_tool
@@ -190,6 +219,11 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-28 | The queue lives in UI state (`Model.queued`), and the drain pops into the textarea + calls `submit()` at the tail of `finishStream` — not a pending field on the runner, not a fresh goroutine | the agent loop stays uninvolved until a queued prompt is actually sent (one code path: submit); calling submit synchronously in the same Update means streaming flips false→true with no render in between, so "ready" never flashes and no pump can observe the gap; finishStream is the only once-per-turn moment, which makes the drain idempotent by construction |
+| 2026-09-28 | Queued prompts write no transcript and bank no input history until they actually send | session truth belongs to the agent loop (the UI never appends), and an esc-restored draft resurfacing in ↑/↓ recall would be a phantom prompt the user never saw answered |
+| 2026-09-28 | Slash commands are never queued — submit answers mid-turn commands with the "wait for the current turn" note; popup-enter dropped its `!m.streaming` guard to share the path (supersedes the 2026-09-18 "nothing submits mid-stream" popup rule) | commands mutate UI state the running turn reads (mode, sessions, registry); silently queueing a command would surprise more than refusing it — the note replaces the old double silence (swallowed enter / inert popup-enter); one rule for typed and popup-enter keeps the surfaces identical |
+| 2026-09-28 | Esc interrupts the turn AND restores the queue into the input (blank-line joined) instead of letting the drain send it | an interrupt is consent to stop, not to send; auto-submitting held prompts behind a cancel would be the queue working against the user — and the restored text preserves what they meant to ask |
+| 2026-09-28 | fakeai routes the queue prompts by marker COUNT (`body.count("# Queue") >= 2`), not substring presence | scenario markers accumulate in the transcript, so a later scenario's request body still matches earlier markers (the "# MCP refresh" prompt answered the queue scenario's held turn instantly and the band never rendered); counts survive transcript accumulation — held turn sees 1 occurrence, the drained follow-up 2 |
 | 2026-09-27 | post_tool feedback rides inside the tool result content (`<hook-feedback>` tags), not a separate message or session field | the tags reuse the task-context framing precedent; one string keeps the transcript/event/replay plumbing byte-identical (no schema change, no UI event change) and compaction summarizes it like any result content |
 | 2026-09-27 | post_tool exit codes: 0 stdout = feedback, 2 stderr (stdout fallback) = feedback, every other exit silent; `IsError` never changes from hook outcomes | mirrors Claude Code's hook convention (exit 2 flags the call without failing it) and keeps the existing contract — a broken hook must not turn a succeeded call into an error the model would retry |
 | 2026-09-27 | Hook payloads coerce malformed tool args to `{}` instead of skipping the hook (was a silent marshal failure) | execCall runs the model's raw bytes by design, so a pre_tool veto must not depend on the model emitting valid JSON — the dangerous failure was a banned command escaping its veto |

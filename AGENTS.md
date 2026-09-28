@@ -78,7 +78,9 @@ internal/ui/         Bubble Tea app
   app.go               root Model, agent-loop wiring, slash commands,
                        live todo checklist panel (one upserted panel + status-line task),
                        live subagent activity lines, first-prompt context gatherer
-                       (◆ gathering context → ◆ context brief → Runner.Preface turn)
+                       (◆ gathering context → ◆ context brief → Runner.Preface turn),
+                       mid-turn prompt queue (enter files it, turn end drains FIFO,
+                       esc restores, commands wait)
   devicelogin.go       /login overlay: khateway device sign-in (mint → show URL+code →
                        poll → key into auth.json, khateway active, model auto-pick)
   modepicker.go        shift+tab mode cycling, /mode picker, mode line above the input

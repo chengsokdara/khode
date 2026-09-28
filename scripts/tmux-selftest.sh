@@ -133,4 +133,23 @@ echo
 echo "=== final capture after the mcp refresh ==="
 tmux -L khv capture-pane -p -t main | tail -14
 echo
+
+# Queue scenario: prompt 1 holds its turn ~4s (the fake server sleeps
+# before answering); while it runs the harness types prompt 2 and
+# presses enter — khode files it and shows the queued band. When turn 1
+# ends, the drain auto-submits prompt 2 and its answer lands with no
+# second send-keys; the band must be gone by then.
+wait_ready
+tmux -L khv send-keys -t main "hold this turn open please (# Queue)" Enter
+sleep 1.0
+tmux -L khv send-keys -t main "queued while busy (# Queue two)" Enter
+sleep 0.5
+echo "=== mid-turn queued band capture (next: queued expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "next: queued" || echo "NO QUEUED BAND FOUND"
+wait_ready
+echo "=== band gone after the drain (no output = correct) ==="
+tmux -L khv capture-pane -p -t main | grep -E "next: queued" && echo "BAND STILL SHOWS AFTER DRAIN" || true
+echo "=== after-drain capture (auto-submitted prompt's answer expected) ==="
+tmux -L khv capture-pane -p -t main | grep -E "queued prompt arrived|queued while busy" || echo "NO DRAINED ANSWER FOUND"
+echo
 echo "session left running: tmux -L khv attach -t main · cleanup: tmux -L khv kill-server"

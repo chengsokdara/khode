@@ -1243,7 +1243,7 @@ func TestIconPacksRepaint(t *testing.T) {
 	// The ascii pack is for terminals that can barely render anything:
 	// every mark must stay one cell wide so column math holds.
 	for _, g := range []string{packASCII.user, packASCII.agent, packASCII.thinking,
-		packASCII.tool, packASCII.system, packASCII.err, packASCII.ready} {
+		packASCII.tool, packASCII.system, packASCII.err, packASCII.ready, packASCII.queued} {
 		if w := lipgloss.Width(g); w != 1 {
 			t.Errorf("ascii glyph %q width = %d, want 1", g, w)
 		}
@@ -1356,7 +1356,7 @@ func TestSettingsIconsRowCycles(t *testing.T) {
 func TestNerdGlyphsAreSingleRunes(t *testing.T) {
 	all := []string{packNerd.user, packNerd.agent, packNerd.thinking, packNerd.tool,
 		packNerd.system, packNerd.err, packNerd.ready, packNerd.gather,
-		packNerd.context, packNerd.todo}
+		packNerd.context, packNerd.todo, packNerd.queued}
 	for _, g := range packNerd.tools {
 		all = append(all, g)
 	}
