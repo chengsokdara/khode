@@ -243,6 +243,8 @@ export interface GatewaySettings {
   /** Opt-in auth-failure logging: 'on' writes a minimal 401 row per rejected
    * gateway request (no attribution, no key material). */
   log_auth_failures: 'on' | 'off';
+  /** Global cost markup percent charged on top of upstream pricing (0 = at cost). */
+  markup_percent: number;
 }
 
 export interface PortalUserRow {

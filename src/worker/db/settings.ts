@@ -53,6 +53,14 @@ export const LOG_AUTH_FAILURES_ON = 'on';
 export const LOG_AUTH_FAILURES_OFF = 'off';
 export type LogAuthFailures = typeof LOG_AUTH_FAILURES_ON | typeof LOG_AUTH_FAILURES_OFF;
 
+/** Global cost markup in percent charged ON TOP of upstream pricing (0 = at
+ * cost). Applied to log cost snapshots + balance debits, spend-cap
+ * estimates/reservations and the /v1/models pricing strings; model rows keep
+ * the upstream prices. Bounds validated at the admin PATCH (0–500, ≤2dp). */
+export const MARKUP_PERCENT_KEY = 'markup_percent';
+export const MARKUP_PERCENT_DEFAULT = 0;
+export const MARKUP_PERCENT_MAX = 500;
+
 /** Cache TTL. Short on purpose: the admin toggles must converge quickly. */
 const SETTINGS_TTL_MS = 5_000;
 
@@ -61,6 +69,7 @@ interface SettingsCache {
   rateLimit: RateLimitSettings;
   cache: CacheSettings;
   logAuthFailures: boolean;
+  markupPercent: number;
 }
 
 export interface RateLimitSettings {
@@ -116,6 +125,7 @@ async function loadSnapshot(env: Env): Promise<SettingsCache> {
   let rateLimit: RateLimitSettings = { enabled: true, keyRpm: RATE_LIMIT_DEFAULT_KEY_RPM, ipRpm: RATE_LIMIT_DEFAULT_IP_RPM };
   const cacheSettings: CacheSettings = { enabled: false, ttlSeconds: CACHE_DEFAULT_TTL_SECONDS };
   let logAuthFailures = false;
+  let markupPercent = MARKUP_PERCENT_DEFAULT;
   try {
     const rows = await getDb(env).select({ key: settings.key, value: settings.value }).from(settings);
     const byKey = new Map(rows.map((r) => [r.key, r.value]));
@@ -128,11 +138,13 @@ async function loadSnapshot(env: Env): Promise<SettingsCache> {
     cacheSettings.enabled = byKey.get(CACHE_ENABLED_KEY) === CACHE_ENABLED_ON;
     cacheSettings.ttlSeconds = normalizeTtl(byKey.get(CACHE_TTL_SECONDS_KEY));
     logAuthFailures = byKey.get(LOG_AUTH_FAILURES_KEY) === LOG_AUTH_FAILURES_ON;
+    const mp = Number(byKey.get(MARKUP_PERCENT_KEY));
+    markupPercent = Number.isFinite(mp) && mp >= 0 && mp <= MARKUP_PERCENT_MAX ? mp : MARKUP_PERCENT_DEFAULT;
   } catch {
     // Table missing / DB hiccup → fail OPEN (limits off, cache off): a
     // settings hiccup must never brick the gateway.
   }
-  return { at: Date.now(), rateLimit, cache: cacheSettings, logAuthFailures };
+  return { at: Date.now(), rateLimit, cache: cacheSettings, logAuthFailures, markupPercent };
 }
 
 async function cachedSnapshot(env: Env): Promise<SettingsCache> {
@@ -165,6 +177,7 @@ export async function setRateLimitSettings(env: Env, patch: Partial<RateLimitSet
     },
     cache: current.cache,
     logAuthFailures: current.logAuthFailures,
+    markupPercent: current.markupPercent,
   };
 }
 
@@ -191,6 +204,7 @@ export async function setCacheSettings(env: Env, patch: Partial<CacheSettings>):
       ttlSeconds: patch.ttlSeconds ?? current.cache.ttlSeconds,
     },
     logAuthFailures: current.logAuthFailures,
+    markupPercent: current.markupPercent,
   };
 }
 
@@ -209,6 +223,27 @@ export async function setLogAuthFailures(env: Env, value: LogAuthFailures): Prom
     rateLimit: current.rateLimit,
     cache: current.cache,
     logAuthFailures: value === LOG_AUTH_FAILURES_ON,
+    markupPercent: current.markupPercent,
+  };
+}
+
+/** Reads the billing settings. Absent row → 0 (at cost); cached with the
+ * other gateway settings; a read error → 0 (fail-open = at cost). */
+export async function getBillingSettings(env: Env): Promise<{ markupPercent: number }> {
+  return { markupPercent: (await cachedSnapshot(env)).markupPercent };
+}
+
+/** Persists the markup percent (validated upstream) and invalidates this
+ * isolate's cache. */
+export async function setBillingSettings(env: Env, patch: { markupPercent?: number }): Promise<void> {
+  if (patch.markupPercent !== undefined) await writeSetting(env, MARKUP_PERCENT_KEY, String(patch.markupPercent));
+  const current = await cachedSnapshot(env);
+  cache = {
+    at: Date.now(),
+    rateLimit: current.rateLimit,
+    cache: current.cache,
+    logAuthFailures: current.logAuthFailures,
+    markupPercent: patch.markupPercent ?? current.markupPercent,
   };
 }
 

@@ -21,16 +21,19 @@ import {
   RATE_LIMIT_ENABLED_OFF,
   RATE_LIMIT_ENABLED_ON,
   RATE_LIMIT_RPM_MAX,
+  getBillingSettings,
   getCacheSettings,
   getLogAuthFailures,
   getPublicSignup,
   getRateLimitSettings,
+  setBillingSettings,
   setCacheSettings,
   setLogAuthFailures,
   setPublicSignup,
   setRateLimitSettings,
   LOG_AUTH_FAILURES_OFF,
   LOG_AUTH_FAILURES_ON,
+  MARKUP_PERCENT_MAX,
   type LogAuthFailures,
 } from '../db/settings';
 import { cacheStats, flushCache } from '../cache/store';
@@ -588,11 +591,12 @@ adminApp.get('/usage', async (c) => {
 // admin opts in (khode users then set KHATEWAY_API_KEY).
 
 adminApp.get('/settings', async (c) => {
-  const [publicSignup, rateLimit, cache, logAuthFailures] = await Promise.all([
+  const [publicSignup, rateLimit, cache, logAuthFailures, billing] = await Promise.all([
     getPublicSignup(c.env),
     getRateLimitSettings(c.env),
     getCacheSettings(c.env),
     getLogAuthFailures(c.env),
+    getBillingSettings(c.env),
   ]);
   // Auth is not settings-dependent any more: every /v1 request requires a
   // valid client key (device flow / portal keys are the onboarding paths).
@@ -604,6 +608,7 @@ adminApp.get('/settings', async (c) => {
     cache_enabled: cache.enabled ? CACHE_ENABLED_ON : CACHE_ENABLED_OFF,
     cache_ttl_seconds: cache.ttlSeconds,
     log_auth_failures: logAuthFailures ? 'on' : 'off',
+    markup_percent: billing.markupPercent,
   });
 });
 
@@ -615,6 +620,7 @@ adminApp.patch('/settings', async (c) => {
     rateLimit?: { enabled?: boolean; keyRpm?: number; ipRpm?: number };
     cache?: { enabled?: boolean; ttlSeconds?: number };
     logAuthFailures?: string;
+    markupPercent?: number;
   } = {};
   if (body.public_signup !== undefined) {
     if (body.public_signup !== PUBLIC_SIGNUP_ON && body.public_signup !== PUBLIC_SIGNUP_OFF) {
@@ -659,15 +665,26 @@ adminApp.patch('/settings', async (c) => {
     }
     patch.logAuthFailures = body.log_auth_failures;
   }
+  if (body.markup_percent !== undefined) {
+    const mp = body.markup_percent;
+    // ≤2 decimals keeps ledger arithmetic clean (micro-USD debits round the
+    // marked-up cost, but a 0.001% setting would suggest spurious precision).
+    if (typeof mp !== 'number' || !Number.isFinite(mp) || mp < 0 || mp > MARKUP_PERCENT_MAX || Math.round(mp * 100) !== mp * 100) {
+      return c.json(apiErr(`markup_percent must be a number 0–${MARKUP_PERCENT_MAX} with at most 2 decimals`), 400);
+    }
+    patch.markupPercent = mp;
+  }
   if (patch.signup !== undefined) await setPublicSignup(c.env, patch.signup as typeof PUBLIC_SIGNUP_ON | typeof PUBLIC_SIGNUP_OFF);
   if (patch.rateLimit !== undefined) await setRateLimitSettings(c.env, patch.rateLimit);
   if (patch.cache !== undefined) await setCacheSettings(c.env, patch.cache);
   if (patch.logAuthFailures !== undefined) await setLogAuthFailures(c.env, patch.logAuthFailures as LogAuthFailures);
-  const [publicSignup, rateLimit, cache, logAuthFailures] = await Promise.all([
+  if (patch.markupPercent !== undefined) await setBillingSettings(c.env, { markupPercent: patch.markupPercent });
+  const [publicSignup, rateLimit, cache, logAuthFailures, billing] = await Promise.all([
     getPublicSignup(c.env),
     getRateLimitSettings(c.env),
     getCacheSettings(c.env),
     getLogAuthFailures(c.env),
+    getBillingSettings(c.env),
   ]);
   return c.json({
     public_signup: publicSignup,
@@ -677,6 +694,7 @@ adminApp.patch('/settings', async (c) => {
     cache_enabled: cache.enabled ? CACHE_ENABLED_ON : CACHE_ENABLED_OFF,
     cache_ttl_seconds: cache.ttlSeconds,
     log_auth_failures: logAuthFailures ? 'on' : 'off',
+    markup_percent: billing.markupPercent,
   });
 });
 

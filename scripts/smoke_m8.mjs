@@ -312,6 +312,59 @@ async function cleanup({ restoreSignup }) {
   const drained = await gw(rawKey);
   check('exhausted balance → 429 again', drained.status === 429 && drained.body?.error?.code === 'insufficient_quota');
 
+  // --- global cost markup (settings markup_percent) ----------------------------
+  // The drain cell above left the balance slightly negative — re-fund first and
+  // anchor the arithmetic to the post-grant balance. Markup 100% doubles every
+  // CLIENT-facing cost: the log cost snapshot, the balance debit and the
+  // /v1/models pricing strings. Restored to 0 after.
+  await api(`/api/admin/users/${user0.id}`, { method: 'PATCH', body: JSON.stringify({ balance_adjust_usd: 1, note: 'markup smoke fund' }) });
+  const balBeforeMarkup = await waitFor(async () => {
+    const me = await api('/api/portal/me', {}, 'portal');
+    const now = me.body?.user?.balance_usd;
+    // balance was -0.01 after the drain; +1 grant → 0.99
+    return now != null && Math.abs(now - 0.99) < 1e-9 ? now : null;
+  });
+  check('markup block: account re-funded to $0.99', balBeforeMarkup != null, String(balBeforeMarkup));
+  const mpBad1 = await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ markup_percent: 501 }) }, 'admin');
+  const mpBad2 = await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ markup_percent: 1.234 }) }, 'admin');
+  check('PATCH markup_percent 501 / 1.234 → 400', mpBad1.status === 400 && mpBad2.status === 400);
+  const mpOn = await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ markup_percent: 100 }) }, 'admin');
+  check('PATCH markup_percent=100 echoes back', mpOn.status === 200 && mpOn.body?.markup_percent === 100, JSON.stringify(mpOn.body));
+  await sleep(5300); // settings snapshot TTL
+
+  const markedModel = await fetch(base + `/v1/models/${SLUG}`, { headers: { authorization: `Bearer ${rawKey}` } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+  check(
+    'markup doubles /v1/models pricing strings ($2/$8 per 1M → 0.000004/0.000016 per token)',
+    markedModel.status === 200 && markedModel.body?.pricing?.prompt === '0.000004' && markedModel.body?.pricing?.completion === '0.000016',
+    JSON.stringify(markedModel.body?.pricing),
+  );
+
+  const markedCall = await gw(rawKey);
+  check('marked-up call → 200', markedCall.status === 200, JSON.stringify(markedCall.body));
+  const afterMarkup = await waitFor(async () => {
+    const me = await api('/api/portal/me', {}, 'portal');
+    const want = balBeforeMarkup - (2 * DEBIT_MICROS_PER_CALL) / 1e6;
+    return me.body?.user?.balance_usd != null && Math.abs(me.body.user.balance_usd - want) < 1e-9 ? me.body.user.balance_usd : null;
+  });
+  check(`marked-up debit = ${2 * DEBIT_MICROS_PER_CALL} micros (2× at-cost)`, afterMarkup != null, String(afterMarkup));
+
+  const markedLog = await waitFor(async () => {
+    const logs = await api(`/api/admin/logs?api_key_id=${keyId}&limit=10`, {}, 'admin');
+    return (logs.body ?? []).find((r) => r.cost_usd === 2 * DEBIT_MICROS_PER_CALL / 1e6) ?? null;
+  });
+  check('marked-up log row cost = $0.000092', markedLog != null, JSON.stringify(markedLog?.cost_usd));
+
+  await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ markup_percent: 0 }) }, 'admin');
+  await sleep(5300);
+  const unmarkedCall = await gw(rawKey);
+  check('call after markup restored to 0 → 200', unmarkedCall.status === 200);
+  const afterRestore = await waitFor(async () => {
+    const me = await api('/api/portal/me', {}, 'portal');
+    const want = balBeforeMarkup - (3 * DEBIT_MICROS_PER_CALL) / 1e6;
+    return me.body?.user?.balance_usd != null && Math.abs(me.body.user.balance_usd - want) < 1e-9 ? me.body.user.balance_usd : null;
+  });
+  check('debit back to 46 micros after markup restored', afterRestore != null, String(afterRestore));
+
   // --- lemon squeezy webhook --------------------------------------------------
   const cfg = await api('/api/admin/billing/config', {
     method: 'PATCH',
@@ -400,7 +453,7 @@ async function cleanup({ restoreSignup }) {
   check('portal login again → 200', relogin.status === 200, `got ${relogin.status} ${JSON.stringify(relogin.body)}`);
 
   // --- cleanup -----------------------------------------------------------------
-  await cleanup({ restoreSignup: settings0.body?.public_signup ?? 'on' });
+  if (!process.env.M8_KEEP) await cleanup({ restoreSignup: settings0.body?.public_signup ?? 'on' });
   const meDeleted = await api('/api/portal/me', {}, 'portal');
   check('cleanup: user deleted → session dead (401)', meDeleted.status === 401);
   const usersLeft = await api('/api/admin/users');

@@ -191,3 +191,17 @@ export function costUsd(
   if (tokensOut !== null && pricingOutput !== null) cost += (tokensOut / 1e6) * pricingOutput;
   return Math.round(cost * 1e9) / 1e9; // keep 9 decimals; USD costs are tiny
 }
+
+/**
+ * Global deployment markup (settings `markup_percent`, 0 = at cost) applied to
+ * every CLIENT-FACING cost surface: request_logs cost snapshots + balance
+ * debits, spend-cap estimates/reservations and the /v1/models pricing strings.
+ * Model rows keep the UPSTREAM prices — the markup is a deployment-wide
+ * multiplier, never stored. null (unknown cost) passes through — unknown
+ * pricing never debits; free models stay $0 (0 × anything = 0).
+ */
+export function applyMarkupPercent(cost: number | null, markupPercent: number): number | null {
+  if (cost === null) return null;
+  if (!markupPercent) return cost;
+  return Math.round(cost * (1 + markupPercent / 100) * 1e9) / 1e9;
+}

@@ -3,7 +3,7 @@
 // message_delta), the tee'd JSON branch, and the costUsd snapshot semantics
 // (null pricing ≠ free).
 import { describe, expect, it } from 'vitest';
-import { costUsd, usageFromJsonBody, watchUpstreamJsonUsage, watchUpstreamSseUsage } from '../../src/worker/dialects/usage';
+import { applyMarkupPercent, costUsd, usageFromJsonBody, watchUpstreamJsonUsage, watchUpstreamSseUsage } from '../../src/worker/dialects/usage';
 import { loadFixtures, sseSource, sseText } from './helpers';
 
 describe('usage extraction (golden)', () => {
@@ -22,6 +22,9 @@ describe('usage extraction (golden)', () => {
               (case_.usage as { tokensIn: number | null; tokensOut: number | null } | null) ?? null,
             ),
           ).toEqual(case_.expected);
+          break;
+        case 'markup':
+          expect(applyMarkupPercent((case_.cost as number | null) ?? null, case_.markupPercent as number)).toEqual(case_.expected);
           break;
         case 'sse': {
           const input = case_.raw !== undefined ? (case_.raw as string) : sseText(case_.inputEvents as { event?: string; data: unknown }[]);

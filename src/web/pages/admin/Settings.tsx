@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, Database, Fingerprint, Gauge, Globe } from 'lucide-react';
+import { CreditCard, Database, Fingerprint, Gauge, Globe, Percent } from 'lucide-react';
 import { api } from '../../api';
 import { Badge, Button, Card, Field, Input, PageHeader, Spinner, Switch, toast } from '../../components/ui';
 
@@ -229,6 +229,72 @@ function RateLimitCard() {
             </Button>
           </div>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+function PricingCard() {
+  const qc = useQueryClient();
+  const settings = useQuery({ queryKey: ['admin-settings'], queryFn: api.settings });
+  const [markup, setMarkup] = useState('');
+
+  useEffect(() => {
+    const s = settings.data;
+    if (s) setMarkup(String(s.markup_percent));
+  }, [settings.data]);
+
+  const patch = useMutation({
+    mutationFn: (p: Record<string, unknown>) => api.updateSettings(p),
+    onSuccess: (s) => {
+      qc.setQueryData(['admin-settings'], s);
+      toast('Settings saved');
+    },
+    onError: (e) => toast(e instanceof Error ? e.message : 'Save failed', 'err'),
+  });
+
+  if (settings.isLoading) {
+    return (
+      <Card className="flex justify-center py-10">
+        <Spinner />
+      </Card>
+    );
+  }
+  const s = settings.data;
+  if (!s) return null;
+  const num = Number(markup);
+  const valid = markup !== '' && Number.isFinite(num) && num >= 0 && num <= 500 && Math.round(num * 100) === num * 100;
+  const dirty = num !== s.markup_percent;
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2 text-[13px] font-medium text-zinc-200">
+        <Percent className="h-4 w-4" />
+        Pricing markup
+      </div>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Cost markup %"
+          hint={`Charged on top of upstream pricing — 0 = at cost. Current: ${s.markup_percent}%`}
+        >
+          <Input
+            type="number"
+            min={0}
+            max={500}
+            step="0.01"
+            value={markup}
+            onChange={(e) => setMarkup(e.target.value)}
+          />
+        </Field>
+      </div>
+      <p className="mt-1 max-w-lg text-xs leading-relaxed text-zinc-500">
+        Multiplies every client-facing cost — log cost snapshots, balance debits, spend-cap estimates and the
+        prices clients see on <code className="text-zinc-400">/v1/models</code>. Free ($0) models stay free.
+      </p>
+      <div className="mt-4 flex justify-end">
+        <Button onClick={() => patch.mutate({ markup_percent: num })} disabled={!valid || !dirty || patch.isPending}>
+          Save markup
+        </Button>
       </div>
     </Card>
   );
@@ -476,6 +542,7 @@ export function Settings() {
       <div className="space-y-4">
         <GatewayCard />
         <RateLimitCard />
+        <PricingCard />
         <CacheCard />
         <SocialCard />
         <BillingCard />

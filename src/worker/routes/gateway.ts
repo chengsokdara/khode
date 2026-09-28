@@ -62,7 +62,7 @@ import type { CanonicalChatRequest, CanonicalEmbeddingsRequest } from '../canoni
 import { apiKeys, balanceEntries, models, orgs, providers, requestLogs, users } from '../db/schema';
 import { resolveModelChain, type RoutingCandidate } from '../routing';
 import { verifyClientKey, type ApiKeyRow } from '../auth';
-import { getCacheSettings, getLogAuthFailures, getRateLimitSettings } from '../db/settings';
+import { getBillingSettings, getCacheSettings, getLogAuthFailures, getRateLimitSettings } from '../db/settings';
 import { buildGatewayRateChecks, checkRateLimits, reserveSpend, settleSpend } from '../ratelimit/client';
 import type { RateLimitDecision } from '../ratelimit/do';
 import { buildCacheKey, evaluateCacheEligibility } from '../cache/key';
@@ -72,7 +72,7 @@ import { retryDecision, sleep } from '../backoff';
 import { buildOpenAiChatRequest, buildOpenAiEmbeddingsRequest } from '../adapters/openai';
 import { buildAnthropicMessagesRequest } from '../adapters/anthropic';
 import { buildGeminiEmbeddingsRequest, buildGeminiGenerateContentRequest } from '../adapters/gemini';
-import { costUsd, usageFromJsonBody, watchUpstreamJsonUsage, watchUpstreamSseUsage, type TokenUsage } from '../dialects/usage';
+import { applyMarkupPercent, costUsd, usageFromJsonBody, watchUpstreamJsonUsage, watchUpstreamSseUsage, type TokenUsage } from '../dialects/usage';
 import { geminiCompletionToOpenAi, geminiEmbeddingsToOpenAi, geminiErrorToOpenAi, transformGeminiSseToOpenAi } from '../dialects/gemini';
 import { parseOpenAiEmbeddingsRequest } from '../dialects/openaiEmbeddings';
 import { anthropicStructuredOutputTool } from '../dialects/options';
@@ -279,20 +279,25 @@ function supportedParametersFor(providerAdapters: string | null): string[] {
   return out;
 }
 
-function modelListDto(r: {
-  slug: string;
-  upstreamModel: string | null;
-  displayName: string | null;
-  contextWindow: number | null;
-  maxOutputTokens: number | null;
-  pricingInput: number | null;
-  pricingOutput: number | null;
-  createdAt: number;
-  providerName: string;
-  providerAdapters: string | null;
-}) {
-  const prompt = usdPerMillionToPerToken(r.pricingInput);
-  const completion = usdPerMillionToPerToken(r.pricingOutput);
+function modelListDto(
+  r: {
+    slug: string;
+    upstreamModel: string | null;
+    displayName: string | null;
+    contextWindow: number | null;
+    maxOutputTokens: number | null;
+    pricingInput: number | null;
+    pricingOutput: number | null;
+    createdAt: number;
+    providerName: string;
+    providerAdapters: string | null;
+  },
+  markupPercent = 0,
+) {
+  // Client-facing prices carry the global markup so they match what the
+  // client is actually billed (free models stay "0" — 0 × anything = 0).
+  const prompt = usdPerMillionToPerToken(applyMarkupPercent(r.pricingInput, markupPercent));
+  const completion = usdPerMillionToPerToken(applyMarkupPercent(r.pricingOutput, markupPercent));
   return {
     id: r.slug,
     object: 'model',
@@ -323,13 +328,16 @@ const listFields = {
 };
 
 gatewayApp.get('/models', async (c) => {
-  const rows = await getDb(c.env)
-    .select(listFields)
-    .from(models)
-    .innerJoin(providers, eq(models.providerId, providers.id))
-    .where(and(eq(models.enabled, true), eq(providers.enabled, true)))
-    .orderBy(asc(models.slug));
-  return c.json({ object: 'list', data: rows.map((r) => modelListDto(r)) });
+  const [rows, { markupPercent }] = await Promise.all([
+    getDb(c.env)
+      .select(listFields)
+      .from(models)
+      .innerJoin(providers, eq(models.providerId, providers.id))
+      .where(and(eq(models.enabled, true), eq(providers.enabled, true)))
+      .orderBy(asc(models.slug)),
+    getBillingSettings(c.env),
+  ]);
+  return c.json({ object: 'list', data: rows.map((r) => modelListDto(r, markupPercent)) });
 });
 
 gatewayApp.get('/models/:id', async (c) => {
@@ -342,7 +350,8 @@ gatewayApp.get('/models/:id', async (c) => {
   if (!row) {
     return errorJson('openai', 404, openAiError(404, `The model '${slug}' does not exist or you do not have access to it.`, { code: 'model_not_found' }));
   }
-  return c.json(modelListDto(row));
+  const { markupPercent } = await getBillingSettings(c.env);
+  return c.json(modelListDto(row, markupPercent));
 });
 
 // ------------------------------------------------------------- chat matrix
@@ -543,7 +552,10 @@ async function writeRequestLog(
   waitUntil: (p: Promise<unknown>) => void,
 ): Promise<void> {
   const id = crypto.randomUUID();
-  const cost = costUsd(draft.pricingInput, draft.pricingOutput, draft.usage);
+  // Global markup (settings markup_percent): log snapshots + debits carry the
+  // CLIENT-facing cost; model rows keep the upstream prices.
+  const { markupPercent } = await getBillingSettings(env);
+  const cost = applyMarkupPercent(costUsd(draft.pricingInput, draft.pricingOutput, draft.usage), markupPercent);
   try {
     await getDb(env).insert(requestLogs).values({
       id,
@@ -587,7 +599,7 @@ async function writeRequestLog(
             await releaseReservation();
             return;
           }
-          const finalCost = costUsd(draft.pricingInput, draft.pricingOutput, u);
+          const finalCost = applyMarkupPercent(costUsd(draft.pricingInput, draft.pricingOutput, u), markupPercent);
           await getDb(env)
             .update(requestLogs)
             .set({ tokensIn: u.tokensIn, tokensOut: u.tokensOut, costUsd: finalCost })
@@ -1130,7 +1142,10 @@ async function reserveSpendCap(
   estUsd: number | null,
 ): Promise<Response | null> {
   if (key?.spendLimitUsd == null || estUsd == null) return null;
-  const micros = Math.round(estUsd * 1e6);
+  // The reservation must match what the request will DEBIT (marked-up cost).
+  const { markupPercent } = await getBillingSettings(c.env);
+  const markedEst = applyMarkupPercent(estUsd, markupPercent);
+  const micros = Math.round((markedEst ?? estUsd) * 1e6);
   if (micros <= 0) return null;
   const scope = `reserve:key:${key.id}`;
   const reserved = await reserveSpend(c.env, scope, micros);
