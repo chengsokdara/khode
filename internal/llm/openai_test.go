@@ -119,6 +119,12 @@ func TestOpenAIStream(t *testing.T) {
 	if body["max_completion_tokens"] != float64(32) {
 		t.Errorf("max_completion_tokens = %v, want 32", body["max_completion_tokens"])
 	}
+	if _, ok := body["max_tokens"]; ok {
+		t.Errorf("official openai sent max_tokens = %v", body["max_tokens"])
+	}
+	if _, ok := body["reasoning_effort"]; ok {
+		t.Errorf("non-GLM request sent reasoning_effort = %v", body["reasoning_effort"])
+	}
 	so, _ := body["stream_options"].(map[string]any)
 	if so == nil || so["include_usage"] != true {
 		t.Errorf("stream_options.include_usage = %v, want true", body["stream_options"])
@@ -384,5 +390,85 @@ func TestOpenAIThinkingStream(t *testing.T) {
 	assistant, _ := msgs[1].(map[string]any)
 	if c, _ := assistant["content"].(string); c != "kept" {
 		t.Errorf("replayed assistant content = %q, want %q", c, "kept")
+	}
+	if _, ok := assistant["reasoning_content"]; ok {
+		t.Errorf("empty thinking replayed reasoning_content = %v", assistant["reasoning_content"])
+	}
+}
+
+// GLM tool turns must send the original reasoning_content back, use
+// max_tokens (NIM's field), and default the effort and output cap.
+func TestOpenAIGLMToolReplay(t *testing.T) {
+	var body map[string]any
+	srv := openaiFakeServer(t, &body)
+	defer srv.Close()
+
+	p := newOpenAIClient("test-key", srv.URL, "khateway")
+	ch, err := p.Stream(t.Context(), Request{
+		Model:     "z-ai-glm-5.3-flash",
+		MaxTokens: defaultRequestMaxTokens,
+		Messages: []Message{
+			{Role: RoleUser, Content: "edit main.go"},
+			{Role: RoleAssistant, Content: "looking", Thinking: "plan the edit", ToolCalls: []ToolCall{
+				{ID: "call_1", Name: "read", Input: json.RawMessage(`{"path":"main.go"}`)},
+			}},
+			{Role: RoleTool, ToolResult: &ToolResult{CallID: "call_1", Content: "package main"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for ev := range ch {
+		if e, ok := ev.(ErrorEvent); ok {
+			t.Fatalf("ErrorEvent: %v", e.Err)
+		}
+	}
+
+	if body["max_tokens"] != float64(glm53DefaultMaxTokens) {
+		t.Errorf("max_tokens = %v, want %d", body["max_tokens"], glm53DefaultMaxTokens)
+	}
+	if _, ok := body["max_completion_tokens"]; ok {
+		t.Errorf("khateway sent max_completion_tokens = %v", body["max_completion_tokens"])
+	}
+	if body["reasoning_effort"] != "high" {
+		t.Errorf("reasoning_effort = %v, want high", body["reasoning_effort"])
+	}
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want 3", len(msgs))
+	}
+	assistant, _ := msgs[1].(map[string]any)
+	if assistant["reasoning_content"] != "plan the edit" {
+		t.Errorf("reasoning_content = %v, want the stored trace", assistant["reasoning_content"])
+	}
+	if assistant["content"] != "looking" {
+		t.Errorf("content = %v, want looking", assistant["content"])
+	}
+	calls, _ := assistant["tool_calls"].([]any)
+	if len(calls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(calls))
+	}
+
+	// An explicit cap and effort win over the GLM defaults.
+	body = nil
+	ch, err = p.Stream(t.Context(), Request{
+		Model:           "glm-5.3",
+		MaxTokens:       1000,
+		ReasoningEffort: "max",
+		Messages:        []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for ev := range ch {
+		if e, ok := ev.(ErrorEvent); ok {
+			t.Fatalf("ErrorEvent: %v", e.Err)
+		}
+	}
+	if body["max_tokens"] != float64(1000) {
+		t.Errorf("explicit max_tokens = %v, want 1000", body["max_tokens"])
+	}
+	if body["reasoning_effort"] != "max" {
+		t.Errorf("explicit reasoning_effort = %v, want max", body["reasoning_effort"])
 	}
 }

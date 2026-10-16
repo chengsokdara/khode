@@ -130,12 +130,7 @@ func (r *Runner) compact(ctx context.Context) (int, error) {
 // summarize asks the model for a compact brief of msgs. No tools are
 // advertised, so the reply is prose by construction.
 func (r *Runner) summarize(ctx context.Context, msgs []llm.Message) (string, error) {
-	ch, err := r.Provider.Stream(ctx, llm.Request{
-		System:    summarizeSystem,
-		Model:     r.Model,
-		MaxTokens: r.MaxTokens,
-		Messages:  msgs,
-	})
+	ch, err := r.Provider.Stream(ctx, r.request(summarizeSystem, msgs, nil))
 	if err != nil {
 		return "", err
 	}

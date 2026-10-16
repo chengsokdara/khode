@@ -34,9 +34,21 @@ var contextKeys = func() []string {
 	return keys
 }()
 
+// glm53Model reports whether model is a GLM-5.3 family id or a gateway
+// slug of one. Slugs collapse the upstream slash ("z-ai/glm-5.3" becomes
+// "z-ai-glm-5.3"), so this is a contains check, not a prefix. It also
+// covers glm-5.3-flash.
+func glm53Model(model string) bool {
+	return strings.Contains(strings.ToLower(model), "glm-5.3")
+}
+
 // ContextWindow returns the model's total context window in tokens,
-// matching by family prefix.
+// matching by family prefix. GLM-5.3 is matched by contains first so a
+// gateway slug still resolves to the real 1,048,576-token window.
 func ContextWindow(model string) int {
+	if glm53Model(model) {
+		return 1_048_576
+	}
 	m := strings.ToLower(model)
 	for _, k := range contextKeys {
 		if strings.HasPrefix(m, k) {

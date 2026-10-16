@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { portalApi } from '../../portal-api';
 import { navigate } from '../../router';
 import { Button, Field, Input, Logo, Spinner } from '../../components/ui';
@@ -15,9 +15,27 @@ export function PortalLogin() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(() => new URLSearchParams(window.location.search).get('error'));
   const [busy, setBusy] = useState(false);
+  const [siteKey, setSiteKey] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
   const urlParams = new URLSearchParams(window.location.search);
   const nextRaw = urlParams.get('next') ?? '';
   const next = nextRaw.startsWith('/app') && !nextRaw.startsWith('/app/login') ? nextRaw : '/app';
+
+  useEffect(() => {
+    let cancelled = false;
+    portalApi
+      .turnstile()
+      .then((cfg) => {
+        if (!cancelled && cfg.enabled && cfg.siteKey) setSiteKey(cfg.siteKey);
+      })
+      .catch(() => {
+        // No widget when the config call fails: the server still accepts
+        // the form while Turnstile is off, and refuses it when it is on.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // The social buttons leave the SPA for a backend route that 302s to the
   // provider; the callback mints the session cookie and lands back on `next`.
@@ -31,11 +49,15 @@ export function PortalLogin() {
       setError(mode === 'signup' ? 'Enter an email and a password (8+ characters)' : 'Enter your email and password');
       return;
     }
+    if (siteKey && !turnstileToken) {
+      setError('Complete the captcha and try again.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'signup') await portalApi.signup(email, password);
-      else await portalApi.login(email, password);
+      if (mode === 'signup') await portalApi.signup(email, password, turnstileToken);
+      else await portalApi.login(email, password, turnstileToken);
       navigate(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed');
@@ -113,6 +135,7 @@ export function PortalLogin() {
                 />
               </Field>
             </div>
+            {siteKey ? <TurnstileField siteKey={siteKey} onToken={setTurnstileToken} /> : null}
             {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
             <Button type="submit" className="mt-4 w-full" disabled={busy}>
               {busy ? <Spinner className="border-zinc-900/70 border-t-transparent" /> : null}
@@ -126,4 +149,52 @@ export function PortalLogin() {
       </div>
     </div>
   );
+}
+
+type TurnstileApi = {
+  render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+  remove: (id: string) => void;
+};
+
+/** Explicit Turnstile widget. The token is cleared when it expires. */
+function TurnstileField({ siteKey, onToken }: { siteKey: string; onToken: (token: string) => void }) {
+  const host = useRef<HTMLDivElement>(null);
+  const widget = useRef<string | null>(null);
+  const onTokenRef = useRef(onToken);
+  onTokenRef.current = onToken;
+
+  useEffect(() => {
+    let cancelled = false;
+    const render = () => {
+      const ts = (window as unknown as { turnstile?: TurnstileApi }).turnstile;
+      if (cancelled || !host.current || !ts || widget.current) return;
+      widget.current = ts.render(host.current, {
+        sitekey: siteKey,
+        callback: (token: string) => onTokenRef.current(token),
+        'expired-callback': () => onTokenRef.current(''),
+        'error-callback': () => onTokenRef.current(''),
+      });
+    };
+    const ts = (window as unknown as { turnstile?: TurnstileApi }).turnstile;
+    if (ts) render();
+    else if (!document.querySelector('script[data-khateway-turnstile]')) {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.dataset.khatewayTurnstile = '1';
+      script.onload = render;
+      document.head.appendChild(script);
+    } else {
+      const script = document.querySelector('script[data-khateway-turnstile]');
+      script?.addEventListener('load', render);
+    }
+    return () => {
+      cancelled = true;
+      const api = (window as unknown as { turnstile?: TurnstileApi }).turnstile;
+      if (widget.current && api) api.remove(widget.current);
+      widget.current = null;
+    };
+  }, [siteKey]);
+
+  return <div ref={host} className="mt-3" />;
 }

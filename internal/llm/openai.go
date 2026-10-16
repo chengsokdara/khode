@@ -62,6 +62,33 @@ func newOpenAIClient(key, baseURL, name string) *OpenAI {
 		retryBase: baseRetryDelay, retryBudget: DefaultRetryBudget}
 }
 
+// withReasoning attaches reasoning_content to an assistant message.
+// openai-go v1.12 has no field for it; the extra-fields map is the
+// same channel the stream reader uses. Empty thinking leaves the
+// message untouched, so official OpenAI bodies stay as they were.
+func withReasoning(msg openai.ChatCompletionMessageParamUnion, thinking string) openai.ChatCompletionMessageParamUnion {
+	if thinking == "" || msg.OfAssistant == nil {
+		return msg
+	}
+	msg.OfAssistant.SetExtraFields(map[string]any{"reasoning_content": thinking})
+	return msg
+}
+
+// resolveReasoningEffort picks the wire reasoning_effort. An explicit
+// low/high/max wins. Otherwise GLM-5.3 gets high — NIM's default is
+// max, which spends the whole output budget on thinking — and every
+// other model omits the field.
+func resolveReasoningEffort(req Request) string {
+	switch strings.ToLower(strings.TrimSpace(req.ReasoningEffort)) {
+	case "low", "high", "max":
+		return strings.ToLower(strings.TrimSpace(req.ReasoningEffort))
+	}
+	if glm53Model(req.Model) {
+		return "high"
+	}
+	return ""
+}
+
 func (o *OpenAI) Name() string {
 	if o.name != "" {
 		return o.name
@@ -69,11 +96,23 @@ func (o *OpenAI) Name() string {
 	return "openai"
 }
 
+// defaultRequestMaxTokens matches config.DefaultMaxTokens. A GLM-5.3
+// request still sitting on that value has not had a cap chosen, and
+// thinking plus a tool call does not fit in 8192.
+const (
+	defaultRequestMaxTokens = 8192
+	glm53DefaultMaxTokens   = 32768
+)
+
 // Stream translates the generic Request into a chat-completions stream
 // and forwards deltas over a channel of generic Events.
 func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) {
-	if req.MaxTokens <= 0 {
-		req.MaxTokens = 8192
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultRequestMaxTokens
+	}
+	if glm53Model(req.Model) && maxTokens == defaultRequestMaxTokens {
+		maxTokens = glm53DefaultMaxTokens
 	}
 
 	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)+1)
@@ -85,13 +124,17 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 		case RoleUser:
 			msgs = append(msgs, openai.UserMessage(m.Content))
 		case RoleAssistant:
-			// Thinking is display-only; strip legacy <think> tags so old
-			// transcripts never replay reasoning as answer content.
+			// Strip legacy <think> tags so old transcripts never replay
+			// reasoning as answer content. The thinking field itself is
+			// replayed separately, as reasoning_content.
 			content := StripThinkTags(m.Content)
+			thinking := strings.TrimSpace(m.Thinking)
 			if len(m.ToolCalls) == 0 {
-				if content != "" {
-					msgs = append(msgs, openai.AssistantMessage(content))
+				if content == "" {
+					continue
 				}
+				msg := openai.AssistantMessage(content)
+				msgs = append(msgs, withReasoning(msg, thinking))
 				continue
 			}
 			calls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(m.ToolCalls))
@@ -114,7 +157,8 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 					OfString: openai.Opt(content),
 				}
 			}
-			msgs = append(msgs, openai.ChatCompletionMessageParamUnion{OfAssistant: &am})
+			msg := openai.ChatCompletionMessageParamUnion{OfAssistant: &am}
+			msgs = append(msgs, withReasoning(msg, thinking))
 		case RoleTool:
 			if r := m.ToolResult; r != nil {
 				msgs = append(msgs, openai.ToolMessage(r.Content, r.CallID))
@@ -123,12 +167,22 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Event, error) 
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:               shared.ChatModel(req.Model),
-		Messages:            msgs,
-		MaxCompletionTokens: openai.Int(int64(req.MaxTokens)),
+		Model:    shared.ChatModel(req.Model),
+		Messages: msgs,
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.Bool(true),
 		},
+	}
+	// Official OpenAI wants max_completion_tokens. Khateway and every
+	// other OpenAI-compatible endpoint (NVIDIA NIM included) document
+	// max_tokens; sending the newer field there is ignored or rejected.
+	if o.Name() == ProviderOpenAI {
+		params.MaxCompletionTokens = openai.Int(int64(maxTokens))
+	} else {
+		params.MaxTokens = openai.Int(int64(maxTokens))
+	}
+	if effort := resolveReasoningEffort(req); effort != "" {
+		params.ReasoningEffort = shared.ReasoningEffort(effort)
 	}
 	for _, t := range req.Tools {
 		var schema openai.FunctionParameters

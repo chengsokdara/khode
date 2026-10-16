@@ -1,6 +1,6 @@
 # STATUS.md — Khateway live status
 
-Last updated: 2026-09-28 (polish queue closed + password reset + global markup; MIT license; deployed)
+Last updated: 2026-10-16 (monorepo, GLM reasoning passthrough, Turnstile hook; not deployed)
 
 ## How to use this file
 
@@ -10,6 +10,19 @@ where the milestone plan lives, "Recent changes" for history (newest first).
 If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
+
+- **Monorepo + GLM reasoning passthrough + Turnstile hook ✅ code, not
+  deployed (2026-10-16)** — this tree now lives at `khateway/` inside
+  the khode repo (subtree of 644a6c9). `toOpenAiMessage` emits
+  `reasoning.text` as `reasoning_content`. `reasoning_effort: "max"` is
+  legal and re-emitted on the openai adapter; anthropic and gemini map
+  it onto the high budget (24576). Portal `GET /api/portal/turnstile`
+  plus signup/login call `turnstileFailure`, which no-ops unless both
+  `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set. Not deployed.
+  Operator follow-ups still open: NIM provider with `free_tier` off and
+  real prices for `z-ai/glm-5.3` and `z-ai/glm-5.3-flash`, Turnstile
+  secrets or public signup off, Lemon Squeezy confirmation, public
+  GitHub remote. Do not `npm run deploy` without an explicit go-ahead.
 
 - **Polish queue + password reset + cost markup + MIT license ✅ complete +
   DEPLOYED (2026-09-28)** — user picked ALL FOUR from the "what next" menu.

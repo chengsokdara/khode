@@ -30,7 +30,10 @@ type Runner struct {
 	Tools     *tools.Registry
 	Model     string
 	MaxTokens int
-	System    string
+	// ReasoningEffort is forwarded on every provider request. Empty
+	// lets the provider apply its own default (GLM-5.3 sends high).
+	ReasoningEffort string
+	System          string
 	// MaxRounds bounds the tool loop; 0 means DefaultMaxRounds.
 	MaxRounds int
 	// Mode selects the permission policy, re-read before every tool call
@@ -119,14 +122,22 @@ func (r *Runner) Run(ctx context.Context, userText string) <-chan llm.Event {
 // to the session when it completes. Provider-level DoneEvents are absorbed
 // — they mark round boundaries, and Run owns the turn-level DoneEvent.
 // It returns the tool calls the model requested, if any.
+// request builds the provider request for one round. Every call site
+// goes through here so the reasoning effort cannot be dropped on a
+// compact or a tool follow-up.
+func (r *Runner) request(system string, msgs []llm.Message, defs []llm.ToolDef) llm.Request {
+	return llm.Request{
+		System:          system,
+		Model:           r.Model,
+		MaxTokens:       r.MaxTokens,
+		Messages:        msgs,
+		Tools:           defs,
+		ReasoningEffort: r.ReasoningEffort,
+	}
+}
+
 func (r *Runner) round(ctx context.Context, out chan<- llm.Event) ([]llm.ToolCall, error) {
-	ch, err := r.Provider.Stream(ctx, llm.Request{
-		System:    r.System,
-		Model:     r.Model,
-		MaxTokens: r.MaxTokens,
-		Messages:  r.Session.Messages(),
-		Tools:     r.Tools.Definitions(),
-	})
+	ch, err := r.Provider.Stream(ctx, r.request(r.System, r.Session.Messages(), r.Tools.Definitions()))
 	if err != nil {
 		return nil, fmt.Errorf("starting stream: %w", err)
 	}

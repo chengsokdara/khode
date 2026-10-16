@@ -12,19 +12,22 @@ export type OptResult = { err?: string; val?: number | null };
 
 // -------------------------------------------------------------- M17 reasoning
 
-/** Effort → token budget. Gemini: minimal disables thinking (budget 0). */
+/** Effort → token budget. Gemini: minimal disables thinking (budget 0).
+ * `max` is NIM GLM's deepest setting. Anthropic and Gemini have no `max`
+ * bucket, so they share the high budget (24576) instead of rejecting it. */
 export const EFFORT_BUDGETS: Record<NonNullable<CanonicalReasoning['effort']>, number> = {
   minimal: 0,
   low: 1024,
   medium: 8192,
   high: 24576,
+  max: 24576,
 };
 
 /** Validates the openai/responses `reasoning_effort` vocabulary. */
 export function reasoningEffortOption(v: unknown, param: string): { err?: string; val?: CanonicalReasoning['effort'] } {
   if (v === undefined || v === null) return {};
-  if (v === 'minimal' || v === 'low' || v === 'medium' || v === 'high') return { val: v };
-  return { err: `${param} must be one of 'minimal', 'low', 'medium', 'high'` };
+  if (v === 'minimal' || v === 'low' || v === 'medium' || v === 'high' || v === 'max') return { val: v };
+  return { err: `${param} must be one of 'minimal', 'low', 'medium', 'high', 'max'` };
 }
 
 /** Merges an effort bucket + explicit budget into one canonical reasoning value. */

@@ -13,6 +13,10 @@ func TestContextWindow(t *testing.T) {
 		"o3-mini":            200_000,
 		"o4-mini-2025":       200_000,
 		"unknown-model":      defaultContextWindow,
+		"glm-5.3":            1_048_576,
+		"glm-5.3-flash":      1_048_576,
+		"z-ai-glm-5.3":       1_048_576,
+		"Z-AI/GLM-5.3-Flash": 1_048_576,
 	}
 	for model, want := range cases {
 		if got := ContextWindow(model); got != want {

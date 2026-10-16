@@ -11,6 +11,9 @@ export interface Env {
   ENCRYPTION_KEY: string;
   /** Optional separate HMAC secret for session cookies (falls back to ENCRYPTION_KEY). */
   SESSION_SECRET?: string;
+  /** Portal captcha. Both must be set or the check stays off. */
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET_KEY?: string;
 }
 
 import type { Adapter } from '../shared/adapters';

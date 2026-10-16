@@ -10,6 +10,24 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Public monorepo + GLM-5.3 tool loops (2026-10-16):** khateway's
+history is nested at `khateway/` via `git subtree` (Go module and
+imports unchanged). The OpenAI client replays `Message.Thinking` as
+`reasoning_content`, sends `max_tokens` for every provider except
+official `openai`, and for a model name containing `glm-5.3` sends
+`reasoning_effort: high` plus a 32768 output cap while max tokens is
+still the default 8192. `/settings` has a reasoning row (`low` / `high`
+/ `max` / default). Context window for that family is 1,048,576,
+matched by contains so a slug like `z-ai-glm-5.3` hits it. Khateway's
+openai adapter forwards `reasoning_content` and accepts effort `max`
+(anthropic and gemini map `max` onto the high budget). Portal email
+signup and login check Cloudflare Turnstile only when both
+`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set. Root MIT
+license, install README, and `.github/workflows/ci.yml`. Not done, and
+not verified live: the public GitHub remote, a NIM provider that is
+not the free-tier importer, Lemon Squeezy, a Turnstile key pair, and a
+khode tool loop against `z-ai/glm-5.3` and `z-ai/glm-5.3-flash`.
+
 **Queued prompts mid-turn (2026-09-28):** pressing enter while a turn
 streams no longer swallows the input (`case "enter": if m.streaming {
 return }`) — a plain prompt is filed in `m.queued` (input clears) and a
@@ -978,6 +996,7 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
+| 2026-10-16 | Monorepo (`khateway/` subtree) + GLM-5.3 agent path: replay `reasoning_content`, `max_tokens` off official OpenAI, default effort `high` and 32768 cap, 1,048,576 context, gateway accepts effort `max`, Turnstile on portal login/signup when both keys are set, MIT + CI. Live NIM tool loop and the public remote are not done | (this commit) |
 | 2026-09-28 | Queued prompts mid-turn: enter while a turn streams files the prompt (queued band above the input), turn end auto-submits FIFO; esc hands the queue back to the input; slash commands wait with a note; `streamClosedMsg` ignored with no turn live | (this commit) |
 | 2026-09-27 | post_tool hooks feed the model back: exit-0 stdout / exit-2 stderr appended to the call's tool result inside `<hook-feedback>` tags (8 KiB cap, all matching hooks join, non-blocking); hooks fire even on malformed tool args (payload rides `{}`) | (this commit) |
 | 2026-09-27 | MCP tools refresh live: `tools/list_changed` notifications re-list a server's tools into the registry mid-session (`mcp.SetNotify` → UI fan-in channel → list-first registry swap; silent no-op, off-toggles preserved, idle pings drain at the next armed pump); `mcp.Exited()` dead-server glyph in `/mcp`; resources/prompts split to their own backlog item | (this commit) |

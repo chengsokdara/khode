@@ -1325,6 +1325,27 @@ func TestTurnErrorRendersLoud(t *testing.T) {
 
 // The icons row cycles auto→nerd→ascii and drops the block render cache
 // so the scrollback repaints in the new pack.
+func TestSettingsReasoningCycles(t *testing.T) {
+	m := newTestModel(t)
+	m.OpenSettings(rowReasoning)
+	if m.cfg.ReasoningEffortValue() != "" {
+		t.Fatalf("fresh effort = %q, want empty", m.cfg.ReasoningEffortValue())
+	}
+	m.activateRow()
+	if got := m.cfg.ReasoningEffortValue(); got != "low" {
+		t.Fatalf("after first cycle = %q, want low", got)
+	}
+	m.activateRow()
+	m.activateRow()
+	if got := m.cfg.ReasoningEffortValue(); got != "max" {
+		t.Fatalf("after third cycle = %q, want max", got)
+	}
+	m.activateRow()
+	if got := m.cfg.ReasoningEffortValue(); got != "" {
+		t.Fatalf("after wrap = %q, want empty", got)
+	}
+}
+
 func TestSettingsIconsRowCycles(t *testing.T) {
 	m := newTestModel(t)
 	m.messages = append(m.messages, uiMessage{role: llm.RoleAssistant, kind: kindToolCall, raw: "read main.go"})

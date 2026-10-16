@@ -232,13 +232,24 @@ Verifying a real round-trip (browser + your own Google/GitHub account):
    the verification link — after sign-in you land straight on
    `/app/device?code=…` to approve, because the OAuth flow preserves `next`.
 
-**Device sign-in (RFC 8628)**: CLI/TUI clients like [khode](../khode) sign in
+**Device sign-in (RFC 8628)**: CLI/TUI clients like [khode](../README.md) sign in
 with `/login` — the terminal shows a short code at
 [`/app/device`](http://localhost:5173/app/device), the signed-in user
 approves, and the client receives a personal API key (visible and revocable
 under Keys) for their balance. The social sign-in buttons ride along: a
 first-time user can approve a device code without ever creating an
 email/password account.
+
+**Captcha (Turnstile)**: email signup and login stay open when the worker
+has no Turnstile keys, which is the local-dev and current-deploy default.
+Before this gateway is public, either set both `TURNSTILE_SITE_KEY` and
+`TURNSTILE_SECRET_KEY` (`npx wrangler secret put` for each) or turn
+**Public signups** off in admin Settings. When both keys are set, the login
+page renders the widget and the worker checks the token at
+`siteverify` before creating a session. A site key alone does nothing.
+
+This package lives in the khode monorepo (`../`). The client README is
+[`../README.md`](../README.md).
 
 See [`docs/plans/mvp-plan.md`](docs/plans/mvp-plan.md) for the full plan.
 

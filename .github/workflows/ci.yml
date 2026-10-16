@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  khode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: test -z "$(gofmt -l .)"
+      - run: go test ./...
+
+  khateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: khateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: khateway/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

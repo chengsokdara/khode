@@ -1,6 +1,6 @@
 # ROADMAP.md — Khateway roadmap
 
-Last updated: 2026-09-28 (test-connection classifier, auth-failure logging, password reset and global markup done — struck from the queue). STATUS.md keeps live state only and points here.
+Last updated: 2026-10-16 (Turnstile check landed; keys still an operator step). STATUS.md keeps live state only and points here.
 
 ## Where we are
 
@@ -115,8 +115,10 @@ passthrough (P1), login/signup buckets through the DO (P2), upstream
 accounting (P4) — see STATUS.md. `x-ratelimit-*` response headers shipped in
 M16.
 
-Still queued: signup captcha (needs a Turnstile-style service + account/keys —
-an external-dependency decision); key-scoped spend alerts (needs a
+Signup captcha: the Turnstile check is in the worker (2026-10-16) and
+stays off until `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are both
+set. Until then, public signup should stay off in admin Settings.
+Still queued: key-scoped spend alerts (needs a
 notification channel; no email sender on Workers); email-based
 forgot-password (needs an email sender — the 2026-09-28 admin reset +
 portal self-service change closed the lockout gap without one).

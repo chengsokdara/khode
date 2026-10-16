@@ -1,7 +1,33 @@
 # khode
 
 A terminal-native coding assistant in the spirit of Claude Code — built in Go
-with Bubble Tea.
+with Bubble Tea — and Khateway, the gateway it ships pointed at.
+
+## Repository
+
+This is one repo with two parts.
+
+- The client is the Go module at the root (`cmd/khode`, `internal/`).
+- The gateway lives in [`khateway/`](khateway/README.md). From that directory:
+  `npm install` then `npm run dev` (worker on :8787, UI on :5173).
+
+khode's built-in khateway provider is
+`https://khateway.chengsokdara.workers.dev/v1`. A client key and a prepaid
+balance are required. `/login` runs the device sign-in; a zero balance is
+rejected with `insufficient_quota`. Gateway operators follow
+[`khateway/README.md`](khateway/README.md).
+
+GLM-5.3 and GLM-5.3-Flash (NVIDIA NIM ids `z-ai/glm-5.3` and
+`z-ai/glm-5.3-flash`) think on every turn. khode sends that trace back as
+`reasoning_content`, uses `max_tokens`, and sends `reasoning_effort: high`
+unless `/settings` → reasoning is set to `low`, `high`, or `max`. While max
+tokens is still the default 8192, those models are requested with a 32768
+cap so thinking and a tool call both fit.
+
+Public signup on the gateway stays unprotected until Turnstile is
+configured. Set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` on the
+worker, or turn **Public signups** off in admin Settings, before inviting
+strangers. See the gateway README.
 
 ## Status
 

@@ -35,6 +35,7 @@ const (
 	rowModel
 	rowSubagentModel
 	rowMaxTokens
+	rowReasoning
 	rowMode
 	rowGatherContext
 	rowIcons
@@ -217,6 +218,8 @@ func (m *Model) activateRow() tea.Cmd {
 		m.openEditor(rowSubagentModel)
 	case rowMaxTokens:
 		m.openEditor(rowMaxTokens)
+	case rowReasoning:
+		m.cycleReasoning(1)
 	case rowMCP:
 		s.view = viewMCPList
 		s.listCur = 0
@@ -299,7 +302,31 @@ func (m *Model) cycleSetting(dir int) {
 		m.applyMode(modes[(idx+dir+len(modes))%len(modes)])
 	case rowIcons:
 		m.cycleIcons(dir)
+	case rowReasoning:
+		m.cycleReasoning(dir)
 	}
+}
+
+// reasoningChoices are the reasoning_effort values in cycle order.
+// Empty is the default: GLM-5.3 sends high, other models omit it.
+var reasoningChoices = []string{"", "low", "high", "max"}
+
+// cycleReasoning moves the reasoning row and persists the choice.
+func (m *Model) cycleReasoning(dir int) {
+	cur := m.cfg.ReasoningEffortValue()
+	idx := 0
+	for i, s := range reasoningChoices {
+		if s == cur {
+			idx = i
+		}
+	}
+	want := reasoningChoices[(idx+dir+len(reasoningChoices))%len(reasoningChoices)]
+	m.cfg.SetReasoningEffort(want)
+	label := want
+	if label == "" {
+		label = "default"
+	}
+	m.saveSettings("reasoning → " + label)
 }
 
 // --- saving ------------------------------------------------------------------
@@ -1151,6 +1178,8 @@ func rowLabel(row settingsRow) string {
 		return "subagent model"
 	case rowMaxTokens:
 		return "max tokens"
+	case rowReasoning:
+		return "reasoning"
 	case rowMode:
 		return "mode"
 	case rowMCP:
@@ -1202,6 +1231,12 @@ func (s *settings) value(m *Model, row settingsRow) string {
 		return dimStyle.Render("(main model · enter to set a cheaper one)")
 	case rowMaxTokens:
 		return strconv.Itoa(m.cfg.MaxTokens)
+	case rowReasoning:
+		effort := m.cfg.ReasoningEffortValue()
+		if effort == "" {
+			return "default" + dimStyle.Render("  GLM-5.3 sends high · ←/→ cycle")
+		}
+		return effort + dimStyle.Render("  low, high, or max · ←/→ cycle")
 	case rowMode:
 		return string(m.mode()) + dimStyle.Render("  "+modeDescription(m.mode()))
 	case rowGatherContext:

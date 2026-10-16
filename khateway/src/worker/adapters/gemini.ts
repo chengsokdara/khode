@@ -165,7 +165,7 @@ function thinkingConfigFor(req: CanonicalChatRequest): Record<string, unknown> |
     budget = EFFORT_BUDGETS[canonical.effort];
   } else if (typeof extras['reasoning_effort'] === 'string') {
     const effort = extras['reasoning_effort'];
-    budget = effort === 'minimal' ? 0 : effort === 'low' ? 1024 : effort === 'medium' ? 8192 : effort === 'high' ? 24576 : null;
+    budget = effort === 'minimal' ? 0 : effort === 'low' ? 1024 : effort === 'medium' ? 8192 : effort === 'high' || effort === 'max' ? 24576 : null;
   }
   if (budget === null) {
     const thinking = extras['thinking'];

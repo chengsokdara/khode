@@ -47,6 +47,10 @@ type SubagentConfig struct {
 	// Model. A kind's own model pin (user agents' `model` frontmatter
 	// field) beats both.
 	SubModel func() string
+	// ReasoningEffort is the user's reasoning budget, read live so a
+	// settings change applies to the next child. Empty is fine: the
+	// provider fills GLM-5.3's default from the model name.
+	ReasoningEffort func() string
 	// ToolSource is the main tool registry user-defined kinds borrow
 	// non-built-in tools (MCP) from; nil restricts them to the built-in
 	// constructors. The registry is only read.
@@ -143,15 +147,20 @@ func (t *TaskTool) Exec(ctx context.Context, args json.RawMessage) (string, erro
 		model = spec.Model // a kind's own pin beats the global override
 	}
 
+	effort := ""
+	if t.cfg.ReasoningEffort != nil {
+		effort = t.cfg.ReasoningEffort()
+	}
 	sub := &Runner{
-		Provider:  t.cfg.Provider,
-		Session:   NewMemorySession(),
-		Tools:     registryFor(kind, t.cfg.Workdir, t.toolSource()),
-		Model:     model,
-		MaxTokens: t.cfg.MaxTokens(),
-		System:    t.subagentSystem(spec),
-		Mode:      t.cfg.Mode, // live: subagents follow mid-turn switches too
-		Approver:  t.cfg.Approver,
+		Provider:        t.cfg.Provider,
+		Session:         NewMemorySession(),
+		Tools:           registryFor(kind, t.cfg.Workdir, t.toolSource()),
+		Model:           model,
+		MaxTokens:       t.cfg.MaxTokens(),
+		ReasoningEffort: effort,
+		System:          t.subagentSystem(spec),
+		Mode:            t.cfg.Mode, // live: subagents follow mid-turn switches too
+		Approver:        t.cfg.Approver,
 	}
 	if t.cfg.Hooks != nil {
 		sub.Hooks = t.cfg.Hooks()

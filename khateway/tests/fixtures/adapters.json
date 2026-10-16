@@ -1326,7 +1326,7 @@
   },
   {
     "adapter": "openai",
-    "name": "M17: canonical reasoning effort → reasoning_effort re-emitted; message reasoning dropped from history",
+    "name": "M17: canonical reasoning effort re-emitted and history reasoning_content kept",
     "cand": {
       "model": {
         "upstreamModel": "gpt-5"
@@ -1378,7 +1378,8 @@
           },
           {
             "role": "assistant",
-            "content": "previous"
+            "content": "previous",
+            "reasoning_content": "old reasoning"
           },
           {
             "role": "user",
@@ -1388,6 +1389,74 @@
         "model": "gpt-5",
         "stream": false,
         "reasoning_effort": "high"
+      },
+      "timeoutMs": 60000
+    }
+  },
+  {
+    "adapter": "openai",
+    "name": "GLM: assistant tool turn replays reasoning_content",
+    "cand": {
+      "model": {
+        "upstreamModel": "z-ai/glm-5.3"
+      },
+      "provider": {
+        "name": "NVIDIA NIM",
+        "baseUrl": "https://integrate.api.nvidia.com/v1"
+      },
+      "baseUrl": "https://integrate.api.nvidia.com/v1"
+    },
+    "req": {
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning": {
+            "text": "call the tool"
+          },
+          "toolCalls": [
+            {
+              "id": "call_1",
+              "name": "read",
+              "arguments": "{\"path\":\"main.go\"}"
+            }
+          ],
+          "extra": {}
+        }
+      ],
+      "stream": true,
+      "reasoning": {
+        "effort": "max"
+      },
+      "options": {},
+      "extras": {}
+    },
+    "expected": {
+      "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": null,
+            "reasoning_content": "call the tool",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{\"path\":\"main.go\"}"
+                }
+              }
+            ]
+          }
+        ],
+        "model": "z-ai/glm-5.3",
+        "stream": true,
+        "reasoning_effort": "max"
       },
       "timeoutMs": 60000
     }

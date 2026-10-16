@@ -42,6 +42,7 @@ function toOpenAiMessage(m: CanonicalMessage): Record<string, unknown> {
       ...m.extra,
       role: 'assistant',
       content: m.content || null,
+      ...(m.reasoning?.text ? { reasoning_content: m.reasoning.text } : {}),
       tool_calls: m.toolCalls.map((tc) => ({
         id: tc.id,
         type: 'function',
@@ -49,18 +50,22 @@ function toOpenAiMessage(m: CanonicalMessage): Record<string, unknown> {
       })),
     };
   }
+  // Preserved thinking (GLM, DeepSeek): the original trace has to ride
+  // back on the assistant turn. Absent when the message has none, so
+  // every other history stays byte-identical.
+  const reasoning = m.role === 'assistant' && m.reasoning?.text ? { reasoning_content: m.reasoning.text } : {};
   if (m.contentParts?.length) {
     // Order-preserving emission — the source mixed text and images (or stacked
     // images) and their positions are information.
-    return { ...m.extra, role: m.role, content: m.contentParts.map(openAiContentPart) };
+    return { ...m.extra, ...reasoning, role: m.role, content: m.contentParts.map(openAiContentPart) };
   }
   if (m.images?.length) {
     const parts: Record<string, unknown>[] = [];
     if (m.content) parts.push({ type: 'text', text: m.content });
     parts.push(...m.images.map(imageUrlPart));
-    return { ...m.extra, role: m.role, content: parts };
+    return { ...m.extra, ...reasoning, role: m.role, content: parts };
   }
-  return { ...m.extra, role: m.role, content: m.content };
+  return { ...m.extra, ...reasoning, role: m.role, content: m.content };
 }
 
 /**

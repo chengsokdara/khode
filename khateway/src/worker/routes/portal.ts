@@ -29,6 +29,7 @@ import {
   revokeUserSession,
 } from '../auth';
 import { loginAllowed } from '../ratelimit/client';
+import { turnstileFailure, turnstileSiteKey } from '../turnstile';
 
 type UserRow = typeof users.$inferSelect;
 type PortalEnv = { Bindings: Env; Variables: { userId: string; user: UserRow } };
@@ -116,6 +117,11 @@ async function keyUsage(db: ReturnType<typeof getDb>, id: string): Promise<{ spe
 // Public: the rate limiter is the in-memory per-isolate one shared with admin
 // login (10/min/IP) — brute force gets the same hard time.
 
+portalApp.get('/turnstile', (c) => {
+  const siteKey = turnstileSiteKey(c.env);
+  return c.json(siteKey ? { enabled: true, siteKey } : { enabled: false });
+});
+
 portalApp.post('/signup', async (c) => {
   const body = await readJson(c);
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
@@ -130,6 +136,8 @@ portalApp.post('/signup', async (c) => {
   if ((await getPublicSignup(c.env)) === 'off') {
     return c.json(apiErr('Public signups are currently disabled on this Khateway instance.'), 403);
   }
+  const captcha = await turnstileFailure(c.env, body?.turnstile_token, ip);
+  if (captcha) return c.json(apiErr(captcha), 400);
 
   const now = Date.now();
   const rec = {
@@ -156,6 +164,8 @@ portalApp.post('/login', async (c) => {
   const ip = c.req.header('cf-connecting-ip') ?? 'local';
   if (!(await loginAllowed(c.env, 'portal-login', ip))) return c.json(apiErr('Too many attempts — try again in a minute.'), 429);
   const body = await readJson(c);
+  const captcha = await turnstileFailure(c.env, body?.turnstile_token, ip);
+  if (captcha) return c.json(apiErr(captcha), 400);
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   const password = typeof body?.password === 'string' ? body.password : '';
   const [user] = email ? await getDb(c.env).select().from(users).where(eq(users.email, email)) : [];

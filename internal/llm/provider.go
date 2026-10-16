@@ -49,8 +49,11 @@ type ToolResult struct {
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
-	// Thinking is the assistant's reasoning for this turn, kept for
-	// display on resume only: providers never replay it to the API.
+	// Thinking is the assistant's reasoning for this turn, kept on the
+	// transcript for resume. The OpenAI client replays it as
+	// reasoning_content (GLM and DeepSeek preserved thinking require
+	// the original trace on the next turn). The Anthropic client does
+	// not: that API wants signed thinking blocks khode does not store.
 	Thinking string `json:"thinking,omitempty"`
 	// ToolCalls lists the calls requested by an assistant turn.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
@@ -65,6 +68,10 @@ type Request struct {
 	MaxTokens int
 	Messages  []Message
 	Tools     []ToolDef
+	// ReasoningEffort is the OpenAI-protocol reasoning_effort value:
+	// "low", "high", or "max". Empty means the provider decides —
+	// GLM-5.3 sends "high", every other model omits the field.
+	ReasoningEffort string
 }
 
 // Event is one item streamed back by a Provider. Implementations send zero

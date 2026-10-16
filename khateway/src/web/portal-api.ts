@@ -127,10 +127,17 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const portalApi = {
-  signup: (email: string, password: string) =>
-    req<{ user: PortalUser }>('/api/portal/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  login: (email: string, password: string) =>
-    req<{ user: PortalUser }>('/api/portal/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  turnstile: () => req<{ enabled: boolean; siteKey?: string }>('/api/portal/turnstile'),
+  signup: (email: string, password: string, turnstileToken?: string) =>
+    req<{ user: PortalUser }>('/api/portal/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, turnstile_token: turnstileToken }),
+    }),
+  login: (email: string, password: string, turnstileToken?: string) =>
+    req<{ user: PortalUser }>('/api/portal/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, turnstile_token: turnstileToken }),
+    }),
   logout: () => req<{ ok: boolean }>('/api/portal/logout', { method: 'POST' }),
   me: () => req<MeResponse>('/api/portal/me'),
   changePassword: (currentPassword: string, newPassword: string) =>

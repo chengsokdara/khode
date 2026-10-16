@@ -116,6 +116,10 @@ type Config struct {
 	// context gatherer run on (a faster/cheaper one fits their narrow
 	// jobs). Empty means the main model.
 	SubagentModel string `json:"subagent_model,omitempty"`
+	// ReasoningEffort is the OpenAI-protocol reasoning budget the user
+	// picked: "low", "high", or "max". Empty means GLM-5.3 sends high
+	// and every other model omits the field.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Icons selects the glyph pack the UI draws its marks from: "auto"
 	// (safe Unicode symbols), "nerd" (Nerd Font icons, needs a patched
 	// terminal font), or "ascii" (plain text for dumb terminals).
@@ -139,6 +143,28 @@ func (c *Config) SubModel() string { return strings.TrimSpace(c.SubagentModel) }
 
 // SetSubagentModel persists the subagent model override; empty clears it.
 func (c *Config) SetSubagentModel(name string) { c.SubagentModel = strings.TrimSpace(name) }
+
+// ReasoningEffortValue returns the saved effort, or "" when unset or
+// not one of low/high/max.
+func (c *Config) ReasoningEffortValue() string {
+	switch strings.ToLower(strings.TrimSpace(c.ReasoningEffort)) {
+	case "low", "high", "max":
+		return strings.ToLower(strings.TrimSpace(c.ReasoningEffort))
+	}
+	return ""
+}
+
+// SetReasoningEffort persists a reasoning budget. Anything but
+// low/high/max clears it, which is the "let the model family decide"
+// setting.
+func (c *Config) SetReasoningEffort(v string) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "low", "high", "max":
+		c.ReasoningEffort = strings.ToLower(strings.TrimSpace(v))
+	default:
+		c.ReasoningEffort = ""
+	}
+}
 
 // Icon-set values accepted by SetIcons; IconAuto is the default.
 const (
@@ -288,6 +314,7 @@ type rawConfig struct {
 	Hooks           Hooks                     `json:"hooks"`
 	GatherContext   *bool                     `json:"gather_context"`
 	SubagentModel   string                    `json:"subagent_model"`
+	ReasoningEffort string                    `json:"reasoning_effort"`
 	Icons           string                    `json:"icons"`
 	Model           string                    `json:"model"` // legacy single-model schema
 }
@@ -314,6 +341,7 @@ func (r rawConfig) apply() *Config {
 		cfg.GatherContext = r.GatherContext
 	}
 	cfg.SubagentModel = strings.TrimSpace(r.SubagentModel)
+	cfg.SetReasoningEffort(r.ReasoningEffort)
 	cfg.Icons = r.Icons
 	if len(r.CustomProviders) > 0 {
 		cfg.CustomProviders = r.CustomProviders

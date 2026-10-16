@@ -60,10 +60,11 @@ export interface CanonicalMessage {
   /** Tool result binding (role 'tool'): the tool-call id this message answers. */
   toolCallId?: string;
   /** M17 reasoning content carried in conversation history (anthropic thinking
-   * blocks, openai `reasoning_content`, responses reasoning items). Only
-   * re-emitted to upstreams that can express it (anthropic thinking blocks —
-   * with signature; dropped for openai/gemini histories — reasoning is never
-   * required to continue a conversation). */
+   * blocks, openai `reasoning_content`, responses reasoning items).
+   * Re-emitted to anthropic as thinking blocks (signature preserved) and to
+   * openai-compatible upstreams as `reasoning_content` — GLM and DeepSeek
+   * preserved thinking require the original trace on the next turn. Gemini
+   * histories drop it. */
   reasoning?: CanonicalReasoningContent;
   /** P1: anthropic prompt-cache marker folded from the message's content blocks (see CanonicalCacheControl). */
   cacheControl?: CanonicalCacheControl;
@@ -103,8 +104,10 @@ export interface CanonicalCacheControl {
  * and the responses `reasoning` param. Adapters map it per target dialect.
  */
 export interface CanonicalReasoning {
-  /** Client-declared effort bucket ('minimal' = as little as possible — gemini disables thinking). */
-  effort?: 'minimal' | 'low' | 'medium' | 'high';
+  /** Client-declared effort bucket. 'minimal' is as little as possible
+   * (gemini disables thinking). 'max' is the NIM GLM deepest bucket; anthropic
+   * and gemini have no such bucket and map it onto 'high'. */
+  effort?: 'minimal' | 'low' | 'medium' | 'high' | 'max';
   /** Explicit token budget (anthropic budget_tokens). Wins over effort when set. */
   budgetTokens?: number;
 }

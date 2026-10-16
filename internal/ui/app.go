@@ -417,15 +417,16 @@ func isFinalAnswer(msgs []llm.Message, idx int) bool {
 func (m *Model) registerTaskTool() {
 	modeFn := func() perm.Mode { return perm.Parse(m.cfg.PermissionMode) }
 	m.tools.Register(agent.NewTaskTool(agent.SubagentConfig{
-		Provider:   m.provider,
-		Workdir:    m.workdir,
-		Model:      m.cfg.Model,
-		SubModel:   m.cfg.SubModel,
-		MaxTokens:  func() int { return m.cfg.MaxTokens },
-		Mode:       modeFn,
-		Approver:   m.approvals,
-		ToolSource: func() *tools.Registry { return m.tools },
-		Hooks:      func() *hooks.Runner { return hooks.New(m.cfg.Hooks, m.workdir) },
+		Provider:        m.provider,
+		Workdir:         m.workdir,
+		Model:           m.cfg.Model,
+		SubModel:        m.cfg.SubModel,
+		MaxTokens:       func() int { return m.cfg.MaxTokens },
+		ReasoningEffort: func() string { return m.cfg.ReasoningEffortValue() },
+		Mode:            modeFn,
+		Approver:        m.approvals,
+		ToolSource:      func() *tools.Registry { return m.tools },
+		Hooks:           func() *hooks.Runner { return hooks.New(m.cfg.Hooks, m.workdir) },
 		Progress: func(p agent.SubagentProgress) {
 			// Best-effort feed: drop a line rather than stall the child.
 			select {
@@ -1584,16 +1585,17 @@ func (m *Model) startTurnWith(input, preface string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.todoNow, m.todoDone, m.todoTotal = "", 0, 0 // fresh turn, no task yet
 	runner := &agent.Runner{
-		Provider:  m.provider,
-		Session:   m.session,
-		Tools:     m.tools,
-		Model:     m.cfg.Model(),
-		MaxTokens: m.cfg.MaxTokens,
-		System:    agent.SystemPrompt(m.workdir),
-		Mode:      func() perm.Mode { return m.mode() },
-		Approver:  m.approvals,
-		Hooks:     hooks.New(m.cfg.Hooks, m.workdir),
-		Preface:   preface,
+		Provider:        m.provider,
+		Session:         m.session,
+		Tools:           m.tools,
+		Model:           m.cfg.Model(),
+		MaxTokens:       m.cfg.MaxTokens,
+		ReasoningEffort: m.cfg.ReasoningEffortValue(),
+		System:          agent.SystemPrompt(m.workdir),
+		Mode:            func() perm.Mode { return m.mode() },
+		Approver:        m.approvals,
+		Hooks:           hooks.New(m.cfg.Hooks, m.workdir),
+		Preface:         preface,
 	}
 	debug.Printf("start turn: %s/%s session=%s", m.provider.Name(), m.cfg.Model(), m.session.Name())
 	ch := runner.Run(ctx, input)
@@ -1630,14 +1632,15 @@ func (m *Model) startGather(input string) tea.Cmd {
 		model = fast
 	}
 	sub := &agent.Runner{
-		Provider:  m.provider,
-		Session:   agent.NewMemorySession(),
-		Tools:     agent.GathererRegistry(m.workdir),
-		Model:     model,
-		MaxTokens: m.cfg.MaxTokens,
-		System:    agent.GathererSystemPrompt(m.workdir),
-		MaxRounds: gatherMaxRounds,
-		Mode:      func() perm.Mode { return m.mode() },
+		Provider:        m.provider,
+		Session:         agent.NewMemorySession(),
+		Tools:           agent.GathererRegistry(m.workdir),
+		Model:           model,
+		MaxTokens:       m.cfg.MaxTokens,
+		ReasoningEffort: m.cfg.ReasoningEffortValue(),
+		System:          agent.GathererSystemPrompt(m.workdir),
+		MaxRounds:       gatherMaxRounds,
+		Mode:            func() perm.Mode { return m.mode() },
 		// No approver: the gatherer is read-only, so nothing it does can
 		// ask, and a mid-run mode switch only ever loosens reads.
 		Hooks: hooks.New(m.cfg.Hooks, m.workdir),
@@ -1782,14 +1785,15 @@ func (m *Model) cycleMode() {
 // next automatic one would do.
 func (m *Model) runCompact() tea.Cmd {
 	runner := &agent.Runner{
-		Provider:  m.provider,
-		Session:   m.session,
-		Tools:     m.tools,
-		Model:     m.cfg.Model(),
-		MaxTokens: m.cfg.MaxTokens,
-		System:    agent.SystemPrompt(m.workdir),
-		Mode:      func() perm.Mode { return m.mode() },
-		Approver:  m.approvals,
+		Provider:        m.provider,
+		Session:         m.session,
+		Tools:           m.tools,
+		Model:           m.cfg.Model(),
+		MaxTokens:       m.cfg.MaxTokens,
+		ReasoningEffort: m.cfg.ReasoningEffortValue(),
+		System:          agent.SystemPrompt(m.workdir),
+		Mode:            func() perm.Mode { return m.mode() },
+		Approver:        m.approvals,
 	}
 	return func() tea.Msg {
 		n, err := runner.Compact(context.Background())

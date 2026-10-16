@@ -1,8 +1,17 @@
 # MEMORY.md — Khateway cross-session memory
 
-Last updated: 2026-09-28 (test-connection classifier + auth-failure logging + password reset + global markup shipped + deployed)
+Last updated: 2026-10-16 (monorepo, GLM reasoning_content passthrough, Turnstile hook; not deployed)
 
 ## Cross-session facts
+
+- **Monorepo + GLM reasoning + Turnstile (2026-10-16)** — this package
+  is `khateway/` inside the khode repo. OpenAI upstream histories keep
+  `reasoning_content` when the canonical message has it (GLM / DeepSeek
+  preserved thinking). Effort `max` is a legal openai value; anthropic
+  and gemini spend the high budget (24576) for it. Turnstile stays off
+  until BOTH `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are on the
+  worker. The seeded NVIDIA NIM provider is `free_tier` and must not be
+  the home of paid `z-ai/glm-5.3` rows. Not deployed.
 
 - **Test-connection classifier + auth-failure logging + password reset +
   global markup (2026-09-28)** — contracts, do not regress:

@@ -787,5 +787,41 @@
         "extras": {}
       }
     }
+  },
+  {
+    "name": "reasoning_effort max is legal (NIM GLM)",
+    "body": {
+      "model": "z-ai/glm-5.3",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "reasoning_effort": "max"
+    },
+    "expected": {
+      "ok": true,
+      "model": "z-ai/glm-5.3",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "reasoning": {
+          "effort": "max"
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
   }
 ]

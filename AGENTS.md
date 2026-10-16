@@ -12,6 +12,16 @@ khode is a terminal-native coding assistant (Claude Code style) built in Go
 with Bubble Tea. Long-term it becomes a full agentic coding tool: it can read,
 edit, and run code in the user's project behind a permission system.
 
+## Repository layout
+
+The Go module stays at this root (`module khode`). Khateway, the gateway
+khode speaks to, is the `khateway/` tree (its own `package.json`,
+wrangler project, and docs). Go commands (`go build ./...`, `go test ./...`,
+`gofmt`) run from this root. Gateway commands (`npm run check`, `npm test`,
+`npm run dev`, `wrangler`) run from `khateway/`. Gateway work follows
+`khateway/AGENTS.md` and `khateway/RULES.md`. Each tree keeps its own
+`STATUS.md`, `ROADMAP.md`, and `MEMORY.md`.
+
 ## Stack
 
 - **Language:** Go (≥ 1.27), standard library layout (`cmd/`, `internal/`)
