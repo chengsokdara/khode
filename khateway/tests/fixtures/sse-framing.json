@@ -1,0 +1,30 @@
+[
+  {
+    "name": "CRLF line endings + keep-alive comment + multi-line data",
+    "input": "event: a\r\ndata: l1\r\ndata: l2\r\n: keep-alive\r\n\r\ndata: [DONE]\r\n\r\n",
+    "expected": [
+      { "event": "a", "data": "l1\nl2" },
+      { "event": "", "data": "[DONE]" }
+    ]
+  },
+  {
+    "name": "trailing unterminated event is flushed on close",
+    "input": "data: x",
+    "expected": [{ "event": "", "data": "x" }]
+  },
+  {
+    "name": "event without any data line carries nothing",
+    "input": "event: ping\n\ndata: y\n\n",
+    "expected": [{ "event": "", "data": "y" }]
+  },
+  {
+    "name": "chunk boundaries splitting an event mid-field are reassembled",
+    "chunks": ["event: a\nda", "ta: {\"x\":1}\n", "\n"],
+    "expected": [{ "event": "a", "data": "{\"x\":1}" }]
+  },
+  {
+    "name": "empty input produces no events",
+    "input": "",
+    "expected": []
+  }
+]

@@ -1,0 +1,102 @@
+[
+  {
+    "name": "not opted in (master on, neither model nor key opted) → rejected",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hi", "extra": {} }],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "optedIn": false,
+    "expected": { "eligible": false, "reason": "not_opted_in" }
+  },
+  {
+    "name": "opted-in plain text request → eligible",
+    "request": {
+      "messages": [
+        { "role": "system", "content": "You are helpful.", "extra": {} },
+        { "role": "user", "content": "Hi", "extra": {} }
+      ],
+      "stream": false,
+      "options": { "temperature": 0.5 },
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": true, "reason": null }
+  },
+  {
+    "name": "streaming request → rejected",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hi", "extra": {} }],
+      "stream": true,
+      "options": {},
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": false, "reason": "streaming" }
+  },
+  {
+    "name": "tools offered → rejected",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hi", "extra": {} }],
+      "stream": false,
+      "options": { "tools": [{ "name": "get_time" }] },
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": false, "reason": "tools" }
+  },
+  {
+    "name": "assistant toolCalls in history → rejected",
+    "request": {
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [{ "id": "call_1", "name": "get_time", "arguments": "{}" }],
+          "extra": {}
+        }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": false, "reason": "tool_history" }
+  },
+  {
+    "name": "tool result in history → rejected",
+    "request": {
+      "messages": [{ "role": "tool", "content": "12:00", "toolCallId": "call_1", "extra": {} }],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": false, "reason": "tool_history" }
+  },
+  {
+    "name": "images (vision) → rejected",
+    "request": {
+      "messages": [
+        { "role": "user", "content": "What is this?", "images": [{ "url": "https://x/y.png" }], "extra": {} }
+      ],
+      "stream": false,
+      "options": {},
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": false, "reason": "images" }
+  },
+  {
+    "name": "n > 1 → rejected",
+    "request": {
+      "messages": [{ "role": "user", "content": "Hi", "extra": {} }],
+      "stream": false,
+      "options": { "n": 3 },
+      "extras": {}
+    },
+    "optedIn": true,
+    "expected": { "eligible": false, "reason": "n_gt_1" }
+  }
+]

@@ -1,0 +1,690 @@
+[
+  {
+    "translator": "anthropicToOpenAi",
+    "name": "text blocks folded + tool_use → tool_calls + usage/stop mapping",
+    "payload": {
+      "id": "msg_01ABC",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Let me check."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "get_weather",
+          "input": {
+            "city": "Paris"
+          }
+        },
+        {
+          "type": "text",
+          "text": "One moment."
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 23,
+        "output_tokens": 59
+      }
+    },
+    "model": "glm-5.3-flash",
+    "expected": {
+      "id": "chatcmpl-msg_01ABC",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "glm-5.3-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Let me check.\nOne moment.",
+            "tool_calls": [
+              {
+                "id": "toolu_1",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Paris\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 59,
+        "total_tokens": 82
+      }
+    }
+  },
+  {
+    "name": "max_tokens stop_reason → length; end_turn → stop",
+    "translator": "anthropicToOpenAi",
+    "payload": {
+      "id": "msg_02",
+      "content": [
+        {
+          "type": "text",
+          "text": "Truncated…"
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 9
+      }
+    },
+    "model": "glm-5.3-flash",
+    "expected": {
+      "id": "chatcmpl-msg_02",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "glm-5.3-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Truncated…"
+          },
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 5,
+        "completion_tokens": 9,
+        "total_tokens": 14
+      }
+    }
+  },
+  {
+    "translator": "openAiToAnthropic",
+    "name": "content string + tool_calls → text/tool_use blocks + usage/stop mapping",
+    "payload": {
+      "id": "chatcmpl-XYZ",
+      "object": "chat.completion",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Here you go.",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Paris\",\"unit\":\"C\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 20
+      }
+    },
+    "model": "gpt-5",
+    "expected": {
+      "id": "msg_XYZ",
+      "type": "message",
+      "role": "assistant",
+      "model": "gpt-5",
+      "content": [
+        {
+          "type": "text",
+          "text": "Here you go."
+        },
+        {
+          "type": "tool_use",
+          "id": "call_1",
+          "name": "get_weather",
+          "input": {
+            "city": "Paris",
+            "unit": "C"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 20
+      }
+    }
+  },
+  {
+    "translator": "openAiToAnthropic",
+    "name": "finish length → max_tokens; refusal part folded into text",
+    "payload": {
+      "id": "chatcmpl-REF",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Part one."
+              }
+            ]
+          },
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 7,
+        "completion_tokens": 11
+      }
+    },
+    "model": "gpt-5",
+    "expected": {
+      "id": "msg_REF",
+      "type": "message",
+      "role": "assistant",
+      "model": "gpt-5",
+      "content": [
+        {
+          "type": "text",
+          "text": "Part one."
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 7,
+        "output_tokens": 11
+      }
+    }
+  },
+  {
+    "translator": "openAiToResponse",
+    "name": "tool-only turn → function_call output only (no message item)",
+    "payload": {
+      "id": "chatcmpl-XYZ",
+      "object": "chat.completion",
+      "created": 1726500000,
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_abc",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 5
+      }
+    },
+    "model": "gpt-5",
+    "expected": {
+      "id": "resp_XYZ",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "completed",
+      "model": "gpt-5",
+      "output": [
+        {
+          "type": "function_call",
+          "id": "fc_abc",
+          "call_id": "call_abc",
+          "name": "get_weather",
+          "arguments": "{}",
+          "status": "completed"
+        }
+      ],
+      "error": null,
+      "incomplete_details": null,
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15
+      }
+    }
+  },
+  {
+    "translator": "openAiToResponse",
+    "name": "length finish → incomplete/max_output_tokens; text + calls ordered message-first",
+    "payload": {
+      "id": "chatcmpl-CUT",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Partial answer",
+            "tool_calls": [
+              {
+                "id": "fc_call9",
+                "type": "function",
+                "function": {
+                  "name": "next_step",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          },
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 4
+      }
+    },
+    "model": "gpt-5",
+    "expected": {
+      "id": "resp_CUT",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "incomplete",
+      "model": "gpt-5",
+      "output": [
+        {
+          "type": "message",
+          "id": "msg_CUT",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Partial answer",
+              "annotations": []
+            }
+          ]
+        },
+        {
+          "type": "function_call",
+          "id": "fc_call9",
+          "call_id": "fc_call9",
+          "name": "next_step",
+          "arguments": "[]",
+          "status": "completed"
+        }
+      ],
+      "error": null,
+      "incomplete_details": {
+        "reason": "max_output_tokens"
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7
+      }
+    }
+  },
+  {
+    "translator": "anthropicToResponse",
+    "name": "text blocks folded into one output_text part; max_tokens → incomplete",
+    "payload": {
+      "id": "msg_01ABC",
+      "content": [
+        {
+          "type": "text",
+          "text": "Part 1"
+        },
+        {
+          "type": "text",
+          "text": "Part 2"
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 23,
+        "output_tokens": 59
+      }
+    },
+    "model": "glm-5.3-flash",
+    "expected": {
+      "id": "resp_01ABC",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "incomplete",
+      "model": "glm-5.3-flash",
+      "output": [
+        {
+          "type": "message",
+          "id": "msg_01ABC",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Part 1\nPart 2",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "incomplete_details": {
+        "reason": "max_output_tokens"
+      },
+      "usage": {
+        "input_tokens": 23,
+        "output_tokens": 59,
+        "total_tokens": 82
+      }
+    }
+  },
+  {
+    "translator": "anthropicToResponse",
+    "name": "tool_use blocks → function_call items (input object → JSON-string arguments)",
+    "payload": {
+      "id": "msg_tool",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "get_weather",
+          "input": {
+            "city": "Paris"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_2",
+          "name": "get_time",
+          "input": {}
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 30
+      }
+    },
+    "model": "glm-5.3-flash",
+    "expected": {
+      "id": "resp_tool",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "completed",
+      "model": "glm-5.3-flash",
+      "output": [
+        {
+          "type": "function_call",
+          "id": "fc_toolu_1",
+          "call_id": "toolu_1",
+          "name": "get_weather",
+          "arguments": "{\"city\":\"Paris\"}",
+          "status": "completed"
+        },
+        {
+          "type": "function_call",
+          "id": "fc_toolu_2",
+          "call_id": "toolu_2",
+          "name": "get_time",
+          "arguments": "{}",
+          "status": "completed"
+        }
+      ],
+      "error": null,
+      "incomplete_details": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 30,
+        "total_tokens": 42
+      }
+    }
+  },
+  {
+    "translator": "anthropicToOpenAi",
+    "name": "M17: thinking blocks → reasoning_content; redacted dropped",
+    "model": "claude-sonnet-4-5",
+    "payload": {
+      "id": "msg_01T",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "step one\nstep two",
+          "signature": "sig9"
+        },
+        {
+          "type": "redacted_thinking",
+          "data": "opaque"
+        },
+        {
+          "type": "text",
+          "text": "The answer"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 20
+      }
+    },
+    "expected": {
+      "id": "chatcmpl-msg_01T",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "claude-sonnet-4-5",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "The answer",
+            "reasoning_content": "step one\nstep two"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30
+      }
+    }
+  },
+  {
+    "translator": "anthropicToResponse",
+    "name": "M17: thinking blocks → reasoning output item leading the message",
+    "model": "claude-sonnet-4-5",
+    "payload": {
+      "id": "msg_01R",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "pondering",
+          "signature": "s"
+        },
+        {
+          "type": "text",
+          "text": "Visible"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 7
+      }
+    },
+    "expected": {
+      "id": "resp_01R",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "completed",
+      "model": "claude-sonnet-4-5",
+      "output": [
+        {
+          "id": "rs_01R",
+          "type": "reasoning",
+          "summary": [
+            {
+              "type": "summary_text",
+              "text": "pondering"
+            }
+          ]
+        },
+        {
+          "id": "msg_01R",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Visible",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "incomplete_details": null,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 7,
+        "total_tokens": 10
+      }
+    }
+  },
+  {
+    "translator": "anthropicToOpenAi",
+    "name": "M18 structured output: synthetic tool_use unwrapped to content (wins over text) + finish stop",
+    "payload": {
+      "id": "msg_01ABC",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "text",
+          "text": "prose"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "structured_output",
+          "input": {
+            "city": "Paris"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 8
+      }
+    },
+    "model": "struct-mock",
+    "opts": {
+      "structuredOutput": true
+    },
+    "expected": {
+      "id": "chatcmpl-msg_01ABC",
+      "object": "chat.completion",
+      "created": "<now>",
+      "model": "struct-mock",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"city\":\"Paris\"}"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "total_tokens": 20
+      }
+    }
+  },
+  {
+    "translator": "anthropicToResponse",
+    "name": "M18 structured output: synthetic tool_use unwrapped to an output_text message item",
+    "payload": {
+      "id": "msg_01ABC",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "structured_output",
+          "input": {
+            "city": "Paris"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 8
+      }
+    },
+    "model": "struct-mock",
+    "opts": {
+      "structuredOutput": true
+    },
+    "expected": {
+      "id": "resp_01ABC",
+      "object": "response",
+      "created_at": "<now>",
+      "status": "completed",
+      "model": "struct-mock",
+      "output": [
+        {
+          "type": "message",
+          "id": "msg_01ABC",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "{\"city\":\"Paris\"}",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "incomplete_details": null,
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20
+      }
+    }
+  }
+]

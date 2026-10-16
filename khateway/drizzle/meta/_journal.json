@@ -1,0 +1,111 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789544364399,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789544814849,
+      "tag": "0001_add_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789544814850,
+      "tag": "0002_provider_adapters",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789544814851,
+      "tag": "0003_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789715468297,
+      "tag": "0004_m8_accounts_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789720686078,
+      "tag": "0005_m9_orgs",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789744564770,
+      "tag": "0006_m10_rate_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789812126655,
+      "tag": "0007_m11_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789823591451,
+      "tag": "0008_m14_playground",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789832800465,
+      "tag": "0009_m15_log_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789833832539,
+      "tag": "0010_m16_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790226178838,
+      "tag": "0011_device_codes",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790251549798,
+      "tag": "0012_oauth_signin",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1790353798366,
+      "tag": "0013_steep_lord_hawal",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1790356374047,
+      "tag": "0014_provider_free_tier",
+      "breakpoints": true
+    }
+  ]
+}

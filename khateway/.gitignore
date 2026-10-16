@@ -1,0 +1,9 @@
+node_modules/
+web-dist/
+dist/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+.video_agent/
+.zcode/

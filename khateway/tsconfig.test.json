@@ -1,0 +1,11 @@
+// Type checking for the vitest suite (tests/ + vitest.config.ts). Extends the
+// worker config because the tests import worker modules directly; Node ≥20
+// provides the runtime globals those modules use (crypto.subtle, streams).
+// "node" types are added for the fixture loader (node:fs).
+{
+  "extends": "./tsconfig.worker.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": ["src/worker", "src/shared", "tests", "vitest.config.ts"]
+}

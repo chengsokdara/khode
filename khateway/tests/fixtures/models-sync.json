@@ -1,0 +1,309 @@
+[
+  {
+    "name": "zero/zero pricing is free",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "meta-llama/llama-3.3-70b-instruct:free", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 8192, "pricingInput": 0, "pricingOutput": 0 },
+    "expected": true
+  },
+  {
+    "name": "paid pricing is not free",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "openai/gpt-4o", "displayName": null, "contextWindow": 128000, "maxOutputTokens": 16384, "pricingInput": 2.5, "pricingOutput": 10 },
+    "expected": false
+  },
+  {
+    "name": ":free suffix counts when the listing carries no pricing",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "deepseek/deepseek-r1:free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null },
+    "expected": true
+  },
+  {
+    "name": "plain id without pricing is not free",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "some-aggregator/model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null },
+    "expected": false
+  },
+  {
+    "name": "verified pricing beats the :free name",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "tricky/model:free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 1, "pricingOutput": 2 },
+    "expected": false
+  },
+  {
+    "name": "one-sided pricing is not verifiable (plain id)",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "half-priced/model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": null },
+    "expected": false
+  },
+  {
+    "name": "one-sided pricing falls back to the :free suffix",
+    "suite": "free",
+    "adapter": "openai",
+    "model": { "id": "half-priced/model:free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": null },
+    "expected": true
+  },
+  {
+    "name": "gemini listing entries are all free-tier",
+    "suite": "free",
+    "adapter": "gemini",
+    "model": { "id": "gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "contextWindow": 1048576, "maxOutputTokens": 65536, "pricingInput": null, "pricingOutput": null },
+    "expected": true
+  },
+  {
+    "name": "free_tier provider makes a pricing-less plain id free (Groq-style listing)",
+    "suite": "free",
+    "adapter": "openai",
+    "providerFreeTier": true,
+    "model": { "id": "llama-3.3-70b-versatile", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 32768, "pricingInput": null, "pricingOutput": null },
+    "expected": true
+  },
+  {
+    "name": "free_tier flag wins even over priced entries (whole-API tier; never set on OpenRouter)",
+    "suite": "free",
+    "adapter": "openai",
+    "providerFreeTier": true,
+    "model": { "id": "some/model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 2.5, "pricingOutput": 10 },
+    "expected": true
+  },
+  {
+    "name": "mixed openai listing keeps only the verified/suffixed free ids",
+    "suite": "select",
+    "listings": [
+      {
+        "adapter": "openai",
+        "models": [
+          { "id": "a/free-ish", "displayName": null, "contextWindow": 1000, "maxOutputTokens": 100, "pricingInput": 0, "pricingOutput": 0 },
+          { "id": "b/paid", "displayName": null, "contextWindow": 1000, "maxOutputTokens": 100, "pricingInput": 5, "pricingOutput": 40 },
+          { "id": "c:free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null },
+          { "id": "d/plain", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null }
+        ]
+      }
+    ],
+    "expectedIds": ["a/free-ish", "c:free"]
+  },
+  {
+    "name": "gemini adapter makes the same id free where the openai listing could not verify it",
+    "suite": "select",
+    "listings": [
+      {
+        "adapter": "openai",
+        "models": [
+          { "id": "shared/model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null }
+        ]
+      },
+      {
+        "adapter": "gemini",
+        "models": [
+          { "id": "shared/model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null },
+          { "id": "gemini-only", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null }
+        ]
+      }
+    ],
+    "expectedIds": ["shared/model", "gemini-only"]
+  },
+  {
+    "name": "free_tier provider imports the whole pricing-less listing",
+    "suite": "select",
+    "providerFreeTier": true,
+    "listings": [
+      {
+        "adapter": "openai",
+        "models": [
+          { "id": "llama-3.3-70b-versatile", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 32768, "pricingInput": null, "pricingOutput": null },
+          { "id": "openai/gpt-oss-120b", "displayName": null, "contextWindow": 131072, "maxOutputTokens": 32768, "pricingInput": null, "pricingOutput": null }
+        ]
+      }
+    ],
+    "expectedIds": ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+  },
+  {
+    "name": "first adapter wins on free-id collisions",
+    "suite": "select",
+    "listings": [
+      {
+        "adapter": "openai",
+        "models": [
+          { "id": "dup/model", "displayName": "from openai", "contextWindow": 1, "maxOutputTokens": 2, "pricingInput": 0, "pricingOutput": 0 }
+        ]
+      },
+      {
+        "adapter": "anthropic",
+        "models": [
+          { "id": "dup/model", "displayName": "from anthropic", "contextWindow": 3, "maxOutputTokens": 4, "pricingInput": 0, "pricingOutput": 0 }
+        ]
+      }
+    ],
+    "expectedIds": ["dup/model"],
+    "expectedDisplayNames": ["from openai"]
+  },
+  {
+    "name": "different ids collapsing to the same derived slug keep the first entry",
+    "suite": "select",
+    "listings": [
+      {
+        "adapter": "openai",
+        "models": [
+          { "id": "a/x:free", "displayName": "slash form", "contextWindow": 1, "maxOutputTokens": 1, "pricingInput": 0, "pricingOutput": 0 },
+          { "id": "a-x-free", "displayName": "dash form", "contextWindow": 2, "maxOutputTokens": 2, "pricingInput": 0, "pricingOutput": 0 }
+        ]
+      }
+    ],
+    "expectedIds": ["a/x:free"],
+    "expectedDisplayNames": ["slash form"]
+  },
+  {
+    "name": "fresh catalog: free entries become sync-owned creates (OpenRouter ids derive slugs, raw id rides upstream_model)",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "meta-llama/llama-3.3-70b:free", "displayName": "Llama 3.3 70B (free)", "contextWindow": 131072, "maxOutputTokens": 4096, "pricingInput": 0, "pricingOutput": 0 },
+      { "id": "gemini-2.5-flash", "displayName": null, "contextWindow": 1048576, "maxOutputTokens": null, "pricingInput": null, "pricingOutput": null }
+    ],
+    "existing": [],
+    "expected": {
+      "creates": [
+        { "slug": "meta-llama-llama-3.3-70b-free", "upstreamModel": "meta-llama/llama-3.3-70b:free", "displayName": "Llama 3.3 70B (free)", "contextWindow": 131072, "maxOutputTokens": 4096 },
+        { "slug": "gemini-2.5-flash", "upstreamModel": "gemini-2.5-flash", "displayName": null, "contextWindow": 1048576, "maxOutputTokens": null }
+      ],
+      "updates": [],
+      "enables": [],
+      "disables": [],
+      "skips": []
+    }
+  },
+  {
+    "name": "ids that cannot become valid slugs are skipped",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "///", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": 0 },
+      { "id": ".hidden", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": 0 }
+    ],
+    "existing": [],
+    "expected": {
+      "creates": [],
+      "updates": [],
+      "enables": [],
+      "disables": [],
+      "skips": [
+        { "id": "///", "reason": "id cannot be mapped to a valid slug (letters, digits, dots, dashes, underscores)" },
+        { "id": ".hidden", "reason": "id cannot be mapped to a valid slug (letters, digits, dots, dashes, underscores)" }
+      ]
+    }
+  },
+  {
+    "name": "cross-provider slug conflicts are skipped, never touched",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "taken", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": 0 }
+    ],
+    "existing": [
+      { "id": "row-other", "providerId": "p2", "slug": "taken", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": true, "syncSource": "free_sync" }
+    ],
+    "expected": {
+      "creates": [],
+      "updates": [],
+      "enables": [],
+      "disables": [],
+      "skips": [{ "id": "taken", "reason": "slug already in use by another provider" }]
+    }
+  },
+  {
+    "name": "manually managed models on the same provider are skipped",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "admin-made", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": 0 }
+    ],
+    "existing": [
+      { "id": "row-admin", "providerId": "p1", "slug": "admin-made", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": true, "syncSource": null }
+    ],
+    "expected": {
+      "creates": [],
+      "updates": [],
+      "enables": [],
+      "disables": [],
+      "skips": [{ "id": "admin-made", "reason": "slug already in use (manually managed model)" }]
+    }
+  },
+  {
+    "name": "changed non-null metadata updates; a reappeared dropout is re-enabled",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "x-free", "displayName": "X Free v2", "contextWindow": 128000, "maxOutputTokens": 8192, "pricingInput": 0, "pricingOutput": 0 }
+    ],
+    "existing": [
+      { "id": "row1", "providerId": "p1", "slug": "x-free", "displayName": "X Free", "contextWindow": 64000, "maxOutputTokens": 8192, "enabled": false, "syncSource": "free_sync" }
+    ],
+    "expected": {
+      "creates": [],
+      "updates": [{ "id": "row1", "slug": "x-free", "displayName": "X Free v2", "contextWindow": 128000 }],
+      "enables": [{ "id": "row1", "slug": "x-free" }],
+      "disables": [],
+      "skips": []
+    }
+  },
+  {
+    "name": "null upstream metadata never clears stored values",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "x-free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": 0 }
+    ],
+    "existing": [
+      { "id": "row1", "providerId": "p1", "slug": "x-free", "displayName": "X Free", "contextWindow": 64000, "maxOutputTokens": 4096, "enabled": true, "syncSource": "free_sync" }
+    ],
+    "expected": {
+      "creates": [],
+      "updates": [],
+      "enables": [],
+      "disables": [],
+      "skips": []
+    }
+  },
+  {
+    "name": "sync-owned dropouts are disabled; admin rows and other providers are untouched",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [
+      { "id": "still-free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "pricingInput": 0, "pricingOutput": 0 }
+    ],
+    "existing": [
+      { "id": "row-keep", "providerId": "p1", "slug": "still-free", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": true, "syncSource": "free_sync" },
+      { "id": "row-gone", "providerId": "p1", "slug": "now-paid", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": true, "syncSource": "free_sync" },
+      { "id": "row-admin", "providerId": "p1", "slug": "admin-model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": true, "syncSource": null },
+      { "id": "row-other", "providerId": "p2", "slug": "other-provider-model", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": true, "syncSource": "free_sync" }
+    ],
+    "expected": {
+      "creates": [],
+      "updates": [],
+      "enables": [],
+      "disables": [{ "id": "row-gone", "slug": "now-paid" }],
+      "skips": []
+    }
+  },
+  {
+    "name": "already-disabled dropout stays disabled (no double write)",
+    "suite": "plan",
+    "providerId": "p1",
+    "entries": [],
+    "existing": [
+      { "id": "row-gone", "providerId": "p1", "slug": "now-paid", "displayName": null, "contextWindow": null, "maxOutputTokens": null, "enabled": false, "syncSource": "free_sync" }
+    ],
+    "expected": {
+      "creates": [],
+      "updates": [],
+      "enables": [],
+      "disables": [],
+      "skips": []
+    }
+  }
+]

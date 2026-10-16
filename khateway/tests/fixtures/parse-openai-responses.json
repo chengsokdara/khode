@@ -1,0 +1,379 @@
+[
+  {
+    "name": "full M6 request: instructions, all item kinds, tools, options",
+    "body": {
+      "model": "gpt-5",
+      "instructions": "Be terse.",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Hi"
+            }
+          ]
+        },
+        {
+          "type": "function_call",
+          "call_id": "call_1",
+          "name": "get_weather",
+          "arguments": "{\"city\":\"Paris\"}"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "call_1",
+          "output": "22C"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Done"
+            }
+          ]
+        },
+        {
+          "role": "developer",
+          "content": "policy text"
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "refusal",
+              "refusal": "No."
+            },
+            {
+              "type": "input_image",
+              "image_url": "https://example.com/cat.jpg"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "get_weather",
+          "parameters": {
+            "type": "object"
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "function",
+        "name": "get_weather"
+      },
+      "parallel_tool_calls": true,
+      "temperature": 0.5,
+      "max_output_tokens": 256,
+      "stream": false,
+      "store": false,
+      "truncation": "auto",
+      "include": [
+        "reasoning.encrypted_content"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "system",
+            "content": "Be terse.",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "call_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Paris\"}"
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "tool",
+            "content": "22C",
+            "toolCallId": "call_1",
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "Done",
+            "extra": {}
+          },
+          {
+            "role": "developer",
+            "content": "policy text",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "No.",
+            "images": [
+              {
+                "url": "https://example.com/cat.jpg"
+              }
+            ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "No."
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ],
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": [
+            {
+              "name": "get_weather",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ],
+          "toolChoice": {
+            "name": "get_weather"
+          },
+          "parallelToolCalls": true,
+          "temperature": 0.5,
+          "maxTokens": 256,
+          "maxTokensField": "max_tokens"
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "plain-string input becomes a single user message",
+    "body": {
+      "model": "gpt-5",
+      "input": "Just say hi."
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Just say hi.",
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "missing input",
+    "body": {
+      "model": "gpt-5"
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Missing parameter: 'input' is required",
+      "param": "input",
+      "code": "missing_required_parameter"
+    }
+  },
+  {
+    "name": "empty input string rejected",
+    "body": {
+      "model": "gpt-5",
+      "input": ""
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "'input' must not be empty",
+      "param": "input",
+      "code": null
+    }
+  },
+  {
+    "name": "stateful previous_response_id rejected (stateless router)",
+    "body": {
+      "model": "gpt-5",
+      "input": "Hi",
+      "previous_response_id": "resp_abc"
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "'previous_response_id' is not supported — Khateway is a stateless router and does not store conversations or prompt templates.",
+      "param": "previous_response_id",
+      "code": null
+    }
+  },
+  {
+    "name": "reasoning param parses onto canonical reasoning (M17)",
+    "body": {
+      "model": "gpt-5",
+      "input": "Hi",
+      "reasoning": {
+        "effort": "high"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "reasoning": {
+          "effort": "high"
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "item_reference input item rejected",
+    "body": {
+      "model": "gpt-5",
+      "input": [
+        {
+          "type": "item_reference",
+          "id": "msg_abc"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "'item_reference' input items are not supported — Khateway does not store previous responses.",
+      "param": "input[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "max_output_tokens below 16 rejected",
+    "body": {
+      "model": "gpt-5",
+      "input": "Hi",
+      "max_output_tokens": 8
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "max_output_tokens must be an integer between 16 and 1000000000",
+      "param": "max_output_tokens",
+      "code": null
+    }
+  },
+  {
+    "name": "vendor-hosted tool type rejected",
+    "body": {
+      "model": "gpt-5",
+      "input": "Hi",
+      "tools": [
+        {
+          "type": "web_search"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "tools[0]: tool type 'web_search' is vendor-hosted and cannot be routed across dialects — only 'function' tools are supported",
+      "param": "tools",
+      "code": null
+    }
+  },
+  {
+    "name": "unknown string tool_choice rejected",
+    "body": {
+      "model": "gpt-5",
+      "input": "Hi",
+      "tool_choice": "sometimes"
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "tool_choice must be 'auto', 'none', 'required' or a function specifier",
+      "param": "tool_choice",
+      "code": null
+    }
+  },
+  {
+    "name": "M18: text.format json_schema (flat responses shape) → canonical responseFormat",
+    "body": {
+      "model": "gpt-5",
+      "input": "hi",
+      "text": {
+        "format": {
+          "type": "json_schema",
+          "name": "step",
+          "schema": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "step",
+          "schema": {
+            "type": "object"
+          }
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  }
+]

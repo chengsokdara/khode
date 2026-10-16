@@ -1,0 +1,882 @@
+[
+  {
+    "name": "full M6 request: system folding, blocks, tool_use/tool_result, extras",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "system": [
+        {
+          "type": "text",
+          "text": "Sys A"
+        },
+        {
+          "type": "text",
+          "text": "Sys B"
+        }
+      ],
+      "temperature": 1,
+      "top_p": 0.9,
+      "top_k": 40,
+      "metadata": {
+        "user_id": "u1"
+      },
+      "stop_sequences": [
+        "\n\nHuman:"
+      ],
+      "stream": true,
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get weather",
+          "input_schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "any",
+        "disable_parallel_tool_use": true
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hello"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Calling tool"
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_1",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "22C"
+                },
+                {
+                  "type": "image",
+                  "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "AAA"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "And now?"
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "stream": true,
+        "messages": [
+          {
+            "role": "system",
+            "content": "Sys A\nSys B",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "Hello",
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "Calling tool",
+            "toolCalls": [
+              {
+                "id": "toolu_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Paris\"}"
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "tool",
+            "content": "22C",
+            "toolCallId": "toolu_1",
+            "images": [
+              {
+                "url": "data:image/png;base64,AAA"
+              }
+            ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "22C"
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "data:image/png;base64,AAA"
+                }
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "And now?",
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": [
+            {
+              "name": "get_weather",
+              "description": "Get weather",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ],
+          "toolChoice": "required",
+          "parallelToolCalls": false,
+          "maxTokens": 1024,
+          "maxTokensField": "max_tokens",
+          "temperature": 1,
+          "topP": 0.9,
+          "stop": [
+            "\n\nHuman:"
+          ]
+        },
+        "extras": {
+          "top_k": 40,
+          "metadata": {
+            "user_id": "u1"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "tool_result is_error + string content + system as plain string",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "system": "Be terse.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "run it"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_2",
+              "name": "boom",
+              "input": {}
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_2",
+              "content": "exploded",
+              "is_error": true
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "system",
+            "content": "Be terse.",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "run it",
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "toolu_2",
+                "name": "boom",
+                "arguments": "{}"
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "tool",
+            "content": "exploded",
+            "toolCallId": "toolu_2",
+            "extra": {
+              "is_error": true
+            }
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 64,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "url-source image + anthropic url image passes through",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "look"
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.jpg"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "look",
+            "images": [
+              {
+                "url": "https://example.com/cat.jpg"
+              }
+            ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "look"
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ],
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 64,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "invalid JSON body",
+    "invalidJson": true,
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Request body must be valid JSON",
+      "param": null,
+      "code": "invalid_json"
+    }
+  },
+  {
+    "name": "missing max_tokens (REQUIRED in Messages)",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "max_tokens: field required",
+      "param": "max_tokens",
+      "code": "missing_required_parameter"
+    }
+  },
+  {
+    "name": "empty content string rejected",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": ""
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content must not be empty",
+      "param": "messages[0].content",
+      "code": null
+    }
+  },
+  {
+    "name": "thinking block parses onto canonical reasoning (M17)",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "hmm",
+              "signature": "x"
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "",
+            "reasoning": {
+              "text": "hmm",
+              "signature": "x"
+            },
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 64,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "document block rejected (PDFs)",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "AAA"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "'document' content blocks (PDFs) are not supported yet.",
+      "param": "messages[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "tool_use block in a user message rejected",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_1",
+              "name": "f",
+              "input": {}
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0]: 'tool_use' blocks are only valid in assistant messages",
+      "param": "messages[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "image block in an assistant message rejected",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.jpg"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0]: image blocks are only supported in user messages",
+      "param": "messages[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "base64 image with non-image media_type rejected",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "text/plain",
+                "data": "AAA"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0].source.media_type must be an image/* media type",
+      "param": "messages[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "string tool_choice rejected (anthropic vocabulary is an object)",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "tool_choice": "auto"
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "tool_choice must be an object like {type: \"auto\" | \"any\" | \"tool\" | \"none\", name?}",
+      "param": "tool_choice",
+      "code": null
+    }
+  },
+  {
+    "name": "server-hosted anthropic tool rejected",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "tools": [
+        {
+          "type": "web_search_20250305",
+          "name": "web_search"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "tools[0]: server-hosted tool type 'web_search_20250305' cannot be routed across dialects \u2014 only client-executed tools are supported",
+      "param": "tools",
+      "code": null
+    }
+  },
+  {
+    "name": "temperature above 1 rejected (Messages spec range)",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 64,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "temperature": 1.5
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "temperature must be a number between 0 and 1",
+      "param": "temperature",
+      "code": null
+    }
+  },
+  {
+    "name": "M17: thinking param {enabled, budget_tokens} \u2192 canonical reasoning",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 4096,
+      "thinking": {
+        "type": "enabled",
+        "budget_tokens": 2048
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "reasoning": {
+          "budgetTokens": 2048
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 4096,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "M17: thinking type disabled \u2192 no canonical reasoning",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 4096,
+      "thinking": {
+        "type": "disabled"
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "maxTokens": 4096,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "P1: cache_control folds from system block, text block (ttl 1h), tool_result and tool def",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "system": [
+        {
+          "type": "text",
+          "text": "Big system prompt"
+        },
+        {
+          "type": "text",
+          "text": "Appendix",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ],
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get weather",
+          "input_schema": {
+            "type": "object"
+          },
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "First"
+            },
+            {
+              "type": "text",
+              "text": "Last",
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "tu_1",
+              "name": "get_weather",
+              "input": {
+                "city": "SF"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "tu_1",
+              "content": "72F",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "claude-sonnet-4-5",
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "Big system prompt\nAppendix",
+            "cacheControl": {
+              "type": "ephemeral"
+            },
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "First\nLast",
+            "cacheControl": {
+              "type": "ephemeral",
+              "ttl": "1h"
+            },
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "tu_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"SF\"}"
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "tool",
+            "content": "72F",
+            "toolCallId": "tu_1",
+            "cacheControl": {
+              "type": "ephemeral"
+            },
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "options": {
+          "tools": [
+            {
+              "name": "get_weather",
+              "description": "Get weather",
+              "parameters": {
+                "type": "object"
+              },
+              "cacheControl": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ],
+          "toolChoice": null,
+          "maxTokens": 1024,
+          "maxTokensField": "max_tokens",
+          "stop": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "P1: cache_control type must be 'ephemeral'",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi",
+              "cache_control": {
+                "type": "ttl"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0].cache_control.type must be 'ephemeral'",
+      "param": "messages[0]",
+      "code": null
+    }
+  },
+  {
+    "name": "P1: cache_control ttl must be '5m' or '1h'",
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 1024,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi",
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "24h"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[0].cache_control.ttl must be '5m' or '1h'",
+      "param": "messages[0]",
+      "code": null
+    }
+  }
+]

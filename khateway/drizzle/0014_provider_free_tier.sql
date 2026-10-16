@@ -1,0 +1,1 @@
+ALTER TABLE `providers` ADD `free_tier` integer DEFAULT false NOT NULL;

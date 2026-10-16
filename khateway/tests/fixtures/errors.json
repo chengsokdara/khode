@@ -1,0 +1,163 @@
+[
+  {
+    "name": "openai body preserved verbatim",
+    "fn": "toOpenAi",
+    "status": 400,
+    "raw": "{\"error\":{\"message\":\"Invalid value: 'temperature'.\",\"type\":\"invalid_request_error\",\"param\":\"temperature\",\"code\":\"decimal_above_max_value\"}}",
+    "expected": {
+      "error": {
+        "message": "Invalid value: 'temperature'.",
+        "type": "invalid_request_error",
+        "param": "temperature",
+        "code": "decimal_above_max_value"
+      }
+    }
+  },
+  {
+    "name": "anthropic body mapped into openai envelope (status + message kept)",
+    "fn": "toOpenAi",
+    "status": 429,
+    "raw": "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Rate limited\"}}",
+    "expected": {
+      "error": {
+        "message": "Rate limited",
+        "type": "rate_limit_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  {
+    "name": "anthropic-only types normalized onto openai vocabulary",
+    "fn": "toOpenAi",
+    "status": 503,
+    "raw": "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}",
+    "expected": {
+      "error": {
+        "message": "Overloaded",
+        "type": "api_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  {
+    "name": "error-as-string body (some vendors)",
+    "fn": "toOpenAi",
+    "status": 402,
+    "raw": "{\"error\":\"Insufficient credits\"}",
+    "expected": {
+      "error": {
+        "message": "Insufficient credits",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  {
+    "name": "plain text body kept as message, type derived from status",
+    "fn": "toOpenAi",
+    "status": 403,
+    "raw": "plain text denial",
+    "expected": {
+      "error": {
+        "message": "plain text denial",
+        "type": "permission_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  {
+    "name": "empty body → generic message + 5xx api_error",
+    "fn": "toOpenAi",
+    "status": 500,
+    "raw": "",
+    "expected": {
+      "error": {
+        "message": "Upstream returned HTTP 500.",
+        "type": "api_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  {
+    "name": "non-JSON garbage truncated into the message",
+    "fn": "toOpenAi",
+    "status": 502,
+    "raw": "<html>bad gateway</html>",
+    "expected": {
+      "error": {
+        "message": "<html>bad gateway</html>",
+        "type": "api_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  {
+    "name": "anthropic body preserved verbatim",
+    "fn": "toAnthropic",
+    "status": 500,
+    "raw": "{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"Internal server error\"}}",
+    "expected": {
+      "type": "error",
+      "error": { "type": "api_error", "message": "Internal server error" }
+    }
+  },
+  {
+    "name": "openai body mapped into anthropic envelope (overlapping type kept)",
+    "fn": "toAnthropic",
+    "status": 429,
+    "raw": "{\"error\":{\"message\":\"Rate limit reached\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\"}}",
+    "expected": {
+      "type": "error",
+      "error": { "type": "rate_limit_error", "message": "Rate limit reached" }
+    }
+  },
+  {
+    "name": "openai-only types mapped onto anthropic vocabulary",
+    "fn": "toAnthropic",
+    "status": 400,
+    "raw": "{\"error\":{\"message\":\"This model's maximum context length is exceeded\",\"type\":\"context_length_exceeded\"}}",
+    "expected": {
+      "type": "error",
+      "error": {
+        "type": "invalid_request_error",
+        "message": "This model's maximum context length is exceeded"
+      }
+    }
+  },
+  {
+    "name": "openai model_not_found maps onto not_found_error",
+    "fn": "toAnthropic",
+    "status": 404,
+    "raw": "{\"error\":{\"message\":\"No such model\",\"type\":\"model_not_found\",\"code\":\"model_not_found\"}}",
+    "expected": {
+      "type": "error",
+      "error": { "type": "not_found_error", "message": "No such model" }
+    }
+  },
+  {
+    "name": "absent type derived from status (504 → timeout_error)",
+    "fn": "toAnthropic",
+    "status": 504,
+    "raw": "{\"error\":{\"message\":\"Gateway timed out\"}}",
+    "expected": {
+      "type": "error",
+      "error": { "type": "timeout_error", "message": "Gateway timed out" }
+    }
+  },
+  {
+    "name": "empty body → generic message",
+    "fn": "toAnthropic",
+    "status": 418,
+    "raw": "",
+    "expected": {
+      "type": "error",
+      "error": { "type": "invalid_request_error", "message": "Upstream returned HTTP 418." }
+    }
+  }
+]

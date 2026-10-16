@@ -1,0 +1,791 @@
+[
+  {
+    "name": "minimal user message",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "full M6 request: roles, vision, tool calls, tool result, options, extras",
+    "body": {
+      "model": "  glm-5.3-flash  ",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Be terse.",
+          "name": "sys"
+        },
+        {
+          "role": "developer",
+          "content": [
+            {
+              "type": "text",
+              "text": "Use tools."
+            },
+            {
+              "type": "text",
+              "text": "Cite sources."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is in this picture?"
+            },
+            {
+              "type": "image_url",
+              "image_url": {
+                "url": "data:image/png;base64,AAA",
+                "detail": "low"
+              }
+            },
+            {
+              "type": "image_url",
+              "image_url": "https://example.com/cat.jpg"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Paris\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_1",
+          "content": "22C",
+          "custom_field": "rides along"
+        }
+      ],
+      "stream": true,
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "max_completion_tokens": 512,
+      "stop": [
+        "END"
+      ],
+      "n": 1,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "get_weather"
+        }
+      },
+      "parallel_tool_calls": false,
+      "seed": 42,
+      "response_format": {
+        "type": "json_object"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "glm-5.3-flash",
+      "request": {
+        "stream": true,
+        "messages": [
+          {
+            "role": "system",
+            "content": "Be terse.",
+            "extra": {
+              "name": "sys"
+            }
+          },
+          {
+            "role": "developer",
+            "content": "Use tools.\nCite sources.",
+            "extra": {}
+          },
+          {
+            "role": "user",
+            "content": "What is in this picture?",
+            "images": [
+              {
+                "url": "data:image/png;base64,AAA",
+                "detail": "low"
+              },
+              {
+                "url": "https://example.com/cat.jpg"
+              }
+            ],
+            "contentParts": [
+              {
+                "type": "text",
+                "text": "What is in this picture?"
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "data:image/png;base64,AAA",
+                  "detail": "low"
+                }
+              },
+              {
+                "type": "image",
+                "image": {
+                  "url": "https://example.com/cat.jpg"
+                }
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "call_1",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Paris\"}"
+              }
+            ],
+            "extra": {}
+          },
+          {
+            "role": "tool",
+            "content": "22C",
+            "toolCallId": "call_1",
+            "extra": {
+              "custom_field": "rides along"
+            }
+          }
+        ],
+        "options": {
+          "tools": [
+            {
+              "name": "get_weather",
+              "description": "Get weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "toolChoice": {
+            "name": "get_weather"
+          },
+          "parallelToolCalls": false,
+          "temperature": 0.7,
+          "topP": 0.9,
+          "maxTokens": 512,
+          "maxTokensField": "max_completion_tokens",
+          "stop": [
+            "END"
+          ],
+          "n": 1
+        },
+        "extras": {
+          "seed": 42
+        },
+        "responseFormat": {
+          "type": "json_object"
+        }
+      }
+    }
+  },
+  {
+    "name": "stop:null canonicalizes to an empty array (explicit no-stops)",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "stop": null
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null,
+          "stop": []
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "invalid JSON body",
+    "invalidJson": true,
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Request body must be valid JSON",
+      "param": null,
+      "code": "invalid_json"
+    }
+  },
+  {
+    "name": "missing model",
+    "body": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Missing parameter: model is required",
+      "param": "model",
+      "code": "missing_required_parameter"
+    }
+  },
+  {
+    "name": "empty messages array",
+    "body": {
+      "model": "gpt-5",
+      "messages": []
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "Missing parameter: 'messages' must be a non-empty array",
+      "param": "messages",
+      "code": "missing_required_parameter"
+    }
+  },
+  {
+    "name": "legacy functions API rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "functions": [
+        {
+          "name": "f"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "'functions' (legacy function calling) is not supported — use the 'tools' parameter.",
+      "param": "functions",
+      "code": null
+    }
+  },
+  {
+    "name": "unknown role rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "assistant_",
+          "content": "Hi"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].role must be one of system, developer, user, assistant, tool",
+      "param": "messages[0].role",
+      "code": null
+    }
+  },
+  {
+    "name": "tool_calls on a non-assistant message rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "function": {
+                "name": "f"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].tool_calls is only valid on assistant messages",
+      "param": "messages[0].tool_calls",
+      "code": null
+    }
+  },
+  {
+    "name": "tool message without tool_call_id rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "tool",
+          "content": "22C"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].tool_call_id must be a string (the tool call this result answers)",
+      "param": "messages[0].tool_call_id",
+      "code": null
+    }
+  },
+  {
+    "name": "null content without tool_calls rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": null
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content must be a string or a non-empty content-part array",
+      "param": "messages[0].content",
+      "code": null
+    }
+  },
+  {
+    "name": "out-of-range temperature rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "temperature": 3
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "temperature must be a number between 0 and 2",
+      "param": "temperature",
+      "code": null
+    }
+  },
+  {
+    "name": "vendor-hosted tool type rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "tools": [
+        {
+          "type": "web_search"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "tools[0]: tool type 'web_search' is vendor-hosted and cannot be routed across dialects — only 'function' tools are supported",
+      "param": "tools",
+      "code": null
+    }
+  },
+  {
+    "name": "non-http(s) image URL rejected",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "look"
+            },
+            {
+              "type": "image_url",
+              "image_url": "ftp://example.com/cat.jpg"
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "messages[0].content[1].image_url must be a data: URL or an http(s) URL",
+      "param": "messages[0].content",
+      "code": null
+    }
+  },
+  {
+    "name": "stream_options.include_usage true → canonical streamIncludeUsage (removed from extras)",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "stream": true,
+        "streamIncludeUsage": true,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "stream_options.include_usage false → explicit false in canonical",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_usage": false
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "stream": true,
+        "streamIncludeUsage": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi",
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "stream_options non-object → 400 param stream_options",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "stream_options": "yes"
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "stream_options must be an object",
+      "param": "stream_options",
+      "code": null
+    }
+  },
+  {
+    "name": "stream_options.include_usage non-boolean → 400",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "stream_options": {
+        "include_usage": "please"
+      }
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "stream_options.include_usage must be a boolean",
+      "param": "stream_options.include_usage",
+      "code": null
+    }
+  },
+  {
+    "name": "M18: response_format json_object → canonical responseFormat",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "response_format": {
+        "type": "json_object"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "responseFormat": {
+          "type": "json_object"
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "M18: response_format json_schema (openai-chat nesting) → canonical",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "calendar",
+          "strict": true,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "date"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "expected": {
+      "ok": true,
+      "model": "gpt-5",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi",
+            "extra": {}
+          }
+        ],
+        "stream": false,
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "calendar",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "date"
+            ],
+            "additionalProperties": false
+          },
+          "strict": true
+        },
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  },
+  {
+    "name": "M18: response_format unknown type → 400 explicit",
+    "body": {
+      "model": "gpt-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "response_format": {
+        "type": "audio"
+      }
+    },
+    "expected": {
+      "ok": false,
+      "status": 400,
+      "message": "response_format.type must be 'json_object', 'json_schema'",
+      "param": "response_format",
+      "code": null
+    }
+  },
+  {
+    "name": "interleaved text/image content keeps its order in contentParts (folded content still populated)",
+    "body": {
+      "model": "glm-5.3-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            { "type": "text", "text": "Compare fig 1:" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/fig1.png" } },
+            { "type": "text", "text": "with fig 2:" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/fig2.png" } }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "model": "glm-5.3-flash",
+      "request": {
+        "stream": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Compare fig 1:\nwith fig 2:",
+            "images": [
+              { "url": "https://example.com/fig1.png" },
+              { "url": "https://example.com/fig2.png" }
+            ],
+            "contentParts": [
+              { "type": "text", "text": "Compare fig 1:" },
+              { "type": "image", "image": { "url": "https://example.com/fig1.png" } },
+              { "type": "text", "text": "with fig 2:" },
+              { "type": "image", "image": { "url": "https://example.com/fig2.png" } }
+            ],
+            "extra": {}
+          }
+        ],
+        "options": {
+          "tools": null,
+          "toolChoice": null,
+          "parallelToolCalls": null
+        },
+        "extras": {}
+      }
+    }
+  }
+]

@@ -1,0 +1,247 @@
+[
+  {
+    "name": "openai listing array wins",
+    "body": {
+      "object": "list",
+      "data": [
+        {
+          "id": "a"
+        },
+        {
+          "id": "b"
+        }
+      ]
+    },
+    "expected": {
+      "kind": "openai-listing",
+      "modelCount": 2,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "openai listing with odd extra fields still counts (array is authoritative)",
+    "body": {
+      "data": [],
+      "note": "nonstandard envelope"
+    },
+    "expected": {
+      "kind": "openai-listing",
+      "modelCount": 0,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "gemini listing array",
+    "body": {
+      "models": [
+        {
+          "name": "models/x"
+        }
+      ]
+    },
+    "expected": {
+      "kind": "gemini-listing",
+      "modelCount": 1,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "openai error envelope — message preferred",
+    "body": {
+      "error": {
+        "message": "Incorrect API key provided",
+        "type": "invalid_request_error",
+        "code": "invalid_api_key"
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "Incorrect API key provided"
+    }
+  },
+  {
+    "name": "gemini error envelope — message preferred over status",
+    "body": {
+      "error": {
+        "code": 400,
+        "message": "API key not valid. Please pass a valid API key.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "API key not valid. Please pass a valid API key."
+    }
+  },
+  {
+    "name": "anthropic error envelope",
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "authentication_error",
+        "message": "invalid x-api-key"
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "invalid x-api-key"
+    }
+  },
+  {
+    "name": "error envelope without message falls back to status",
+    "body": {
+      "error": {
+        "code": 400,
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "INVALID_ARGUMENT"
+    }
+  },
+  {
+    "name": "error envelope without message/status/type falls back to type",
+    "body": {
+      "error": {
+        "type": "invalid_request_error"
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "invalid_request_error"
+    }
+  },
+  {
+    "name": "error envelope with bare object falls back to generic message",
+    "body": {
+      "error": {
+        "code": 403
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "Upstream reported an error"
+    }
+  },
+  {
+    "name": "string error envelope",
+    "body": {
+      "error": "kaboom"
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "kaboom"
+    }
+  },
+  {
+    "name": "z.ai-style 200 auth-error body (code + msg)",
+    "body": {
+      "code": 1000,
+      "msg": "Invalid API key",
+      "data": null
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "Invalid API key"
+    }
+  },
+  {
+    "name": "z.ai-style message field variant",
+    "body": {
+      "code": 1000,
+      "message": "Unauthorized"
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "Unauthorized"
+    }
+  },
+  {
+    "name": "z.ai-style code without a message derives one from the code",
+    "body": {
+      "code": 1002
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "error code 1002"
+    }
+  },
+  {
+    "name": "code 0 is not an error (success marker, just not a listing)",
+    "body": {
+      "code": 0,
+      "msg": "success"
+    },
+    "expected": {
+      "kind": "unknown",
+      "modelCount": null,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "unrecognized object stays lenient (nonstandard but maybe working provider)",
+    "body": {
+      "foo": "bar"
+    },
+    "expected": {
+      "kind": "unknown",
+      "modelCount": null,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "string body (GitHub Models text/plain OK parsed as JSON string) stays lenient",
+    "body": "OK",
+    "expected": {
+      "kind": "unknown",
+      "modelCount": null,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "array body stays lenient",
+    "body": [
+      {
+        "id": "a"
+      }
+    ],
+    "expected": {
+      "kind": "unknown",
+      "modelCount": null,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "null body (non-JSON) stays lenient",
+    "body": null,
+    "expected": {
+      "kind": "unknown",
+      "modelCount": null,
+      "errorMessage": null
+    }
+  },
+  {
+    "name": "oversized error message is truncated to 240 chars",
+    "body": {
+      "error": {
+        "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    "expected": {
+      "kind": "error",
+      "modelCount": null,
+      "errorMessage": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  }
+]

@@ -1,0 +1,822 @@
+[
+  {
+    "name": "text stream — role chunk, deltas, finish chunk with usage (thoughts folded in), [DONE]",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "inputEvents": [
+      {
+        "data": {
+          "responseId": "AbCdEf",
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "text": "Hello"
+                  }
+                ]
+              },
+              "index": 0
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "AbCdEf",
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "text": " world"
+                  }
+                ]
+              },
+              "index": 0
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "AbCdEf",
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": []
+              },
+              "finishReason": "STOP",
+              "index": 0
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 4,
+            "candidatesTokenCount": 6,
+            "thoughtsTokenCount": 2,
+            "totalTokenCount": 12
+          },
+          "modelVersion": "gemini-2.5-flash"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "Hello"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": " world"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "completion_tokens": 8,
+            "total_tokens": 12
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "name": "include_usage — usage rides a trailing empty-choices chunk instead of the finish chunk",
+    "model": "gemini-2.5-flash",
+    "includeUsage": true,
+    "inputEvents": [
+      {
+        "data": {
+          "responseId": "AbCdEf",
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "text": "Hi"
+                  }
+                ]
+              },
+              "index": 0
+            }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "AbCdEf",
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": []
+              },
+              "finishReason": "STOP",
+              "index": 0
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 3,
+            "candidatesTokenCount": 5,
+            "totalTokenCount": 8
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "Hi"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-AbCdEf",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [],
+          "usage": {
+            "prompt_tokens": 3,
+            "completion_tokens": 5,
+            "total_tokens": 8
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "name": "functionCall chunk → full-arguments tool_call delta + finish_reason tool_calls",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "inputEvents": [
+      {
+        "data": {
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "functionCall": {
+                      "name": "get_weather",
+                      "args": {
+                        "city": "Paris"
+                      }
+                    }
+                  }
+                ]
+              },
+              "finishReason": "STOP",
+              "index": 0
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 9,
+            "candidatesTokenCount": 7,
+            "totalTokenCount": 16
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "tool_calls": [
+                  {
+                    "index": 0,
+                    "id": "call_gemini_0",
+                    "type": "function",
+                    "function": {
+                      "name": "get_weather",
+                      "arguments": "{\"city\":\"Paris\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 9,
+            "completion_tokens": 7,
+            "total_tokens": 16
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "name": "blocked prompt (no candidates, promptFeedback.blockReason) → content_filter finish",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "inputEvents": [
+      {
+        "data": {
+          "promptFeedback": {
+            "blockReason": "SAFETY"
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "content_filter"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "name": "sse: thought parts surface as reasoning_content deltas; malformed skipped; missing finishReason still closes (M17)",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "raw": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thought\":true,\"text\":\"secret\"},{\"text\":\"visible\"}]},\"index\":0}]}\n\ndata: not-json\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[]},\"index\":0}]}\n\n",
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "reasoning_content": "secret"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "visible"
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "name": "two functionCall parts in one chunk get sequential indices and ids",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "inputEvents": [
+      {
+        "data": {
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "functionCall": {
+                      "name": "get_weather",
+                      "args": {
+                        "city": "Paris"
+                      }
+                    }
+                  },
+                  {
+                    "functionCall": {
+                      "name": "get_time",
+                      "args": {
+                        "tz": "UTC"
+                      }
+                    }
+                  }
+                ]
+              },
+              "finishReason": "STOP",
+              "index": 0
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 1,
+            "candidatesTokenCount": 2,
+            "totalTokenCount": 3
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": ""
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "tool_calls": [
+                  {
+                    "index": 0,
+                    "id": "call_gemini_0",
+                    "type": "function",
+                    "function": {
+                      "name": "get_weather",
+                      "arguments": "{\"city\":\"Paris\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "tool_calls": [
+                  {
+                    "index": 1,
+                    "id": "call_gemini_1",
+                    "type": "function",
+                    "function": {
+                      "name": "get_time",
+                      "arguments": "{\"tz\":\"UTC\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": null
+            }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-khateway",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  },
+  {
+    "name": "multi-candidate stream (n>1) — per-index role/delta chunks, per-index finish, shared usage, [DONE]",
+    "model": "gemini-2.5-flash",
+    "includeUsage": false,
+    "inputEvents": [
+      {
+        "data": {
+          "responseId": "gem-multi",
+          "candidates": [
+            { "content": { "role": "model", "parts": [{ "text": "One" }] }, "index": 0 },
+            { "content": { "role": "model", "parts": [{ "text": "Two" }] }, "index": 1 }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "gem-multi",
+          "candidates": [
+            { "content": { "role": "model", "parts": [{ "text": " more" }] }, "index": 0 },
+            { "content": { "role": "model", "parts": [{ "text": "!" }] }, "index": 1 }
+          ]
+        }
+      },
+      {
+        "data": {
+          "responseId": "gem-multi",
+          "candidates": [
+            { "content": { "role": "model", "parts": [] }, "finishReason": "STOP", "index": 0 },
+            { "content": { "role": "model", "parts": [] }, "finishReason": "STOP", "index": 1 }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 4,
+            "candidatesTokenCount": 9,
+            "totalTokenCount": 13
+          },
+          "modelVersion": "gemini-2.5-flash"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": { "content": "One" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": { "content": "Two" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": { "content": " more" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": { "content": "!" }, "finish_reason": null }
+          ]
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 0, "delta": {}, "finish_reason": "stop" }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "completion_tokens": 9,
+            "total_tokens": 13
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": {
+          "id": "chatcmpl-gem-multi",
+          "object": "chat.completion.chunk",
+          "created": "<now>",
+          "model": "gemini-2.5-flash",
+          "choices": [
+            { "index": 1, "delta": {}, "finish_reason": "stop" }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "completion_tokens": 9,
+            "total_tokens": 13
+          }
+        }
+      },
+      {
+        "event": "",
+        "data": "[DONE]"
+      }
+    ]
+  }
+]

@@ -1,0 +1,145 @@
+[
+  {
+    "name": "429 without Retry-After: 500ms exponential base",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": null,
+      "attempt": 0,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 500,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "429 second failure doubles the wait",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": null,
+      "attempt": 1,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 1000,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "429 honors a fitting Retry-After verbatim",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": "2",
+      "attempt": 0,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 2000,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "429 Retry-After of 0 retries immediately",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": "0",
+      "attempt": 0,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 0,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "429 Retry-After beyond the single-wait cap \u2192 fall through without waiting",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": "30",
+      "attempt": 0,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 0,
+      "retrySame": false
+    }
+  },
+  {
+    "name": "429 with a garbage Retry-After falls back to exponential",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": "soon",
+      "attempt": 0,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 500,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "5xx backs off exponentially from 250ms",
+    "input": {
+      "status": 500,
+      "retryAfterHeader": null,
+      "attempt": 0,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 250,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "5xx attempt 2 doubles again",
+    "input": {
+      "status": 502,
+      "retryAfterHeader": null,
+      "attempt": 2,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 1000,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "exponential waits cap at MAX_SINGLE_WAIT_MS",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": null,
+      "attempt": 10,
+      "totalWaitedMs": 0
+    },
+    "expected": {
+      "waitMs": 4000,
+      "retrySame": true
+    }
+  },
+  {
+    "name": "exhausted budget stops the retries",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": null,
+      "attempt": 0,
+      "totalWaitedMs": 8000
+    },
+    "expected": {
+      "waitMs": 0,
+      "retrySame": false
+    }
+  },
+  {
+    "name": "wait is clamped to the remaining budget",
+    "input": {
+      "status": 429,
+      "retryAfterHeader": "3",
+      "attempt": 0,
+      "totalWaitedMs": 7000
+    },
+    "expected": {
+      "waitMs": 1000,
+      "retrySame": true
+    }
+  }
+]

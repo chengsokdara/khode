@@ -1,0 +1,48 @@
+// Khateway — AI model router. One Worker serves the SPA (static assets:
+// landing /, admin /admin, portal /app) and the APIs under /api (admin,
+// portal, client /api/v1) + the /v1 gateway.
+{
+  "$schema": "node_modules/wrangler/config/schema.json",
+  "name": "khateway",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-09-15",
+  "assets": {
+    "directory": "./web-dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/v1",
+      "/v1/*",
+      "/api",
+      "/api/*",
+      "/webhooks",
+      "/webhooks/*",
+      "/health",
+      "/__scheduled"
+    ]
+  },
+  // M10 rate limiting: every /v1 request increments fixed-window counters in
+  // ONE Durable Object instance (name "global"). SQLite-backed class so the
+  // binding works on the Workers free plan; the migration below only declares
+  // the class for deploys (wrangler d1 migrations are separate, in drizzle/).
+  "durable_objects": {
+    "bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiterDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiterDO"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "khateway",
+      // Remote database created 2026-09-19 (M15 deploy): khateway @ Chengsokdara@gmail.com's Account.
+      "database_id": "32583a0a-d5ed-4e14-8308-0e0c019f2fcc",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "observability": { "enabled": true },
+  // Daily free-models sync (src/worker/models-sync.ts): probes every enabled
+  // provider with auto_sync on, imports/refreshes verified-free models. 03:17
+  // UTC — off-peak, odd minute to avoid the top-of-hour cron crowd. Local
+  // testing: `wrangler dev --test-scheduled` then curl
+  // "http://localhost:8787/__scheduled?cron=17+3+*+*+*".
+  "triggers": { "crons": ["17 3 * * *"] }
+}

@@ -1,0 +1,142 @@
+// Gateway-side rate-limit plumbing (M10): the pure check builder (fixture-
+// tested offline) plus the fail-open DO client. The GATEWAY must never become
+// unavailable because its rate limiter is — a DO error answers null and the
+// caller skips enforcement entirely (same stance as the settings fail-open).
+import type { Env } from '../env';
+import type { RateCheck, RateLimitDecision } from './do';
+
+/** One-minute fixed windows everywhere in M10. */
+export const RATE_WINDOW_MS = 60_000;
+
+export interface RateLimitSettings {
+  enabled: boolean;
+  /** Per-key default (requests/minute); keys may override via api_keys.rate_limit_rpm. */
+  keyRpm: number;
+  /** Anonymous per-IP default (requests/minute). */
+  ipRpm: number;
+}
+
+export interface RateLimitInput {
+  settings: RateLimitSettings;
+  /** Resolved client key (null = anonymous — enforcement-off traffic included). */
+  key: { id: string; rateLimitRpm: number | null } | null;
+  /** Client IP (cf-connecting-ip; 'unknown' in dev). Only anonymous requests hit this bucket. */
+  ip: string;
+  /** Resolved primary model slug. */
+  modelSlug: string;
+  /** models.rate_limit_rpm on the resolved model (null = unlimited). */
+  modelRpm: number | null;
+}
+
+/**
+ * Builds the buckets to increment for one gateway request. Rules:
+ * - settings disabled → no checks at all (zero DO round-trips).
+ * - keyed request → `key:<id>` bucket at the key's override or the deployment
+ *   default (its identity is already bounded; it never touches the IP bucket —
+ *   shared egress IPs must not punish legitimate heavy keys).
+ * - anonymous request → `ip:<ip>` bucket at the IP default (keyless-native
+ *   traffic is exactly the abuse surface M10 exists for).
+ * - model with a rate_limit_rpm → global `model:<slug>` bucket, shared across
+ *   ALL clients (protects a hot upstream, not a single abuser).
+ * A non-positive limit means "no limit" for that bucket.
+ */
+export function buildGatewayRateChecks(input: RateLimitInput): RateCheck[] {
+  const { settings, key, ip, modelSlug, modelRpm } = input;
+  if (!settings.enabled) return [];
+  const checks: RateCheck[] = [];
+  if (key) {
+    const limit = key.rateLimitRpm ?? settings.keyRpm;
+    if (limit >= 1) checks.push({ kind: 'key', scope: `key:${key.id}`, limit, windowMs: RATE_WINDOW_MS });
+  } else if (settings.ipRpm >= 1) {
+    checks.push({ kind: 'ip', scope: `ip:${ip}`, limit: settings.ipRpm, windowMs: RATE_WINDOW_MS });
+  }
+  if (modelRpm != null && modelRpm >= 1) {
+    checks.push({ kind: 'model', scope: `model:${modelSlug}`, limit: modelRpm, windowMs: RATE_WINDOW_MS });
+  }
+  return checks;
+}
+
+/**
+ * Increments every bucket through the singleton DO ("global") in ONE
+ * round-trip. Returns null on ANY failure (DO unreachable, malformed answer) —
+ * fail-open, the gateway keeps serving. Rejections log to console for ops.
+ */
+export async function checkRateLimits(env: Env, checks: RateCheck[]): Promise<RateLimitDecision[] | null> {
+  if (checks.length === 0) return null;
+  try {
+    const id = env.RATE_LIMITER.idFromName('global');
+    const res = await env.RATE_LIMITER.get(id).fetch('https://rate-limiter.internal/check', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ checks }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { results?: RateLimitDecision[] };
+    if (!Array.isArray(body.results) || body.results.length !== checks.length) {
+      throw new Error('malformed rate-limiter response');
+    }
+    return body.results;
+  } catch (e) {
+    console.error('[ratelimit] check failed — failing open:', e);
+    return null;
+  }
+}
+
+/**
+ * P2: one login-surface attempt — admin/portal login + signup, oauth
+ * start/callback, device code/token, client-api, org-join — counted through
+ * the DO, replacing the per-isolate memory map (whose real limit was "per
+ * isolate", not per IP). Same bucket semantics as before: fixed 1-minute
+ * window, per surface + IP, every counted call consumes budget. Fail-open:
+ * any limiter error allows the attempt (the M10 stance — auth surfaces must
+ * not become unavailable because their limiter is).
+ */
+export async function loginAllowed(env: Env, bucket: string, ip: string, max = 10): Promise<boolean> {
+  const decisions = await checkRateLimits(env, [
+    { kind: 'login', scope: `login:${bucket}:${ip}`, limit: max, windowMs: RATE_WINDOW_MS },
+  ]);
+  return decisions ? decisions[0].allowed : true;
+}
+
+/** One DO round-trip for the P4 spend-reservation actions. */
+async function callRateLimiter(env: Env, path: string, payload: unknown): Promise<Response> {
+  const id = env.RATE_LIMITER.idFromName('global');
+  return env.RATE_LIMITER.get(id).fetch(`https://rate-limiter.internal${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * P4: parks an estimated in-flight cost (micro-USD) for a capped key in the
+ * DO so concurrent requests see each other past the spend-cap SUM. Returns
+ * the scope's new reserved total, or null when the limiter is unreachable —
+ * fail-open, the request proceeds under the old soft-cap semantics.
+ */
+export async function reserveSpend(env: Env, scope: string, micros: number): Promise<number | null> {
+  try {
+    const res = await callRateLimiter(env, '/reserve', { scope, micros });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { reserved?: unknown };
+    if (typeof body.reserved !== 'number') throw new Error('malformed reserve response');
+    return body.reserved;
+  } catch (e) {
+    console.error('[ratelimit] reserve failed — failing open:', e);
+    return null;
+  }
+}
+
+/**
+ * P4: releases a reservation once the request's real cost is in request_logs
+ * (or the request died). Best-effort: an error just logs — the DO's
+ * RESERVATION_TTL_MS sweep reclaims leaked reservations.
+ */
+export async function settleSpend(env: Env, scope: string, micros: number): Promise<void> {
+  try {
+    const res = await callRateLimiter(env, '/settle', { scope, micros });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error('[ratelimit] settle failed (reservation TTL will clean up):', e);
+  }
+}

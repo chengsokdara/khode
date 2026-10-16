@@ -1,0 +1,10 @@
+# Copy to .dev.vars for local `wrangler dev`, and set real secrets on the
+# Cloudflare account with: npx wrangler secret put <NAME>
+ADMIN_PASSWORD=change-me
+
+# 32 raw bytes, base64 — generate with: openssl rand -base64 32
+# Used for AES-256-GCM encryption of provider API keys.
+ENCRYPTION_KEY=
+
+# Optional separate HMAC secret for admin session cookies (falls back to ENCRYPTION_KEY).
+SESSION_SECRET=
