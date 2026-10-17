@@ -10,6 +10,12 @@ Lives in `ROADMAP.md` — phases 0/1 through 7 are complete.
 
 ## Now
 
+**Published (2026-10-17):** `main` (`7971e7f`) is on public
+`github.com/chengsokdara/khode`. The private `chengsokdara/khateway`
+repo is archived, not deleted. Not done: NIM models on a paid provider,
+Turnstile keys or public signup off, a gateway deploy of this tree, and
+a live GLM tool loop.
+
 **Sibling layout (2026-10-17):** the client is `clients/khode` and the
 gateway is `services/khateway`. Go commands run in the client directory.
 The module path is still `khode`. A shared library was not added: the
@@ -1001,7 +1007,8 @@ Backlog lives in `ROADMAP.md`.
 
 | Date | Change |  |
 |---|---|---|
-| 2026-10-17 | Sibling layout: client at `clients/khode`, gateway at `services/khateway`. No shared library. Go module path unchanged | (this commit) |
+| 2026-10-17 | Pushed `main` to public `chengsokdara/khode`. Archived private `chengsokdara/khateway`. NIM pricing, Turnstile, deploy, and the live GLM loop are still operator steps | 7971e7f |
+| 2026-10-17 | Sibling layout: client at `clients/khode`, gateway at `services/khateway`. No shared library. Go module path unchanged | 7971e7f |
 | 2026-10-16 | Monorepo (`khateway/` subtree) + GLM-5.3 agent path: replay `reasoning_content`, `max_tokens` off official OpenAI, default effort `high` and 32768 cap, 1,048,576 context, gateway accepts effort `max`, Turnstile on portal login/signup when both keys are set, MIT + CI. Live NIM tool loop and the public remote are not done | (this commit) |
 | 2026-09-28 | Queued prompts mid-turn: enter while a turn streams files the prompt (queued band above the input), turn end auto-submits FIFO; esc hands the queue back to the input; slash commands wait with a note; `streamClosedMsg` ignored with no turn live | (this commit) |
 | 2026-09-27 | post_tool hooks feed the model back: exit-0 stdout / exit-2 stderr appended to the call's tool result inside `<hook-feedback>` tags (8 KiB cap, all matching hooks join, non-blocking); hooks fire even on malformed tool args (payload rides `{}`) | (this commit) |

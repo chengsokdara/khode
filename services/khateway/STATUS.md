@@ -11,6 +11,11 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **Published (2026-10-17)** — the monorepo is public at
+  `github.com/chengsokdara/khode`. The old private repo is archived.
+  This worker has not been redeployed from `services/khateway`. NIM
+  pricing, Turnstile keys, and the live GLM loop are still open.
+
 - **Sibling layout (2026-10-17)** — this service is
   `services/khateway`. The CLI is `clients/khode`. They stay separate
   deployables. No shared package.
