@@ -11,9 +11,12 @@ If something is claimed ✅ but not verified, it says so.
 
 ## Current work state
 
+- **Sibling layout (2026-10-17)** — this service is
+  `services/khateway`. The CLI is `clients/khode`. They stay separate
+  deployables. No shared package.
+
 - **Monorepo + GLM reasoning passthrough + Turnstile hook ✅ code, not
-  deployed (2026-10-16)** — this tree now lives at `khateway/` inside
-  the khode repo (subtree of 644a6c9). `toOpenAiMessage` emits
+  deployed (2026-10-16)** — this tree was imported by subtree (644a6c9). `toOpenAiMessage` emits
   `reasoning.text` as `reasoning_content`. `reasoning_effort: "max"` is
   legal and re-emitted on the openai adapter; anthropic and gemini map
   it onto the high budget (24576). Portal `GET /api/portal/turnstile`

@@ -4,8 +4,11 @@ Last updated: 2026-10-16 (monorepo, GLM reasoning_content passthrough, Turnstile
 
 ## Cross-session facts
 
-- **Monorepo + GLM reasoning + Turnstile (2026-10-16)** — this package
-  is `khateway/` inside the khode repo. OpenAI upstream histories keep
+- **Sibling layout (2026-10-17)** — this package is
+  `services/khateway`. The CLI is `clients/khode`. No shared library.
+
+- **Monorepo + GLM reasoning + Turnstile (2026-10-16)** — imported by
+  subtree. OpenAI upstream histories keep
   `reasoning_content` when the canonical message has it (GLM / DeepSeek
   preserved thinking). Effort `max` is a legal openai value; anthropic
   and gemini spend the high budget (24576) for it. Turnstile stays off

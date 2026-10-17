@@ -66,8 +66,9 @@ items and update **Next** here when the plan moves (see `RULES.md`);
 
 ## Next
 
-Shipped 2026-10-16, outside this backlog: the repo is a monorepo
-(`khateway/` nested, Go module still at the root), and GLM-5.3 tool
+Shipped 2026-10-17: the client and the gateway are siblings
+(`clients/khode`, `services/khateway`). No shared package. Shipped
+2026-10-16, outside this backlog: GLM-5.3 tool
 turns replay `reasoning_content` with `max_tokens` and a default
 `reasoning_effort` of high. Publishing the GitHub repo, registering the
 NIM models at real prices, and a live tool loop are operator steps and

@@ -1,6 +1,8 @@
-# binary
+# binaries built at the repo root or inside the client module
 /khode
 /khode-test
+/clients/khode/khode
+/clients/khode/khode-test
 dist/
 
 # local logs

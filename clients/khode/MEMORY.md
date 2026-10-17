@@ -23,9 +23,12 @@ If you are starting a session, or recovering after an interrupt:
 
 ## Current state
 
-- **Monorepo + GLM-5.3 (2026-10-16):** gateway code is `khateway/`
-  (subtree of the old standalone repo). `go test` stays at the root;
-  `npm test` runs in `khateway/`. OpenAI-protocol assistant turns with
+- **Sibling layout (2026-10-17):** `clients/khode` is this module.
+  `services/khateway` is the gateway. `go test` runs here. `npm test`
+  runs in the gateway directory. Do not add a shared module until a
+  second client exists. The old checkout `~/Apps/khateway` is stale.
+
+- **Monorepo + GLM-5.3 (2026-10-16):** gateway code came in by subtree. OpenAI-protocol assistant turns with
   `Message.Thinking` send `reasoning_content` via the SDK extra-fields
   map (openai-go v1.12 has no field). Official provider name `openai`
   still sends `max_completion_tokens`; every other OpenAI-protocol
@@ -765,6 +768,7 @@ If you are starting a session, or recovering after an interrupt:
 
 | Date | Session summary | Commits |
 |---|---|---|
+| 2026-10-17 | Restructured the repo into `clients/khode` and `services/khateway`. Runtimes stay separate; the HTTP API is the contract. Go imports unchanged | (this commit) |
 | 2026-10-16 | Public-ready pass. `git subtree add --prefix=khateway` brought the gateway in. GLM tool loops replay reasoning_content, khateway forwards it and accepts reasoning_effort max, khode settings gain a reasoning row, context window is 1,048,576 for the glm-5.3 family, Turnstile gates portal email auth only when both secrets are set, root MIT license + CI. No deploy, no public remote, no live NIM call | (this commit) |
 | 2026-09-27 | post_tool model feedback (roadmap Next #3; chosen after presenting the open backlog — the user declined to pick, so the recommendation went ahead): `hooks.PostTool` returns joined capped feedback (exit-0 stdout / exit-2 stderr, 8 KiB, non-blocking), the loop threads it into `emitResult`'s `<hook-feedback>` tags (session + event + replay, no UI change); fixed the malformed-args hook skip and the fan-out call-id test flake (routingProvider). 8 new tests; tmux harness gained a post_tool-on-edit hook with a frame assertion (`hook-saw-edit` captured live inside the ⎿ block) | (this commit) |
 | 2026-09-27 | MCP live re-list (roadmap Next #2's tools half; resources/prompts split to their own item by user choice): `mcp.Client.SetNotify` (mu-guarded hook, pump dispatches every notification) + `Exited()`; UI fan-in channel (`m.mcpEvents`, drop-on-full) as a 4th waitForEvents case; `refreshMCPCmd` lists off-thread and swaps registry-first-safe via the new `tools.AddMCPList` (silent no-op, off-toggles re-applied); /mcp exited glyph; hooks wired in `New` (startup clients) and `applyMCPResult` (late ones). Tests: hook delivery in order + exit flag (internal/mcp), refresh swap with toggle survival (internal/tools). tmux-verified: testdata mcpserver grew a mutate mode (KHOKE_MCP_MUTATE=1 flips the set on the first tools/call and pushes the notification), fakeai routes `# MCP refresh` by the `call_mcp1` marker (role:tool was already true in the outer transcript), harness captures `mcp: selftest tools refreshed (+1 −1)` mid-turn. Lesson: wait_ready no-ops when the app is already idle — settle-sleep after send-keys so it brackets the turn | (this commit) |

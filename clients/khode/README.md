@@ -1,0 +1,132 @@
+# khode client
+
+The terminal coding agent. The product overview is the [repo README](../../README.md). The gateway is [Khateway](../../services/khateway/README.md).
+
+Run the commands below from this directory (`clients/khode`).
+
+The built-in khateway provider is
+`https://khateway.chengsokdara.workers.dev/v1`. A client key and a prepaid
+balance are required. `/login` runs the device sign-in; a zero balance is
+rejected with `insufficient_quota`.
+
+GLM-5.3 and GLM-5.3-Flash think on every turn. khode sends that trace back as
+`reasoning_content`, uses `max_tokens`, and sends `reasoning_effort: high`
+unless `/settings` → reasoning is set to `low`, `high`, or `max`. While max
+tokens is still the default 8192, those models are requested with a 32768
+cap so thinking and a tool call both fit.
+
+## Status
+
+Phase 7 (configurable in the TUI) complete — see [ROADMAP.md](ROADMAP.md)
+for the phase checklist and backlog, [STATUS.md](STATUS.md) for the
+current state, and [AGENTS.md](AGENTS.md) for architecture and
+conventions.
+
+## Build & run
+
+```sh
+go build -o khode ./cmd/khode   # or: go run ./cmd/khode
+
+./khode                         # new session
+./khode --continue              # continue the most recent session
+./khode --resume                # open the session picker
+./khode --resume=fix-login-bug  # resume by name (unique prefix works)
+```
+
+No API key is required to launch. The first start walks you through it —
+what khode is, pick a provider (khateway leads — khode's first-class
+native gateway — then Anthropic, OpenAI, or your own endpoint), sign in
+or paste a key for the ones that need it, and for gateway/custom
+endpoints pick a model from the freshly fetched list — then ends with
+suggestions for what to try first (`enter` to start chatting, `esc`
+skips). Skipping is only for the session: while nothing is configured
+the walkthrough reopens on every launch, `/welcome` re-runs it any
+time, and the chat shows a setup banner — pointing at `/welcome`,
+`/login`, or `/settings` — until a key and model resolve. Keys are
+stored in `~/.khode/auth.json` (owner-only); setting
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment also works
+and wins over the stored key. The status line tracks how full the
+model's context window is (`ctx NN%`, warning-colored near the
+auto-compact point).
+
+## Configuration
+
+Everything is configurable from inside the TUI with `/settings` (alias
+`/config`) — no hand-editing of JSON:
+
+- **provider** — `←`/`→` switches; `enter` opens the provider manager,
+  where `n` adds a custom provider (name, protocol, base URL) for any
+  OpenAI-compatible or Anthropic-protocol endpoint — Ollama, LM Studio,
+  OpenRouter, proxies. New providers activate immediately and read
+  `NAME_API_KEY`-style env vars if set. The built-in **khateway**
+  provider ships pointed at the deployed gateway
+  (`khateway.chengsokdara.workers.dev`) — khateway is first-class
+  native: pick it, **`/login` on first run — keyless is gone**, and go;
+  the gateway rejects every request without a valid client key. Its
+  endpoint shape picks the wire protocol automatically;
+  `KHATEWAY_API_KEY` overrides the key, `KHATEWAY_BASE_URL` points it
+  at a self-hosted or local dev gateway instead.
+
+**Sign in to khateway with `/login`** (device flow): khode shows a short
+code, you approve it once at the gateway's `/app/device` page in a browser,
+and khode receives a personal API key — usage is attributed to your account
+and drawn from its prepaid balance (top up in the portal). The key is
+stored like any other; `/settings` can still replace it with a pasted key
+(`KHATEWAY_API_KEY` wins while set). The first-run walkthrough and the
+`/settings` api-key row offer the same two paths: browser sign-in or a key
+from the gateway portal's Keys page.
+- **api key** — masked editor; stored per provider in `auth.json`
+- **base url** — point a provider at a proxy or OpenAI-compatible
+  endpoint
+- **model** — opens a picker that fetches the provider's model list
+  from its endpoint (`f` re-fetches); if the endpoint can't list
+  models, `n` adds one manually
+- **max tokens**
+- **mode** — plan / ask / accept-edits / auto (same as `/mode`)
+- **mcp servers** — add, edit, remove; changes apply live
+- **hooks** — `pre_tool` / `post_tool` shell hooks (a `pre_tool` exit 2
+  vetoes the call; `post_tool` stdout is fed back to the model as
+  `<hook-feedback>` on that call's result); apply next turn
+
+`--provider` and `--model` override the config for one session only.
+Other commands: `/new [name]` (optionally named sessions), `/sessions`
+(picker), `/model <name>`, `/compact`, `/mcp`, `/tools`, `/help`.
+Typing `/` opens a completion popup above the input that filters the
+command list as you type — ↑/↓ picks, enter runs, tab just fills, esc
+dismisses. The status line shows how full the model's context window
+is (`ctx NN%`, warning near auto-compact) and a running cost estimate
+from a built-in per-model price table; models it doesn't know display
+`$–`.
+
+## Development
+
+The inner loop is plain Go: edit, `go build ./... && go vet ./...`,
+`go test ./...`, then `go build -o khode ./cmd/khode && ./khode` and
+exercise the change in the live TUI. There is no separate production
+build — the binary you run in development is the binary, and
+`~/.khode/` state is shared, so use `--resume` to get back to a session
+you were debugging.
+
+Provider behavior is tested wire-level: the fake-SSE tests
+(`internal/llm/*_test.go`) run real HTTP against `httptest` servers
+speaking Anthropic/OpenAI SSE, so streaming, tool calls, thinking
+blocks, and retries are covered without a key or network. To point a
+*running* khode at a fake or local endpoint instead, set
+`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `KHATEWAY_BASE_URL` (or the
+base-url row in `/settings`).
+
+**Debugging the TUI:** printing to the terminal from inside a Bubble Tea
+app corrupts the screen, so `--debug` redirects the standard logger to
+`khode-debug.log`:
+
+```sh
+./khode --debug                 # in another terminal:
+tail -f khode-debug.log         # turn starts, tool calls, permission decisions
+```
+
+`internal/debug.Printf` is the only sanctioned logging call — it compiles
+to a no-op unless `--debug` is on. For breakpoints, delve works fine
+with TUI programs (the UI just freezes while you inspect):
+`dlv debug ./cmd/khode -- --continue`. TUI behavior itself is verified
+through the `Model.Update`/`View` unit tests in `internal/ui` rather
+than screen-scraping.
